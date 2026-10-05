@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "NotificationType" ADD VALUE 'NEEDS_REFUND_MATCH_REVIEW';

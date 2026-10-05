@@ -1,0 +1,50 @@
+name: CI
+
+# Runs on every pull request, and is called by docker-publish.yml on every
+# push to main so an image is only ever published from a commit that passes.
+# Uses `pull_request` (never `pull_request_target`): a fork's PR runs with a
+# read-only token and no repository secrets.
+on:
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Typecheck, lint, test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # Placeholder only — `prisma generate` reads the datasource URL but
+      # never connects, and the unit suite never touches a database.
+      DATABASE_URL: postgresql://placeholder:placeholder@localhost:5432/placeholder
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+
+      - run: npx prisma generate
+
+      - name: Typecheck (app)
+        run: npx tsc --noEmit --incremental false
+
+      - name: Typecheck (tests)
+        run: npx tsc -p test/tsconfig.json
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test
+        env:
+          # Matches scripts/test.sh: the date logic is pinned to a household
+          # clock behind UTC, and crypto.ts needs a (throwaway) 32-byte key.
+          TZ: America/Denver
+          ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"

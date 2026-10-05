@@ -1,0 +1,2979 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  OWNER
+  PARENT
+  CHILD
+}
+
+// Independent of Role: gates which sections of the app a member can see.
+// OWNER is always FULL regardless of this field. Set per-invite ("Full
+// access" toggle) so e.g. a spouse can be scoped to just buckets/budget
+// without seeing debts, savings, income, or bank sync.
+enum DashboardScope {
+  FULL
+  BUCKETS_ONLY
+}
+
+// CUSTOM = the household manually reordered debts (via each Debt's
+// sortOrder) instead of trusting either algorithm's sort — see
+// computeAttackOrder in debt-payoff.ts.
+enum PayoffOrder {
+  AVALANCHE
+  SNOWBALL
+  CUSTOM
+}
+
+// MONTHLY_AVERAGE spreads a BIWEEKLY income's 26 paychecks/year evenly
+// across 12 months (amount * 26/12) — the same annualized-average approach
+// monthlyEquivalentCents always used, so a household on this method sees no
+// change. BIWEEKLY_CONSERVATIVE instead assumes exactly 2 paychecks every
+// month (amount * 2), the same amount an every-other-Friday household
+// actually sees in 10 of 12 months — the 2 or 3 months/year with a 3rd
+// biweekly paycheck just come in ahead of plan rather than being baked into
+// the monthly figure buckets are sized against. No effect on SEMI_MONTHLY
+// (already exactly 2/month) or MONTHLY incomes.
+enum IncomeCalcMethod {
+  MONTHLY_AVERAGE
+  BIWEEKLY_CONSERVATIVE
+}
+
+enum AiProvider {
+  GEMINI
+  OPENAI
+  ANTHROPIC
+  GROK
+}
+
+// Which posture AI-generated suggestions (report findings, starter buckets)
+// should lean into — distinct from payoffPlanEnabled (a specific debt-payoff
+// *planner* toggle) and from SavingsGoal (concrete named targets). Set during
+// onboarding, editable any time from Settings.
+enum HouseholdGoalPosture {
+  DEBT_PAYDOWN
+  SAVINGS_FOCUSED
+  BALANCED
+}
+
+// Tracks resumability of the post-registration setup wizard (src/app/
+// onboarding/) so a refresh/reopen picks up where it left off, rather than
+// restarting from scratch or re-showing an already-completed phase.
+enum OnboardingStep {
+  PROFILE
+  CONNECT
+  REPORT
+  BUCKETS
+  DONE
+}
+
+model Household {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Persisted debt payoff scenario (see PayoffPlanner/debts/actions.ts) — was
+  // previously ephemeral GET query params that reset on every visit.
+  payoffOrder      PayoffOrder @default(AVALANCHE)
+  payoffExtraCents Int         @default(20000)
+  // Whether a paid-off debt's freed-up minimum payment automatically rolls
+  // into the extra-payment pool for the next debt in attack order (the
+  // classic "debt snowball" cash-flow effect) — replaces the old 3-way
+  // PayoffMode enum (MINIMUM_ONLY/FLAT_EXTRA/ROLLING_EXTRA), which conflated
+  // this decision with the extra-amount decision (now just payoffExtraCents,
+  // where 0 means minimums-only). Default true matches the old default
+  // (ROLLING_EXTRA), so existing households see no behavior change.
+  payoffRollFreedMinimums Boolean @default(true)
+  // How the rolled-in freed minimum reaches the plan once the toggle above
+  // is on — true (default): spread evenly across the month's paydays, the
+  // original behavior. false: the whole month's freed total moves in one
+  // lump on the current priority debt's own minimum due date instead
+  // (household request, 2026-09-17 — same total money, different cash-flow
+  // timing). See projectCyclePlan's rollFreedMinimumsSplit opt.
+  payoffRollFreedMinimumsSplit Boolean @default(true)
+  // Feeds this plan's projected extra payments into the dashboard's
+  // "upcoming this week" list and next month's bucket budget projections
+  // (see getPayoffPlanThisWeek/debt-payoff.ts) — off by default so a
+  // household experimenting with the planner doesn't silently change their
+  // budget totals until they opt in.
+  payoffPlanEnabled Boolean @default(false)
+
+  // The household's target monthly surplus (income minus every allocation),
+  // written by confirmBudgetPlan (src/lib/budget-plan.ts) from the "Set the
+  // Month" control's Surplus slider. 0 until the first budget plan is
+  // confirmed. Distinct from getHouseholdSavingsCapacity's *computed* estimate
+  // — this is what the household deliberately committed to.
+  monthlySurplusTargetCents Int @default(0)
+
+  // How getIncomeSummary/getMonthlyIncomeTotal turn tracked incomes into
+  // one monthly figure for the /income total and the /buckets allocation
+  // summary — see the IncomeCalcMethod enum above for what each option
+  // means. includeP2PInIncomeCalc folds this month's ad-hoc P2P income
+  // (getAdHocIncomeThisMonth) into that same figure when true; excluded by
+  // default since P2P credits (reimbursements, kids' activity money) aren't
+  // reliable income to size a budget against.
+  incomeCalcMethod       IncomeCalcMethod @default(MONTHLY_AVERAGE)
+  includeP2PInIncomeCalc Boolean          @default(false)
+
+  // Auto-applies this month's still-unspent ad hoc/P2P income
+  // (getAdHocIncomeThisMonth — never a tracked recurring paycheck, so a
+  // biweekly earner's 3rd-paycheck month is never touched by this) toward
+  // whichever bucket has actually gone over its cap this period, raising
+  // that bucket's *effective* cap (BucketAdHocTopUp ledger below — never
+  // this household's own configured Bucket.monthlyCapCents) instead of
+  // leaving it sitting red when there's real, uncommitted cash that could
+  // cover it. Deliberately keyed off a bucket already being *over*, not a
+  // pace projection — a bucket doesn't "bulge" until it's actually
+  // exceeded, so this never front-loads found money on the 1st of the
+  // month just because early spending looks fast. Off by default (household
+  // request, 2026-09-12) — see autoApplyAdHocIncomeToBuckets in buckets.ts
+  // for the full mechanism.
+  autoApplyAdHocIncomeToBuckets Boolean @default(false)
+
+  // Which posture AI suggestions should lean into, plus household size —
+  // both captured by the setup wizard, editable later from Settings (see
+  // household-profile-settings.tsx). Feed report/bucket-suggestion prompts
+  // (generateReportNarrative, suggestStarterBuckets, src/lib/ai.ts).
+  goalPosture HouseholdGoalPosture @default(BALANCED)
+  adultsCount Int                  @default(2)
+  kidsCount   Int                  @default(0)
+
+  // Gates the post-registration setup wizard (src/app/onboarding/) — null
+  // means the OWNER hasn't completed it yet and gets redirected there from
+  // the dashboard. Reset to null (alongside onboardingStep -> PROFILE) by
+  // "Restart setup wizard" (Database settings) or purgeFinancialData.
+  onboardingCompletedAt DateTime?
+  onboardingStep        OnboardingStep @default(PROFILE)
+
+  // The single read-only public "example household" reachable from /login's
+  // "View the Example Household" button. At most one row true (partial unique
+  // index). Gates: the demo-login branch in auth.ts, the proxy-level block on
+  // every mutating POST for a demo session (auth.config.ts), the
+  // isDemoHousehold() guards on GET-render lazy writers + the AI kill-switch
+  // (src/lib/demo.ts and getHouseholdAiConfig), and exclusion from
+  // syncAllHouseholds / the scheduled-notification iterators. Also excluded
+  // from registerHousehold's household count so it never closes real signup.
+  isDemo Boolean @default(false)
+
+  users          User[]
+  buckets        Bucket[]
+  transactions   Transaction[]
+  transactionOffsets TransactionOffset[]
+  debts          Debt[]
+  savingsGoals   SavingsGoal[]
+  bankConnection BankConnection?
+  aiSettings     HouseholdAiSettings?
+  emailConnections EmailConnection[]
+  receipts         Receipt[]
+  receiptMerchantAliases ReceiptMerchantAlias[]
+  accounts       Account[]
+  incomes        Income[]
+  assets         Asset[]
+  suggestionDismissals SuggestionDismissal[]
+  learnedKeywords      LearnedKeyword[]
+  merchantKeywordChecks MerchantKeywordCheck[]
+  reports         Report[]
+  budgetPlans     BudgetPlan[]
+  merchantRules   MerchantRule[]
+  recurringPatterns RecurringPattern[]
+  recurringBills  RecurringBill[]
+  billExtraChargeRules BillExtraChargeRule[]
+  billCycleSkips  BillCycleSkip[]
+  debtPayments    DebtPayment[]
+  debtAmountReviews DebtAmountReview[]
+  debtBalanceReviews DebtBalanceReview[]
+  billNoticeEmails  BillNoticeEmail[]
+  billAmountReviews BillAmountReview[]
+  patternPaymentReviews PatternPaymentReview[]
+  bucketAdHocTopUps BucketAdHocTopUp[]
+  billsInsights   BillsInsight[]
+  billCategories  BillCategory[]
+  netWorthSnapshots NetWorthSnapshot[]
+  debtSnapshots     DebtSnapshot[]
+  payoffExtraConfirmations PayoffExtraConfirmation[]
+  payoffExtraSkips  PayoffExtraSkip[]
+  debtMinimumSkips  DebtMinimumSkip[]
+  payoffExtraSnapshots PayoffExtraSnapshot[]
+  cycleAlerts       CycleAlert[]
+  nudgeAlerts       NudgeAlert[]
+
+  // Bearer secret for the read-only debt-payoff ICS calendar feed (see
+  // /api/calendar/[token]/route.ts and /settings/calendar-sync) — null until
+  // an owner first generates it. Deliberately not hashed: a calendar app's
+  // subscribe-by-URL GET request can't present a session cookie or a
+  // header, so the token in the URL path IS the credential, same trust
+  // model as Google/Apple's own "secret address" calendar feeds — anyone
+  // holding the link can read upcoming payoff dates/amounts (nothing else),
+  // and regenerating it (settings page) immediately invalidates the old one.
+  calendarFeedToken String? @unique
+}
+
+model User {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  // name/email/passwordHash are all null between an invite being created
+  // and the invitee completing setup via the one-time link — the owner
+  // only picks an access level now (see inviteHouseholdMember, src/app/
+  // settings/members/actions.ts); the invitee supplies their own name,
+  // email, and password together as the setup flow's first step
+  // (setAccountDetails, src/app/setup-totp/actions.ts). A pending row is a
+  // real User (shows in the members list as "Pending Invite," deletable
+  // like any other) that simply can't authenticate yet: auth.ts's
+  // Credentials authorize() treats a null passwordHash as "can't log in,"
+  // same generic failure as an unknown email. Postgres allows multiple
+  // rows with a null `email` under a unique index (NULL is never equal to
+  // NULL), so several simultaneous pending invites never collide with each
+  // other on that constraint.
+  name         String?
+  email        String?  @unique
+  passwordHash String?
+
+  // Short resolver code for the shareable invite link (/invite/<code>,
+  // src/app/invite/[code]/page.tsx) — a copy/pasted long HMAC-signed setup
+  // token (see setup-token.ts) proved fragile on mobile, where a partial
+  // selection silently truncates it and the whole link just reads as
+  // "expired" (real report, 2026-09-24). The code itself only ever
+  // resolves to a freshly-minted setup token server-side and redirects —
+  // it isn't the credential. Cleared once setup is actually finished
+  // (password set, and TOTP enrolled when required) so the short link
+  // stops resolving instead of quietly outliving its purpose.
+  inviteCode          String?   @unique
+  inviteCodeExpiresAt DateTime?
+
+  role           Role           @default(PARENT)
+  dashboardScope DashboardScope @default(FULL)
+
+  // Account-level master switch for every push this user gets — on top of
+  // (and checked before) their per-type NotificationPreference rows and their
+  // device push subscriptions. An owner can set it for any member and lock it
+  // (notificationsLocked) so the member can't change it themselves, nor turn
+  // their device's push off while it's locked on (household request,
+  // 2026-10-03). Enforced centrally in sendPushToUser (src/lib/push.ts).
+  notificationsEnabled Boolean @default(true)
+  notificationsLocked  Boolean @default(false)
+
+  // TOTP secret is stored encrypted (AES-256-GCM) at the application layer,
+  // never in plaintext — see src/lib/crypto.ts
+  totpSecretEncrypted String?
+  totpEnabled         Boolean   @default(false)
+  totpVerifiedAt      DateTime?
+
+  failedLoginCount Int       @default(0)
+  lockedUntil      DateTime?
+  lastLoginAt      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  auditLogs            AuditLog[]
+  emailConnections     EmailConnection[]
+  ownedBuckets         Bucket[]              @relation("BucketOwner")
+  ownedAccounts        Account[]             @relation("AccountOwner")
+  transactionsAdded    Transaction[]
+  pushSubscriptions    PushSubscription[]
+  savingsContributions SavingsContribution[]
+  notificationPreferences NotificationPreference[]
+  webauthnCredentials  WebAuthnCredential[]
+  bucketAlertOverrides BucketAlertOverride[]
+
+  @@index([householdId])
+}
+
+// A registered passkey (Face ID / Touch ID / Windows Hello / a hardware
+// key) — an alternative second factor to a TOTP code, never a replacement
+// for the password (authorize(), src/lib/auth.ts, always checks the
+// password first regardless of which second factor is presented). A user
+// can hold several (one per device/browser they actually use — a passkey
+// is scoped to the browser's own credential store, which does NOT share
+// across e.g. Safari and Chrome on the same Mac, only across a vendor's own
+// sync — iCloud Keychain or Google Password Manager).
+model WebAuthnCredential {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Base64url, from the authenticator — the natural unique key (WebAuthn
+  // guarantees uniqueness per RP). Looked up directly on login, before we
+  // know which user it belongs to.
+  credentialId String @unique
+  // COSE public key bytes, base64url — verifies every future assertion.
+  // Never secret (this is the public half); no app-layer encryption needed.
+  publicKey String
+  // Signature counter from the last verified assertion — a same-or-lower
+  // value on the next attempt signals a cloned authenticator (rare, but
+  // it's what this field exists to catch). 0 for an authenticator that
+  // doesn't maintain one (most platform ones don't; that's fine).
+  counter BigInt @default(0)
+  // How the authenticator connects ("internal", "hybrid", …) — passed back
+  // to the browser on future logins so it can skip straight to the right
+  // one instead of prompting "which passkey?"
+  transports String[]
+
+  // Household-facing label so a settings list reads "iPhone" / "Work
+  // Laptop" rather than an opaque credential id — guessed once from the
+  // registering browser's UA at enrollment, editable after.
+  nickname String
+
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+
+  @@index([userId])
+}
+
+enum NotificationType {
+  BUCKET_WARNING // 80%+ of a bucket's monthly cap spent
+  BUCKET_EXCEEDED // bucket at/over its monthly cap
+  BUCKET_PACE // on pace to overshoot the monthly cap
+  SAVINGS_MILESTONE // 25/50/75/100% of a savings goal
+  SAVINGS_WEEKLY_NUDGE // weekly "move money toward this goal" reminder
+  DEBT_AMOUNT_REVIEW // "did your minimum payment change?"
+  DEBT_BALANCE_PAID_OFF_REVIEW // auto-derived revolving balance hit $0 — "is this debt actually paid off?"
+  DEBT_BALANCE_RETURNED // a debt that was at $0 (paid off) now carries a real balance again
+  NEW_CYCLE // a new calendar-month budget period started
+  NEW_REPORT // last month's monthly report was just finalized
+  WEEKLY_BUCKET_REPORT // opt-in weekly per-bucket spending digest
+  BUDGET_PLAN_READY // a new month's "Set the Month" budget allocation is waiting to be confirmed
+  BUCKET_TRANSACTION // opt-in (per bucket) — one push per transaction landing in that bucket, with the running total vs. cap
+  NEEDS_BUCKET // a transaction has sat uncategorized long enough to need a human to pick a bucket
+  RECEIPT_NEEDS_REVIEW // an email receipt matched more than one bank transaction and needs a human to pick the right one
+  NEEDS_LABEL_P2P // a P2P (Venmo/Zelle/etc.) transfer needs a human to label what it actually was
+  NEEDS_REFUND_MATCH_REVIEW // a refund-looking credit matched more than one prior purchase at that merchant and needs a human to pick the right one
+  BUCKET_TOPPED_UP // ad hoc/P2P income was auto-applied to cover a bucket that went over its cap (see Household.autoApplyAdHocIncomeToBuckets)
+  BILL_AMOUNT_REVIEW // a parsed "amount due" email states a different amount than a tracked bill's — "did your bill's amount change?"
+  ACCOUNT_SYNC_ISSUE // the SimpleFIN connection itself failed, or a linked institution needs re-authorizing — owner-only
+}
+
+// Per-user opt-out for a NotificationType. No row for a given
+// [userId, type] means "use the role-aware default" (see
+// defaultNotificationEnabled, src/lib/notification-preferences.ts) — a row
+// only ever appears once someone has actually touched a toggle, so no
+// backfill was needed when this was introduced.
+model NotificationPreference {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type    NotificationType
+  enabled Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, type])
+}
+
+enum BucketAlertLevel {
+  PACE
+  WARNING
+  EXCEEDED
+}
+
+enum BucketTrackingMode {
+  SPEND
+  RECURRING
+  MIXED
+}
+
+// Money stored as integer cents throughout — avoids floating-point drift and
+// Prisma Decimal.js friction for a household-scale budgeting app.
+model Bucket {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  // null = household-wide bucket (v1 default). Set = scoped to one user —
+  // groundwork for kid-assigned buckets in a later phase.
+  ownerId String?
+  owner   User?   @relation("BucketOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+
+  name                String
+  monthlyCapCents     Int
+  warningThresholdPct Int     @default(80)
+  paceAlertEnabled    Boolean @default(true)
+  // SPEND (default): normal one-off spend (Groceries, Gas) — auto-
+  // categorization (merchant rules, AI) can freely commit a transaction's
+  // bucketId here, and the "This month" transaction list shows it.
+  // RECURRING: bills/subscriptions only — "This month" is hidden entirely
+  // (see buckets/[id]/page.tsx), and auto-categorization must never commit
+  // bucketId here directly; it can only ever land as a hint
+  // (aiSuggestedBucketId) or a suggestion (detectMerchantBillSuggestions),
+  // surfaced for a human to confirm or accept as a tracked bill — "bills
+  // and subscriptions are always recurring," never a bare untracked
+  // transaction sitting in this bucket's ledger.
+  // MIXED: both — a bucket like "Kids Activities" that legitimately has
+  // both a recurring dance-class fee (becomes a tracked bill via the same
+  // suggestion flow as RECURRING, independent of this field) and genuine
+  // one-off spend (a single event ticket). Unlike RECURRING, auto-
+  // categorization CAN commit bucketId here directly, same as SPEND — see
+  // autoAssignableBucketIds in simplefin-sync.ts — so the one-off portion
+  // auto-files into "This month" without waiting on a human, while the
+  // recurring portion still only ever becomes a bill via explicit confirm.
+  trackingMode        BucketTrackingMode @default(SPEND)
+  // Trigger a pace alert when (spent/cap) exceeds (elapsed-fraction-of-month
+  // * paceSensitivity). 1.30 = "on pace to overshoot by ~30%".
+  paceSensitivity     Float   @default(1.3)
+  sortOrder           Int     @default(0)
+  // A lucide icon key from BUCKET_ICONS (src/lib/bucket-icons.tsx), shown
+  // next to the bucket name in the list and on its detail page. Only ever
+  // set for a bucket whose name matches none of the keyword rules in that
+  // file — an AI pick (suggestBucketIcons, src/lib/ai.ts) cached here by
+  // ensureBucketIcons so it's stable and costs one call once. null = the
+  // keyword rules (or their Wallet fallback) resolve it live at render.
+  icon                String?
+  // Opt-in "how much was spent this week / how much is left / on pace or
+  // not" push digest — see checkWeeklyBucketDigests, scheduled-notifications.ts.
+  // Still gated per-recipient by their own WEEKLY_BUCKET_REPORT preference.
+  weeklyReportEnabled Boolean @default(false)
+  // Opt-in "one push per transaction that lands here, with the running
+  // total vs. cap" alert — see checkAndSendBucketAlerts, buckets.ts. Off by
+  // default (a bucket that gets a transaction most days would otherwise be
+  // constant noise); still gated per-recipient by their own
+  // BUCKET_TRANSACTION preference, same as every other bucket alert type.
+  transactionAlertEnabled Boolean @default(false)
+
+  // A one-time/irregular bucket funded from outside this month's regular
+  // income (savings, checking buffer, a windfall) — a Tesla down payment,
+  // a big home repair, the kind of thing that would blow a normal bucket's
+  // cap by 10-40x if forced through it. Same shape as
+  // Account.excludedFromNetWorth: this bucket still spends/caps/alerts
+  // completely normally, it's just left out of every *forward-looking*
+  // roll-up that assumes bucket caps sum to (at most) monthly income —
+  // "Set the Month" allocation and its reconciliation (budget-plan.ts),
+  // realistic savings capacity (savings.ts), the dashboard spend ceiling
+  // (spend.ts), and the /buckets "Total Allocated vs. Income" card
+  // (bucket-allocation-card.tsx). The monthly report (monthly-report.ts)
+  // lists its spend separately as a one-time purchase but leaves it out of
+  // the spend/cap totals (household rule, 2026-10-02 — reversing the earlier
+  // "include it in the retrospective" call). No single shared helper (a plain
+  // `excludedFromAllocation: false` in each query/filter) since every
+  // consumer either queries fresh or already has its own loaded array.
+  excludedFromAllocation Boolean @default(false)
+
+  // Set when a one-time bucket (excludedFromAllocation) is done: the month
+  // after the one whose spend filled its target (retireFundedOneTimeBuckets,
+  // buckets.ts). A retired bucket drops out of every live list and picker —
+  // /buckets, the dashboard, auto-filing, routing — but keeps its
+  // transactions and its /buckets/[id] page, so history stays intact.
+  retiredAt DateTime?
+
+  // Free-text hints the household writes for AI categorization of this
+  // bucket specifically — appended to the prompt in suggestBucketsForMerchants
+  // (src/lib/ai.ts) as "— hint: ..." for any bucket that has one set. Edited
+  // via bucket-settings-form.tsx.
+  aiInstructions String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  transactions       Transaction[]
+  aiSuggestedForTxns Transaction[] @relation("AiSuggestedBucket")
+  alerts             BucketAlert[]
+  digests            BucketDigest[]
+  merchantRules      MerchantRule[]
+  recurringPatterns  RecurringPattern[]
+  recurringBills     RecurringBill[]
+  debtPayments       DebtPayment[]
+  billCategories     BillCategory[]
+  adHocTopUps        BucketAdHocTopUp[]
+  alertOverrides     BucketAlertOverride[]
+
+  @@index([householdId])
+}
+
+// ALWAYS/NEVER force a household member in or out of one specific bucket
+// alert type (BUCKET_WARNING/EXCEEDED/PACE/TRANSACTION, WEEKLY_BUCKET_REPORT,
+// or BUCKET_TOPPED_UP — the UI only ever exposes PACE/WEEKLY/TRANSACTION,
+// the three with their own bucket-wide on/off checkbox in Bucket Settings,
+// but this isn't restricted to those at the data-model level), overriding
+// their own global NotificationPreference for this one bucket+type only —
+// every other bucket, and every other alert type on this same bucket,
+// still falls through to their own global choice. Scoped per `type`
+// (2026-09-12, widened from one shared override per bucket+user) precisely
+// so a household can lock one person INTO weekly digests for the Bills
+// bucket while leaving pace alerts on that same bucket fully up to them.
+// DEFAULT is never stored as a row — "no row for this (bucket, user, type)"
+// already means DEFAULT, so setBucketAlertOverride (buckets/[id]/actions.ts)
+// deletes the row instead of writing DEFAULT explicitly. Owner-only to set
+// (bucket-alert-recipients.tsx) — this controls what OTHER people receive,
+// not a personal preference like NotificationPreference is; from the
+// affected member's own side this reads as "locked" (bucket-settings-form.tsx
+// renders their own checkbox disabled, with a lock icon, checked/unchecked
+// to match whichever state it's locked to) rather than a free toggle. See
+// sendPushToBucketForType (push.ts) for how this layers with the global
+// preference: an override here wins outright; with none, the recipient's
+// own global choice (or its role-based default) decides, same as every
+// non-bucket-scoped push.
+model BucketAlertOverride {
+  id       String @id @default(cuid())
+  bucketId String
+  bucket   Bucket @relation(fields: [bucketId], references: [id], onDelete: Cascade)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type     NotificationType
+  override BucketAlertOverrideValue
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([bucketId, userId, type])
+  @@index([userId])
+}
+
+enum BucketAlertOverrideValue {
+  ALWAYS
+  NEVER
+}
+
+// One record per (bucket, source ad hoc income transaction) draw —
+// autoApplyAdHocIncomeToBuckets (buckets.ts) raises a bucket's *effective*
+// cap for the current period by this much, real cash the household
+// otherwise hadn't committed anywhere yet. Never mutates Bucket's own
+// monthlyCapCents (the household's deliberate setting) — every reader of
+// bucket progress (getBucketsWithProgress, checkAndSendBucketAlerts) instead
+// sums this table for the current periodKey and adds it on top, so the
+// household's own configured cap is always still visible/unambiguous and a
+// new month starts fresh with zero topups automatically.
+//
+// Keyed to a specific sourceTransactionId (an isIncome:true, incomeId:null
+// row — see getAdHocIncomeThisMonth) rather than a bare running total, so
+// "how much of this specific paycheck-adjacent deposit is still
+// unallocated" is always computable directly (sum of rows against it,
+// subtracted from its own amountCents) instead of trusting a counter that
+// could drift from what actually happened, and a full audit trail survives
+// ("why did Groceries' cap go up $60 in September") instead of a silent cap
+// mutation with no record of the money's source.
+model BucketAdHocTopUp {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  bucketId String
+  bucket   Bucket @relation(fields: [bucketId], references: [id], onDelete: Cascade)
+
+  sourceTransactionId String
+  sourceTransaction   Transaction @relation(fields: [sourceTransactionId], references: [id], onDelete: Cascade)
+
+  // "2026-09" (currentPeriodKey()) — which calendar month's cap this draw
+  // boosts. Denormalized off sourceTransaction's own occurredOn (which is
+  // already scoped to "this month" by getAdHocIncomeThisMonth) purely so the
+  // hot "how much has this bucket already received this period" query
+  // (every getBucketsWithProgress/checkAndSendBucketAlerts call) doesn't
+  // need a join back through Transaction to get it.
+  periodKey   String
+  amountCents Int
+
+  createdAt DateTime @default(now())
+
+  @@index([householdId, periodKey])
+  @@index([bucketId, periodKey])
+  @@index([sourceTransactionId])
+}
+
+model Transaction {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  bucketId String?
+  bucket   Bucket? @relation(fields: [bucketId], references: [id], onDelete: SetNull)
+
+  // The household's subcategory tag for this specific transaction (e.g.
+  // "Fast Food" inside a Dining bucket) — additive to bucketId, same
+  // convention as billId/incomeId below, not part of the mutual-exclusion
+  // set. Previously only RecurringBill/DebtPayment carried a category; a
+  // plain one-off transaction had no subcategory concept at all until this
+  // field (2026-08-23). Learned per-merchant the same way bucketId is (see
+  // MerchantRule.categoryId, src/lib/merchant-rules.ts) — set manually via
+  // reassignTransaction, or auto-applied/hinted by categorizeUncategorizedTransactions
+  // (src/lib/simplefin-sync.ts).
+  categoryId String?
+  category   BillCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  // AI's best-guess category for an uncategorized transaction — same "hint
+  // only, never auto-applied by its mere presence" convention as
+  // aiSuggestedBucketId below (see that field's comment).
+  aiSuggestedCategoryId String?
+  aiSuggestedCategory   BillCategory? @relation("AiSuggestedCategory", fields: [aiSuggestedCategoryId], references: [id], onDelete: SetNull)
+
+  // Money moving INTO the household (paychecks, transfers, interest) —
+  // excluded from the "needs a bucket" queue since it was never a spend.
+  // Set at sync time; a merchant-memory hit (e.g. a refund from a known
+  // merchant) takes priority and gets categorized normally instead.
+  isIncome Boolean @default(false)
+
+  // Money moving OUT to another account the household already owns/tracks
+  // (a Venmo top-up, a credit card payment, a loan payment) — not household
+  // spending either, so it's excluded the same way isIncome is.
+  isTransfer Boolean @default(false)
+
+  // Set when a transaction is specifically identified as a payment toward a
+  // tracked Debt (manually reclassified, or auto-matched once the lender
+  // gets connected) — always paired with isTransfer=true.
+  debtId String?
+  debt   Debt?   @relation(fields: [debtId], references: [id], onDelete: SetNull)
+
+  // A user-defined recurring transfer this transaction matched (Venmo-paid
+  // kids' activities, recurring reimbursements) — see RecurringPattern.
+  patternId String?
+  pattern   RecurringPattern? @relation(fields: [patternId], references: [id], onDelete: SetNull)
+
+  // A credit the household confirmed happened but shouldn't be projected
+  // forward as recurring income (a one-time gift, a refund with no repeat
+  // pattern) — distinguishes "yes this was money in, once" from an
+  // unreviewed guess. Never auto-set; only ever set by a human action.
+  oneOff Boolean @default(false)
+
+  // Tags this transaction as a specific RecurringBill's payment for this
+  // cycle — additive, NOT part of the bucketId/debtId/isIncome/isTransfer/
+  // patternId mutual-exclusion set above. A Netflix charge still gets its
+  // usual bucketId; billId is just "and also, this satisfied that bill."
+  billId String?
+  bill   RecurringBill? @relation(fields: [billId], references: [id], onDelete: SetNull)
+
+  // Same convention as billId, for a DebtPayment (a card/loan's tracked
+  // recurring payment) instead of a bill — set on every matching payment
+  // found for a cycle, not just the one that completes it (see
+  // matchDebtPayments in src/lib/debt-payments.ts), so extra/additional
+  // payments toward the same debt stay linked and visible too.
+  debtPaymentId String?
+  debtPayment   DebtPayment? @relation(fields: [debtPaymentId], references: [id], onDelete: SetNull)
+
+  // Reverse side of DebtAmountReview.transactionId — at most one pending
+  // "did your minimum change?" question per transaction.
+  debtAmountReview DebtAmountReview?
+
+  // Reverse side of PatternPaymentReview.transactionId — at most one pending
+  // "does this count as this cycle's payment?" question per transaction.
+  patternPaymentReview PatternPaymentReview?
+
+  // Reverse side of BucketAdHocTopUp.sourceTransactionId — this ad hoc
+  // income transaction can fund more than one bucket's top-up (split across
+  // whichever buckets were over, in priority order) if its own amount
+  // covers more than one's overage.
+  fundedBucketTopUps BucketAdHocTopUp[]
+
+  // Same convention as billId, for a tracked Income's paycheck instead of a
+  // bill — additive, doesn't touch isIncome. See matchIncomePayments.
+  incomeId String?
+  income   Income? @relation(fields: [incomeId], references: [id], onDelete: SetNull)
+
+  // A credit that pays back an earlier purchase — a store return, a P2P
+  // reimbursement (Mom's Venmo covering half the Verizon bill) — pointing
+  // the credit at the debit it offsets. Additive, like billId/incomeId:
+  // never touches bucketId/isIncome/isTransfer/patternId. Only ever set on
+  // the credit side (amountCents < 0); set manually (picked from a
+  // suggested-or-searched list, see src/app/transactions/actions.ts) or
+  // automatically for a RecurringPattern explicitly tied to a bill (see
+  // RecurringPattern.billId, src/lib/reimbursements.ts matchReimbursements).
+  reimbursesTransactionId String?
+  reimbursesTransaction   Transaction?  @relation("TransactionReimbursement", fields: [reimbursesTransactionId], references: [id], onDelete: SetNull)
+  reimbursedBy            Transaction[] @relation("TransactionReimbursement")
+
+  // The *split* counterpart of reimbursesTransactionId above: one credit
+  // (an asset-sale deposit, a lump paycheck) carved into partial amounts
+  // that each offset a specific debit — a loan payoff, a bill payment — with
+  // whatever's left over still counting as income. See TransactionOffset.
+  // Mutually exclusive with reimbursesTransactionId/reimbursesMerchant on
+  // the same credit (enforced in addTransactionOffset, not at the DB level).
+  offsetsAsCredit TransactionOffset[] @relation("OffsetCredit")
+  offsetsAsDebit  TransactionOffset[] @relation("OffsetDebit")
+
+  // Fallback for when a household knows a credit is a refund/reimbursement
+  // but can't identify which specific past debit it pays back (e.g. one of
+  // 15 Walmart trips) — mutually exclusive with reimbursesTransactionId; set
+  // by linkReimbursementToMerchant (src/app/transactions/actions.ts) instead
+  // of picking a candidate.
+  reimbursesMerchant String?
+
+  // The household looked at this unlinked credit's refund-match candidates
+  // (see ReimbursementLinker, src/components/reimbursement-linker.tsx) and
+  // said none of them apply — a credit that isn't actually a refund, or one
+  // whose original purchase isn't worth tracking down. Keeps it out of
+  // getUnmatchedRefunds (src/lib/refund-match.ts) without touching
+  // reimbursesTransactionId/reimbursesMerchant, so it's still just a plain
+  // credit otherwise — the household can Link it later if they change their
+  // mind (that flips this back to false in the same action).
+  refundReviewDismissed Boolean @default(false)
+
+  // A debt-payment transaction already covered by one or more specific
+  // bucketed purchases, for a spend-and-payoff card where only some payments
+  // correspond to already-bucketed purchases (a $175 Groceries purchase on
+  // the card, paid off from checking a day later — see WORKING_ON.md; a
+  // single payment can cover several same-day purchases, e.g. two Sam's Club
+  // trips settled by one card payment). Only meaningful on a transaction with
+  // debtPaymentId set; each row in accountedForLinks points at a specific
+  // budget-tracked purchase debit this payment is paying off. Partial, not
+  // all-or-nothing: getBucketsWithProgress (src/lib/buckets.ts) only excludes
+  // up to the sum of the linked purchases' own *net* amounts (netChargeCents
+  // — a purchase with its own linked refund counts net of that refund, not
+  // its gross charge) from the debt's bucket total — a payment that's larger
+  // than that sum (paid extra, rounded up) still counts for the difference,
+  // since that portion isn't accounted for anywhere else. Deliberately
+  // per-payment only — there is no whole-debt "exclude everything" toggle
+  // (removed 2026-08-19: a household never actually wants to blanket-exclude
+  // an account from a recurring/mixed bucket, only specific already-double-
+  // counted payments). Was a single scalar FK (accountedForByTransactionId)
+  // until 2026-09-24, when a real payment needed to cover two purchases at
+  // once — see DebtPaymentAccountedFor below.
+  accountedForLinks   DebtPaymentAccountedFor[] @relation("PaymentAccountedForLinks")
+  // The reverse side — every payment this specific purchase has been linked
+  // to as "already accounted for" by (normally at most one, but not DB-
+  // enforced).
+  accountedForByLinks DebtPaymentAccountedFor[] @relation("PurchaseAccountedForByLinks")
+
+  // Explicit "no, this is just a payment" answer to the "already accounted
+  // for?" question above — distinguishes "a household looked and decided
+  // no" from "never asked," so DebtPaymentRow's per-payment linker stops
+  // prompting once answered either way instead of re-asking on every visit.
+  // Mutually exclusive with accountedForByTransactionId in practice (the UI
+  // clears one the moment the other is set) but not enforced at the DB
+  // level. Clearing this (the "X" on its own ledger line, DebtPaymentRow)
+  // reverts the payment back to undecided, same as unlinking does for
+  // accountedForByTransactionId.
+  notAccountedFor Boolean @default(false)
+
+  // AI's best-guess bucket for an uncategorized transaction, used only to
+  // pre-fill the assign dropdown — never auto-applied to bucketId itself.
+  aiSuggestedBucketId String?
+  aiSuggestedBucket   Bucket? @relation("AiSuggestedBucket", fields: [aiSuggestedBucketId], references: [id], onDelete: SetNull)
+
+  // null for SYNCED transactions (no human added them)
+  createdByUserId String?
+  createdByUser   User?   @relation(fields: [createdByUserId], references: [id])
+
+  accountId              String?
+  account                Account? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  // SimpleFIN's own transaction id — dedup key for synced transactions
+  simpleFinTransactionId String?  @unique
+
+  merchant    String
+  amountCents Int
+  occurredOn  DateTime @db.Date
+  notes       String?
+  pending     Boolean  @default(false)
+
+  // SimpleFIN's own `description` field, saved as-is — separate from
+  // `merchant` (which prefers `payee`, falling back to this only when no
+  // payee was given). Before this field existed, `description` was silently
+  // discarded whenever a payee was present, even when it carried more detail
+  // (e.g. payee "AMAZON" vs. description "AMAZON.COM*A1B2C3 SEATTLE WA").
+  // null for any transaction synced before this field was added — there's no
+  // way to recover what was already dropped.
+  rawDescription String?
+
+  // Free-text organizational label the user sets by hand — distinct from
+  // `notes` (bank memo / one-time note at creation, never user-editable
+  // after the fact). Not part of the bucketId/debtId/isIncome/isTransfer/
+  // patternId mutual-exclusion set, and never touched by reassignment —
+  // purely descriptive, editable any time. See getLabelSuggestions in
+  // src/lib/transaction-labels.ts for the same-merchant autocomplete.
+  label String?
+
+  // --- Email-receipt enrichment (see src/lib/receipt-sync.ts) ---
+  // The real party behind an otherwise-opaque charge, learned from a matched
+  // receipt email: "Jane's Dog Walking" for a bare "Venmo" debit, "Blue
+  // Bottle Coffee" for "SQ *COFFEE BAR". Supersedes `merchant` as the
+  // MerchantRule key and the display name wherever it's set — this is what
+  // lets a P2P charge become an ordinary, learnable merchant. Deliberately
+  // kept on the Transaction (not only on the linked Receipt): the Receipt
+  // row is transient bookkeeping and gets purged, but this enrichment is
+  // permanent.
+  resolvedMerchant String?
+  // True when resolvedMerchant is an individual person (a friend/family P2P
+  // payment) rather than a business. A payment to a person "could be for
+  // anything" — so it keeps the suggest-only P2P treatment (name + memo used
+  // as a hint for THIS transaction, never a household-wide MerchantRule),
+  // whereas a payment to a business (a dog walker, a lawn service) becomes an
+  // ordinary learnable merchant. See categorizeUncategorizedTransactions and
+  // reassignTransaction.
+  resolvedMerchantIsPerson Boolean @default(false)
+  // Line items from the matched receipt, rendered in the expanded row —
+  // [{ description, qty, unitPriceCents, totalCents }]. Survives Receipt
+  // purge, same as resolvedMerchant.
+  receiptItems Json?
+  // The receipt's own total, for the "does the charge match the receipt"
+  // check — a mismatch (tip added, partial capture, duplicate) is flagged
+  // when receiptTotalCents != abs(amountCents).
+  receiptTotalCents Int?
+  // The memo / "what it was for" text off a matched receipt — the note on a
+  // Venmo/PayPal payment, or a short purpose line an order email states.
+  // Rendered in the expanded row and fed to the P2P categorization model as
+  // a per-transaction hint. Survives Receipt purge, same as the fields above.
+  receiptNote String?
+  // The P2P app a matched receipt was paid through ("Venmo"/"PayPal"/…),
+  // when the bank descriptor itself is opaque ("Transfer to Venmo"). Drives
+  // the "Venmo · Name" row title for a person payee and the "Paid with
+  // Venmo" line in the expanded receipt block for a merchant payee.
+  receiptPaidWith String?
+  // Set once the receipt-driven bucket check (reclassifyFromReceipts,
+  // src/lib/receipt-reclassify.ts) has *decided* about this transaction —
+  // moved it because the receipt's line items clearly belong elsewhere (a
+  // Sam's Club charge filed under Groceries by the merchant rule whose receipt
+  // is 16 gallons of unleaded → Fuel), or deliberately left it. The pass never
+  // runs on a transaction twice, and reassignTransaction stamps it too, so any
+  // manual bucket choice is final: the automation can never fight a human.
+  // Null = not yet considered (or the AI was unavailable — retried next sync).
+  receiptReclassAt DateTime?
+  // Reverse side of Receipt.transactionId — at most one receipt per
+  // transaction (a duplicate receipt for the same charge is marked STALE,
+  // see matchReceipts).
+  receipt Receipt?
+
+  // The non-primary leg of a receipt whose stated total split across two
+  // bank transactions — a bill's own bank posting its fee as a separate
+  // charge (Cedar Creek Irrigation: a $35 payment + its own $2 "online bill pay"
+  // convenience fee, one $37 receipt), or a multi-shipment order. The
+  // primary leg still uses the ordinary `receipt`/transactionId link above
+  // and carries all the usual enrichment (resolvedMerchant, receiptItems,
+  // etc.) — this just marks a second transaction as already accounted for
+  // by that same receipt, via linkReceiptToTransactions
+  // (src/app/transactions/actions.ts), so it doesn't keep showing up as a
+  // leftover unmatched charge.
+  extraLegReceiptId String?
+  extraLegReceipt   Receipt? @relation("ReceiptExtraLeg", fields: [extraLegReceiptId], references: [id], onDelete: SetNull)
+
+  // Reverse side of BucketTransactionAlert.transactionId — at most one
+  // per-transaction push ever, regardless of how many times the bucket's
+  // total gets recomputed afterward.
+  bucketTransactionAlert BucketTransactionAlert?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([householdId])
+  @@index([bucketId])
+  @@index([occurredOn])
+  @@index([accountId])
+  @@index([extraLegReceiptId])
+}
+
+// One slice of a credit transaction earmarked against a specific debit —
+// the split version of Transaction.reimbursesTransactionId (which is
+// all-or-nothing). Real case: a $7,515.34 trailer-sale deposit where
+// $3,523.93 paid off the Trailer Loan and $934.66 the F150 Loan, leaving
+// $3,056.75 as real income. Each offset just removes its amountCents from
+// what the credit contributes as income (getAdHocIncomeThisMonth,
+// monthly-report.ts); if the target debit is itself budget-tracked spend
+// (debit.bucketId set) it also nets against that bucket, same partial rule
+// as Transaction.accountedForByTransactionId. The debit side is untouched —
+// a loan payoff already reduced the balance on its own.
+model TransactionOffset {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  creditTransactionId String
+  credit              Transaction @relation("OffsetCredit", fields: [creditTransactionId], references: [id], onDelete: Cascade)
+  debitTransactionId  String
+  debit               Transaction @relation("OffsetDebit", fields: [debitTransactionId], references: [id], onDelete: Cascade)
+
+  amountCents Int
+
+  createdAt DateTime @default(now())
+
+  @@unique([creditTransactionId, debitTransactionId])
+  @@index([householdId])
+  @@index([debitTransactionId])
+}
+
+// One (payment, purchase) confirmation — see Transaction.accountedForLinks
+// for the full "why" and the netting rule this feeds. A join table rather
+// than a scalar FK on the payment specifically so one payment can cover
+// several purchases (e.g. two same-day Sam's Club trips paid off by one card
+// payment); no amountCents of its own, unlike TransactionOffset — each link
+// contributes the purchase's own net amount (netChargeCents), not a
+// separately-negotiated split.
+model DebtPaymentAccountedFor {
+  id                    String      @id @default(cuid())
+  paymentTransactionId  String
+  paymentTransaction    Transaction @relation("PaymentAccountedForLinks", fields: [paymentTransactionId], references: [id], onDelete: Cascade)
+  purchaseTransactionId String
+  purchaseTransaction   Transaction @relation("PurchaseAccountedForByLinks", fields: [purchaseTransactionId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([paymentTransactionId, purchaseTransactionId])
+  @@index([paymentTransactionId])
+  @@index([purchaseTransactionId])
+}
+
+// Tracks dismissed AI/heuristic suggestions (recurring income, unlinked BNPL
+// payments) so a "no thanks" doesn't keep re-nagging on every sync.
+model SuggestionDismissal {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  kind String // "INCOME" | "BNPL"
+  key  String // normalized merchant/description this suggestion was about
+
+  createdAt DateTime @default(now())
+
+  @@unique([householdId, kind, key])
+}
+
+// A merchant-name keyword the household's own AI connection confirmed
+// belongs to some hardcoded, slow-moving brand list (checkForNewKeywords,
+// src/lib/keyword-learning.ts) — layered on top of the matching static list
+// (BNPL_KEYWORDS/SUBSCRIPTION_KEYWORDS) everywhere it's used, so a lender/
+// subscription not in the hardcoded list only ever needs to be recognized
+// once per household before every future charge from it is found
+// automatically, the same as one of the built-in ones. `kind` tags which
+// static list this extends — same plain-string-tag convention as
+// SuggestionDismissal.kind, not a Prisma enum, since this is expected to
+// grow (a third hardcoded list someday) without a schema change each time.
+model LearnedKeyword {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  kind      String // "BNPL" | "SUBSCRIPTION"
+  keyword   String // lowercase substring, same convention as the static lists
+  createdAt DateTime @default(now())
+
+  @@unique([householdId, kind, keyword])
+}
+
+// One-time-ever cache of "does this merchant belong to list X" AI checks
+// (checkForNewKeywords) — a merchant is only ever asked about a given kind
+// once, whether the answer was yes or no, so a normal recurring merchant
+// that merely *looks* like a match (fixed amount, recurring) doesn't burn an
+// AI call again on every future sync once it's been ruled out. Scoped by
+// kind, not just merchant — the same merchant name is a meaningful question
+// for both "is this BNPL" and "is this a subscription" independently.
+model MerchantKeywordCheck {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  kind      String // "BNPL" | "SUBSCRIPTION"
+  merchant  String // normalized (trimmed, lowercased) merchant text checked
+  isMatch   Boolean
+  checkedAt DateTime @default(now())
+
+  @@unique([householdId, kind, merchant])
+}
+
+// Persistent, indexed household memory of "what is this merchant" — the
+// single lookup the categorization sweep checks before ever asking Gemini.
+// Populated both by confirmed user reclassification (confidence 1, source
+// USER) AND by every AI guess, even low-confidence ones (source AI) — a
+// merchant only ever gets asked about once; every later transaction from it,
+// on any account, reuses this instead of burning another API call. Also
+// what lets a refund get routed back into the merchant's usual bucket
+// instead of defaulting to "income" just because money came in.
+model MerchantRule {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  // Lowercased, trimmed merchant string — exact match only (see the BNPL
+  // substring-vs-exact incident in debt-reassign.ts for why "contains" is
+  // dangerous here: "Nike - Klarna" must never inherit "Klarna"'s rule).
+  merchant String
+
+  // Optional amount window, always set as a pair. NULL/NULL is the
+  // merchant's single *base* rule — the one the learning path writes and
+  // rewrites (upsertMerchantRule, src/lib/merchant-rules.ts). A row with
+  // bounds set is a user-authored *override*: when an incoming transaction's
+  // amount falls inside [min, max] it wins over the base rule, narrowest
+  // window first (pickMerchantRule). Lets one merchant fan out to different
+  // buckets by size — e.g. "QuikStop under $15 → Dining, otherwise → Fuel."
+  amountMinCents Int?
+  amountMaxCents Int?
+  // True only for a bounded override a human created by hand (the "only send
+  // <merchant> under $X here" control on the Move panel). The learning path
+  // never touches these rows, and a merchant-rule wipe / re-learn from the
+  // database settings page leaves them in place.
+  managedByUser Boolean @default(false)
+
+  bucketId String?
+  bucket   Bucket? @relation(fields: [bucketId], references: [id], onDelete: SetNull)
+
+  debtId String?
+  debt   Debt?   @relation(fields: [debtId], references: [id], onDelete: SetNull)
+
+  // The learned subcategory for this merchant — parallel to bucketId, same
+  // confidence/source semantics, applied to Transaction.categoryId by
+  // categorizeUncategorizedTransactions (src/lib/simplefin-sync.ts) whenever
+  // bucketId is (2026-08-23). Never set for a P2P merchant (see the
+  // isP2PMerchant guard at every upsertMerchantRule call site) — a rule keyed
+  // on "venmo" would be meaningless across completely unrelated P2P activity.
+  categoryId String?
+  category   BillCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  isTransfer Boolean @default(false)
+  isIncome   Boolean @default(false)
+
+  confidence Float  @default(1) // 1 = user-confirmed; AI guesses carry their own score
+  source     String // "USER" | "AI"
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // A merchant can carry several rows now (one base rule + bounded
+  // overrides), so there's no DB uniqueness constraint. upsertMerchantRule
+  // keeps the base rule (NULL/NULL bounds) unique on its own by selecting
+  // the existing row before writing; setBoundedMerchantRule does the same
+  // per (merchant, min, max) window.
+  @@index([householdId, merchant])
+}
+
+// A logo domain is a fact about the merchant itself, not about any one
+// household's relationship to it — global cache, no householdId, keyed
+// directly on the normalized merchant string. Resolved once per distinct
+// merchant ever seen (across every household on this install) and never
+// re-attempted: `domain: null` is a cached "no logo found" result, not
+// "not yet looked up" — see resolveMerchantLogoDomain in
+// src/lib/merchant-logo-resolve.ts.
+model MerchantLogoDomain {
+  merchant   String   @id // lowercased, trimmed
+  domain     String?
+  resolvedAt DateTime @default(now())
+}
+
+enum PatternDirection {
+  CREDIT // money in — a reimbursement, a friend paying you back
+  DEBIT // money out — a recurring Venmo-paid activity, etc.
+}
+
+// A household-defined label for a recurring (or recurring-but-variable) P2P
+// transfer — "Dance", "Basketball - Rec League", "Haircuts" — so a generic
+// "Venmo" line in the bank feed can be recognized and routed automatically
+// instead of sitting as an anonymous transfer forever. Distinct from
+// MerchantRule (exact-merchant lookup) because P2P apps never carry the
+// payee's real name — the only signal available is amount (often a range,
+// not a fixed number) plus roughly when it happens.
+model RecurringPattern {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  label     String
+  direction PatternDirection
+  // Substring matched against the transaction's merchant/description text
+  // — "venmo", "zelle", "cash app". Safe as a substring (unlike BNPL brand
+  // names): a P2P app's name never legitimately appears inside an unrelated
+  // retailer's own merchant text.
+  channelKeyword String
+
+  amountMinCents Int
+  amountMaxCents Int
+
+  // Both optional, used only to break a tie when a transaction's amount
+  // falls inside more than one pattern's range (e.g. two same-priced
+  // activities) — never required for a match on their own.
+  dayOfMonthStart Int?
+  dayOfMonthEnd   Int?
+  weekdays        Int[] // 0=Sun..6=Sat; empty = no weekday preference
+
+  // 2026-09-11: real counterparty identity + real scheduling, layered on top
+  // of the original channelKeyword+amount-range shape above (which stays
+  // live and unchanged for a household/transaction with no email connected —
+  // see resolveCounterpartyMatch's own comment, src/lib/pattern-match.ts).
+  //
+  // The specific P2P person this pattern is scoped to — matched against
+  // Transaction.resolvedMerchant (receipt-driven, see receipt-sync.ts),
+  // never derived from raw bank text, which never carries a real P2P
+  // counterparty name at all. "Counterparty," not "payee": this also covers
+  // a CREDIT pattern, where the person is who the money came *from*, the
+  // opposite of a payee. Null on a pattern created with no resolved
+  // receipt to prefill from — that one keeps matching on channelKeyword +
+  // amount alone, exactly as before this field existed.
+  counterpartyName String?
+  // Zero or more aliases checked against Transaction.receiptNote — matches
+  // if *any* one is a substring (case-insensitive), not one exact string.
+  // For disambiguating two patterns that share the same counterpartyName
+  // (e.g. Hoops Academy paid for both kids' basketball): rather than
+  // guess nickname equivalence (Sammy/Sam, Benny/Ben/Benjamin — too
+  // dissimilar for fuzzy string matching to catch reliably), the household
+  // lists every variant they actually see once. Empty = no note filter.
+  noteKeywords String[]
+
+  // Real scheduling, same shape as RecurringBill's own fields (see that
+  // model's comments for the full reasoning — cadence/nextDueDate/
+  // lastPaidDate/toleranceCents/dueDateLocked all mean the same thing
+  // here). Null cadence/nextDueDate = this pattern has no real cycle yet
+  // (every pattern before this field existed, and any new one the
+  // household chooses not to schedule) — matchRecurringPattern keeps
+  // working exactly as before for those; matchPatternPayments
+  // (src/lib/pattern-payments.ts) only ever walks a cycle for a pattern
+  // that has one.
+  cadence        BillCadence?
+  nextDueDate    DateTime?    @db.Date
+  lastPaidDate   DateTime?    @db.Date
+  toleranceCents Int?
+  dueDateLocked  Boolean      @default(false)
+
+  // DEBIT only, mutually exclusive with debtId: matches file straight into
+  // this bucket, same as any other spend, just without needing AI/manual
+  // assignment each time.
+  bucketId String?
+  bucket   Bucket? @relation(fields: [bucketId], references: [id], onDelete: SetNull)
+
+  // DEBIT only, mutually exclusive with bucketId: matches file as a payment
+  // toward this debt instead of spend — same "Bucket vs Debt payment" choice
+  // assignTransferOnce already offers for a one-off P2P debit.
+  debtId String?
+  debt   Debt?   @relation(fields: [debtId], references: [id], onDelete: SetNull)
+
+  // CREDIT only: most P2P money-in is a reimbursement, not new household
+  // income — default false. Flip on for a pattern that really is income
+  // (e.g. a side gig paid over Venmo).
+  countsAsIncome Boolean @default(false)
+
+  // CREDIT + countsAsIncome:false only, optional: pins this reimbursement
+  // pattern to the specific bill it pays back (e.g. "Mom - Verizon" ->
+  // the Verizon RecurringBill). Lets matchReimbursements
+  // (src/lib/reimbursements.ts) auto-link every matching transaction to
+  // that cycle's bill payment with zero ambiguity, since the household
+  // explicitly chose both sides — an unpinned reimbursement pattern (an
+  // ad hoc IOU, nothing tracked as a bill) is never auto-linked, only ever
+  // manually from the transaction itself.
+  billId String?
+  bill   RecurringBill? @relation(fields: [billId], references: [id], onDelete: SetNull)
+
+  // Optional subcategory this pattern's matched transactions get tagged
+  // with (e.g. a "Weekly Training" DEBIT pattern -> "Extracurricular") —
+  // applied to Transaction.categoryId at match time (patternMatchData,
+  // src/lib/pattern-match.ts) same as bucketId/debtId are. Not required —
+  // a household's existing patterns just leave this null (shown as
+  // "Uncategorized") until edited.
+  categoryId String?
+  category   BillCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  active Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  transactions          Transaction[]
+  patternPaymentReviews PatternPaymentReview[]
+
+  @@index([householdId])
+}
+
+// The RecurringPattern counterpart to DebtAmountReview (see that model's own
+// comment for the precedent this mirrors): matchPatternPayments
+// (src/lib/pattern-payments.ts) creates one whenever a transaction matches a
+// scheduled pattern's counterparty(+note) but falls outside its amount/date
+// tolerance — surfaced on the dashboard (PatternPaymentReviewCard) instead
+// of either silently forcing it through as this cycle's payment or silently
+// leaving it as an ordinary unclassified transaction.
+model PatternPaymentReview {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  patternId String
+  pattern   RecurringPattern @relation(fields: [patternId], references: [id], onDelete: Cascade)
+
+  transactionId String      @unique
+  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  observedAmountCents Int
+  // Snapshot of the pattern's own expected amount at detection time (the
+  // midpoint of amountMinCents/amountMaxCents), so the dashboard card can
+  // show "expected $X, saw $Y" even if the pattern itself changes before
+  // this gets resolved — same reasoning as DebtAmountReview.expectedAmountCents.
+  expectedAmountCents Int
+
+  // Null = still pending (the dashboard card's own filter). Set the moment
+  // a household declines ("No, just a payment") — declinePatternPaymentReview
+  // (src/app/transactions/actions.ts) updates this instead of deleting the
+  // row, specifically so the transactionId stays occupied: this same
+  // model's own @unique on transactionId is what raisePatternPaymentReview's
+  // candidate query (patternPaymentReview: null) relies on to never
+  // re-flag a transaction that's already been through this once. Deleting
+  // on decline freed that transactionId back up, so the very next sync
+  // re-found the identical non-qualifying transaction and raised an
+  // identical review again — real finding, 2026-09-12 code review.
+  declinedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([householdId])
+}
+
+enum BillCadence {
+  WEEKLY
+  BIWEEKLY
+  MONTHLY
+  ANNUAL
+}
+
+// What kind of bill this is, distinct from bucketId (which spending bucket
+// it counts against) — a household's mortgage, car loan, and Netflix
+// subscription might all land in one general "Bills" bucket for budget-cap
+// purposes, but still need their own identity here for at-a-glance grouping
+// on /bills.
+// Fully household-managed — not a fixed enum, so a household can add or
+// remove whatever categories are actually useful to them ("Card payment"
+// alongside "Loan payment") without a code change. Deleting one just clears
+// any bill's categoryId back to null (see onDelete: SetNull on
+// RecurringBill, displayed as "Uncategorized") — never touches the bill
+// itself, same "removing a label never destroys the thing it labeled"
+// convention as everywhere else labels get deleted in this app.
+model BillCategory {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  name String
+
+  // Scopes this category to one bucket (2026-08-23, household request — a
+  // Dining bucket's category picker was showing Bills' own categories like
+  // "BNPL"/"Card Payment", which read as wrong). Nullable, not required,
+  // same "removing a label never destroys the thing it labeled" convention
+  // as the rest of this model — a category orphaned by its bucket being
+  // deleted just stops showing anywhere rather than erroring, instead of
+  // forcing a cascade delete of every bill/transaction that used it.
+  bucketId String?
+  bucket   Bucket? @relation(fields: [bucketId], references: [id], onDelete: SetNull)
+
+  bills              RecurringBill[]
+  debtPayments       DebtPayment[]
+  transactions       Transaction[]
+  aiSuggestedForTxns Transaction[]    @relation("AiSuggestedCategory")
+  merchantRules      MerchantRule[]
+  recurringPatterns  RecurringPattern[]
+
+  createdAt DateTime @default(now())
+
+  // Scoped per bucket, not per household — two different buckets can each
+  // have their own "Entertainment" category without colliding (real case:
+  // both One-offs and Kids' Activities want one). A null-bucketId category
+  // (orphaned, or a household-wide income/reimbursement pattern's pick —
+  // see RecurringPattern.categoryId's own comment) is never deduplicated
+  // against another null-bucketId one this way, but nothing creates those
+  // anymore going forward (createBillCategory now always requires a
+  // bucketId) — a pre-existing null-bucketId row is a read-only leftover.
+  @@unique([bucketId, name])
+  @@index([householdId])
+}
+
+// A recurring, non-debt household obligation — subscriptions (Netflix,
+// Spotify), utility/insurance bills, rent — either detected from synced
+// spend history (see detectRecurringBills in bill-detect.ts) or entered
+// manually for a cash-paid bill with nothing in the bank feed to match.
+// Distinct from Debt (tracks a balance being paid down) and from
+// RecurringPattern (only ever labels P2P transfers) — a bill has no
+// balance, just a repeating due date and an expected amount.
+model RecurringBill {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  name String
+  // Lowercased/trimmed exact-match merchant text (same convention as
+  // MerchantRule/BNPL_KEYWORDS) used to auto-detect this cycle's payment in
+  // the synced feed. Null for a manual-only bill with nothing to match —
+  // "mark paid" on that one is always a manual click.
+  merchant    String?
+  // The most recent matched payment's Transaction.rawDescription (e.g.
+  // "AMAZON PRIME*4F5KU7MP3 AMZN.COM/BILL") — a corroborating signal for
+  // matchBillPayments when `merchant` alone is too generic to be trusted
+  // (see NAME_SIMILARITY_THRESHOLD's substring-containment tier). Null until
+  // the first match with a non-empty rawDescription; refreshed on every
+  // match after that, same convention as amountCents below. Real incident
+  // (2026-08-26): a bill named "Amazon Prime Membership" (merchant "amazon
+  // prime membership") matched two unrelated Amazon.com retail purchases,
+  // because Transaction.merchant for both was just "Amazon" — a 6-char
+  // substring of the tracked name, enough to clear nameSimilarity's 0.8
+  // containment tier — while the real Prime charge posted the next day and
+  // was left unmatched, since the bill's cycle had already rolled forward.
+  // rawDescription for the same three transactions told them apart cleanly
+  // ("AMAZON MARK*…"/"POINT OF SALE…AMAZON.COM" vs "AMAZON PRIME*…AMZN.COM/
+  // BILL"), so matchBillPayments now requires it to corroborate a
+  // non-exact merchant match whenever both sides have one recorded.
+  lastMatchDescriptor String?
+  amountCents Int
+  cadence     BillCadence
+  // Overrides amountToleranceCents' default (30% of amountCents, $5 floor)
+  // when matchBillPayments checks a synced transaction against this bill —
+  // null means "use the default." Settable per-bill since a household
+  // tracking a specific known-variable bill (a usage-based utility, an
+  // API subscription) may want a wider or narrower band than the blanket
+  // heuristic guesses.
+  toleranceCents Int?
+
+  // Nullable, not required — a household can delete the category a bill was
+  // using (see BillCategory's onDelete: SetNull); the bill just shows as
+  // "Uncategorized" rather than being blocked or force-migrated elsewhere.
+  categoryId String?
+  category   BillCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  bucketId String?
+  bucket   Bucket? @relation(fields: [bucketId], references: [id], onDelete: SetNull)
+
+  // The next *unpaid* occurrence's due date. Rolls forward by exactly one
+  // cadence period from the prior due date — never re-estimated from
+  // payment history (see nextBillDueDate's roll-forward call sites, which
+  // always pass empty history) — the moment that occurrence is confirmed
+  // paid (auto-matched by matchBillPayments, or a manual "mark paid"). See
+  // src/lib/recurring-bills.ts.
+  nextDueDate  DateTime  @db.Date
+  lastPaidDate DateTime? @db.Date
+  // False until a human has explicitly confirmed this due date — either by
+  // typing it on manual creation, or by saving the edit form (see
+  // createBill/updateBill). Until then it's just the app's own best guess
+  // (from detected payment history, or a single originating transaction's
+  // date) — shown with an "approximate" marker in the UI, and nags the
+  // Buckets nav tab, until confirmed.
+  dueDateLocked Boolean @default(false)
+
+  active Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  payments             Transaction[]
+  reimbursementPatterns RecurringPattern[]
+  extraChargeRules      BillExtraChargeRule[]
+  cycleSkips            BillCycleSkip[]
+  billNotices           BillNoticeEmail[]
+  amountReviews         BillAmountReview[]
+
+  @@index([householdId])
+}
+
+// A household manually confirming a "leftover" transaction belongs to this
+// bill (attachExtraBillCharge, bills/actions.ts) teaches Flow to keep
+// re-attaching that SAME small ancillary charge automatically each future
+// cycle instead of asking again — matchBillPayments applies it right after
+// finding a cycle's own official payment, so it can only ever attach within
+// a tight window of that real payment date (2026-09-14 household
+// confirmation: a bill's own charge and its fee always land the same day in
+// practice; MATCH_WINDOW_DAYS on either side covers real-world slip without
+// reaching into a neighboring cycle). Kept as its own table rather than a
+// MerchantRule row: MerchantRule's other fields apply unconditionally to
+// every transaction from that merchant, while this only ever fires near one
+// specific bill's own cycle, tightly amount-bound to the confirmed fee — a
+// same-descriptor charge for an unrelated amount is never swept in
+// (household concern, 2026-09-14: "make sure the total still lines up with
+// expected amount" — see extraChargeToleranceCents, recurring-bills.ts).
+model BillExtraChargeRule {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  billId String
+  bill   RecurringBill @relation(fields: [billId], references: [id], onDelete: Cascade)
+
+  // Lowercased, trimmed — same convention as MerchantRule.merchant.
+  merchant    String
+  amountCents Int
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([billId, merchant])
+  @@index([householdId, merchant])
+}
+
+// A household's "no payment expected this cycle" decision for a specific
+// bill cycle — a credit/surplus/overpayment covers it and the household
+// knows for certain, ahead of the due date, not just once it's sat overdue
+// long enough to guess (household request, 2026-09-14: Summit Gas showed a
+// credit balance days before its due date). Mirrors PayoffExtraSkip's own
+// shape/reasoning (see that model's comment) but for a RecurringBill's own
+// due-date cycle instead of a payoff-plan extra's fixed paycheck. Unlike a
+// payoff extra's cadence (purely computed, nothing to move), a bill's own
+// nextDueDate has to actually advance to the next occurrence for the skip
+// to take effect — skipBillCycle (src/app/bills/actions.ts) does both
+// together: this row records what got skipped (cycleDueDate is the due
+// date that was skipped, i.e. nextDueDate's value right before advancing —
+// not the new nextDueDate), and RecurringBill.nextDueDate moves forward.
+// This is what lets a bill row still render "Skipped {date}" with an Undo
+// for the rest of that cycle instead of silently becoming indistinguishable
+// from an ordinary upcoming bill the moment nextDueDate moves — BillRow
+// treats the most recent skip as still "active" (worth showing) exactly
+// while it's the one that maps forward to the bill's current nextDueDate;
+// see getActiveBillCycleSkips, src/lib/recurring-bills.ts. Unique on
+// (billId, cycleDueDate) so a duplicate skip click is idempotent and a
+// later cycle naturally starts unskipped again — same "no separate
+// rollover cleanup" shape as PayoffExtraSkip.
+model BillCycleSkip {
+  id          String        @id @default(cuid())
+  householdId String
+  household   Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  billId      String
+  bill        RecurringBill @relation(fields: [billId], references: [id], onDelete: Cascade)
+
+  cycleDueDate DateTime @db.Date
+  skippedAt    DateTime @default(now())
+
+  @@unique([billId, cycleDueDate])
+  @@index([householdId])
+}
+
+// A card/loan/BNPL plan's tracked recurring payment — the debt-payment
+// counterpart to RecurringBill, split into its own model since the two
+// diverged enough to stop sharing one: this matches by exact debtId (no
+// merchant-text ambiguity to guard against, so no matching window), keeps
+// every matching payment linked — not just the one that completes a cycle
+// — so extra/additional payments toward the same debt are visible too (see
+// src/lib/debt-payments.ts). REVOLVING's expected amount drifts
+// automatically within a tolerance band (a card's minimum due varies far
+// more than its due date ever does) with a human asked to confirm anything
+// further outside that band (see DebtAmountReview) — INSTALLMENT/BNPL uses
+// the same tolerance band mechanically but at a much tighter default (a
+// plan's payment is fixed by contract, not a drifting minimum) and never
+// creates a DebtAmountReview; an out-of-band candidate there just stays
+// unmatched instead (see matchInstallmentPayments). Until 2026-08-16 this
+// model was REVOLVING-only — BNPL's fixed-payment-count shape didn't fit
+// "rolls forward forever," so it tracked progress by hand on Debt.
+// installmentsRemaining alone. Now an INSTALLMENT Debt can have one too:
+// each linked payment decrements Debt.installmentsRemaining/recomputes
+// balanceCents instead of updating Debt.minPaymentCents.
+model DebtPayment {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  // Required and unique — a debt has at most one active payment tracker.
+  // Previously this relationship was optional/unenforced on RecurringBill,
+  // which meant nothing stopped a household from accidentally tracking the
+  // same debt twice (two trackers racing to claim the same transactions);
+  // splitting the model is also the natural point to close that off.
+  debtId String @unique
+  debt   Debt   @relation(fields: [debtId], references: [id], onDelete: Cascade)
+
+  // The regular per-cycle minimum — what a fresh, caught-up cycle's amount
+  // due resets to. Distinct from amountDueCents below (2026-08-26 rework —
+  // see that field's comment): this one only changes when the household
+  // confirms a genuine change to the tracked minimum itself (drift review,
+  // or editing it directly), never as a side effect of a missed or partial
+  // payment.
+  amountCents Int
+  // The live rolling total actually owed right now — starts equal to
+  // amountCents and is the household's real "amount due" everywhere this
+  // debt's minimum is shown. Real money model, not per-cycle slot-matching:
+  // matchDebtPayments (src/lib/debt-payments.ts) advances nextDueDate on
+  // schedule regardless of payment (a new statement always arrives), and
+  // whatever's left unpaid here when that happens carries forward, plus the
+  // next cycle's amountCents — same "past due + new minimum" a real card
+  // statement shows, additive across however many cycles were missed in a
+  // row. Any real synced payment (full or partial) just subtracts from this
+  // directly, fully automatically — no per-cycle matching/tolerance
+  // ambiguity anymore, since a partial payment is now just a normal partial
+  // reduction, not something that has to exactly satisfy a slot. Correctable
+  // any time without touching nextDueDate — see settleDebtAmountDue
+  // (debts/actions.ts), the inline "Mark Caught Up" button on the row
+  // itself (household feedback, 2026-08-26: going into settings to correct
+  // this "is not obvious") — for whenever the calculated number is wrong
+  // (a surplus/credit the household knows about that we can't see).
+  amountDueCents Int
+  cadence        BillCadence
+  // Same meaning/default as RecurringBill.toleranceCents — see
+  // amountToleranceCents in src/lib/recurring-bills.ts.
+  toleranceCents Int?
+
+  // Same meaning/nullability as RecurringBill.categoryId — a household
+  // typically picks "Card payment"/"Loan payment" here (see
+  // acceptDebtPaymentSuggestion's find-or-create logic), but nothing
+  // forces it, and deleting the category just clears this back to null.
+  categoryId String?
+  category   BillCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  nextDueDate   DateTime  @db.Date
+  lastPaidDate  DateTime? @db.Date
+  // Same meaning as RecurringBill.dueDateLocked — see that field's comment.
+  dueDateLocked Boolean   @default(false)
+
+  // A debt payment is still isTransfer:true on its linked Transactions (its
+  // own bucketId is always null, per the mutual-exclusion convention in
+  // WORKING_ON.md) — but assigning one to a Bucket here does count its
+  // linked payments toward that bucket's spentCents/monthlyCapCents, same as
+  // a real bill (see getBucketsWithProgress's debtSpentByBucketId,
+  // src/lib/buckets.ts — reversed 2026-08-15 from originally excluding it: a
+  // household's monthly cap on a "Bills" bucket is meant to cover everything
+  // recurring, debt or not, confirmed after a debt payment noticeably
+  // dropped out of the total once it stopped being informally tracked as a
+  // plain bill). It never affects the debt payoff calculator, which reads
+  // Debt/DebtPayment directly regardless of this field — only budget totals
+  // are in play. Real double-counting risk: if the underlying account is
+  // also Account.budgetTracked, its purchases already land as spend in
+  // whatever bucket they categorize into — assigning this DebtPayment to a
+  // bucket too means the same money counts twice, split across two
+  // buckets. BucketBillsSection (src/app/buckets/[id]/bucket-bills-section.tsx)
+  // flags that specific combination in the UI.
+  //
+  // Nullable in the schema, but every creation/edit path now defaults it
+  // (defaultDebtPaymentBucketId — "Bills", else the first RECURRING bucket)
+  // and the setup forms require a pick: an active debt payment is meant to
+  // live inside a bucket cap (its minimum + any payoff-plan extra is folded
+  // in as that bucket's floor — see debtFloorCents, src/lib/budget-plan.ts).
+  // A leftover null only happens when the household has no bucket to default
+  // to; the /budget allocator surfaces it as "not in a bucket yet".
+  bucketId String?
+  bucket   Bucket? @relation(fields: [bucketId], references: [id], onDelete: SetNull)
+
+  // A household's manual "stop showing this in the bucket" call for a
+  // paid-off ($0 balance) debt — hideDebtPaymentFromBucket (debts/actions.ts)
+  // sets this, without touching bucketId itself, so the original assignment
+  // survives underneath. Cleared automatically (self-healing, same
+  // convention as Debt.paidOffDate) the moment the debt's balance goes
+  // positive again — see unhideDebtPaymentIfBalanceReturned in
+  // debt-payments.ts, called from every path that writes Debt.balanceCents.
+  hiddenFromBucket Boolean @default(false)
+
+  active Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  payments Transaction[]
+  reviews  DebtAmountReview[]
+
+  @@index([householdId])
+  @@index([bucketId])
+}
+
+enum DebtAmountReviewSource {
+  // Detected from an out-of-band overpayment on a synced bank transaction —
+  // see the cycleAlreadyAdvanced comment below for the trigger.
+  BANK_SYNC
+  // Detected from a parsed "amount due" email (see BillNoticeEmail) stating
+  // a new minimum that doesn't match the tracked amount — no transaction
+  // involved, since the notice arrives before any payment posts.
+  EMAIL
+}
+
+// A pending "did your minimum payment change?" question — created either
+// when every candidate transaction for a debt payment's current cycle falls
+// below its expected-amount tolerance band (BANK_SYNC), or when a parsed
+// bill-notice email states a different minimum than what's tracked (EMAIL),
+// so the app can't tell on its own whether that's a genuine minimum-payment
+// change. Surfaced on the dashboard (see debt-amount-review-card.tsx);
+// resolving it (confirmDebtAmountChanged/declineDebtAmountChanged in
+// src/app/debts/actions.ts) deletes the row either way.
+model DebtAmountReview {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  debtPaymentId String
+  debtPayment   DebtPayment @relation(fields: [debtPaymentId], references: [id], onDelete: Cascade)
+
+  // Null for an EMAIL-sourced review — a bill notice arrives before any
+  // payment posts, so there's nothing to link. Required (and the linking
+  // call in confirm/declineDebtAmountChanged) only for BANK_SYNC.
+  transactionId String?      @unique
+  transaction   Transaction? @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  source DebtAmountReviewSource @default(BANK_SYNC)
+
+  // Set only for an EMAIL-sourced review — the notice that triggered it.
+  // Unique: a notice produces at most one pending review (see
+  // matchBillNoticeAmounts, src/lib/bill-notice-sync.ts, which updates the
+  // existing pending row in place rather than creating a second one).
+  billNoticeEmailId String?          @unique
+  billNoticeEmail   BillNoticeEmail? @relation(fields: [billNoticeEmailId], references: [id], onDelete: Cascade)
+  // Context captured off an EMAIL-sourced notice for display only — never
+  // auto-applied to DebtPayment.nextDueDate. Null for BANK_SYNC.
+  dueDate      DateTime? @db.Date
+  accountLast4 String?
+
+  observedAmountCents Int
+  // Snapshot of DebtPayment.amountCents at detection time, so the dashboard
+  // card can show "expected $X, saw $Y" even if amountCents itself moves
+  // before this gets resolved.
+  expectedAmountCents Int
+  // Snapshot of DebtPayment.amountDueCents at detection time — EMAIL only
+  // (null for BANK_SYNC, which never touches amountDueCents on confirm; see
+  // cycleAlreadyAdvanced below). Compared against the *current* amountDueCents
+  // on confirm (shouldRefreshAmountDueOnEmailConfirm, debt-payments.ts) to
+  // decide whether the cycle is still untouched since the notice landed —
+  // NOT compared against expectedAmountCents above, which is the flat
+  // per-cycle minimum and only equals amountDueCents when the debt has zero
+  // arrears (real finding, 2026-09-22 code review: comparing against
+  // expectedAmountCents meant a behind debt's amountDueCents could never
+  // refresh on confirm, even on a genuinely untouched cycle).
+  expectedAmountDueCents Int?
+
+  // Always true since the 2026-08-26 rolling-balance rework (matchDebtPayments
+  // no longer creates the old false/"blocking" kind — a below-tolerance
+  // underpayment is just a normal partial reduction now, not something that
+  // withholds cycle completion; see DebtPayment.amountDueCents). Every
+  // BANK_SYNC review is this out-of-band-overpayment kind: a debt that
+  // isn't the paydown plan's current priority (see getPriorityDebtId,
+  // debt-payments.ts) got a payment well over its tracked minimum — the
+  // amount already applied against amountDueCents regardless, so resolving
+  // this only ever updates amountCents itself for future cycles, never
+  // nextDueDate/amountDueCents again (see confirmDebtAmountChanged,
+  // debts/actions.ts). Also always true for EMAIL — a notice never rolls
+  // the payment cycle either, same "don't touch nextDueDate/lastPaidDate on
+  // confirm" behavior applies. Kept as a real column rather than deleted
+  // outright — still meaningful context on any review row, cheap to keep.
+  cycleAlreadyAdvanced Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([householdId])
+}
+
+// A household's "yes, this manual revolving debt is actually paid off"
+// confirmation — see Debt.balanceCents's schema comment for the
+// interest-accrual auto-derivation that creates these. Unlike
+// DebtAmountReview, there's no specific transaction to point at (the $0
+// crossing is a derived state after a whole sync pass, not one payment) and
+// nothing to compare — the only question is yes/no. Same "existence =
+// pending, resolving deletes the row" convention: created once on the
+// balance's >0 -> <=0 transition (matchDebtPayments, src/lib/debt-
+// payments.ts), guarded against duplicates the same way
+// hasPendingDriftReview guards DebtAmountReview, and left alone (balance
+// frozen at its last confirmed value, nothing written) every sync a row is
+// already pending — see confirmDebtBalancePaidOff/declineDebtBalancePaidOff,
+// src/app/debts/actions.ts. Confirming is what actually writes
+// balanceCents to 0 and stamps paidOffDate; declining just clears the
+// question and leaves it to the household to correct the real balance by
+// hand if the math was off.
+model DebtBalanceReview {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  debtId String @unique
+  debt   Debt   @relation(fields: [debtId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([householdId])
+}
+
+// Caches the AI-generated one-line "what's due" nudge on the dashboard's
+// bills card — regenerated at most once/day per household regardless of how
+// many times the card is viewed (same reasoning as MonthlyInsight below:
+// Gemini quota is a real, billed constraint, not a per-page-load call).
+model BillsInsight {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  dateKey String // "YYYY-MM-DD"
+  // Short hash of the bill snapshot (ids/amounts/paid/due dates) this was
+  // generated from — see getUpcomingBillsSummary. Without this, a summary
+  // cached early in the day goes stale — and visibly contradicts the "this
+  // week" list rendered right below it on the dashboard — the moment
+  // anything about the underlying bills changes later the same day (a due
+  // date correction, a bill marked paid, a newly tracked bill).
+  snapshotHash String
+  summary      String @db.Text
+
+  createdAt DateTime @default(now())
+
+  @@unique([householdId, dateKey, snapshotHash])
+}
+
+enum ReportType {
+  STARTUP
+  MONTHLY
+}
+
+enum ReportStatus {
+  OPEN
+  ARCHIVED
+}
+
+// Replaces the old MonthlyInsight (narrative-only cache): captures
+// structured findings alongside the AI narrative, and is the archive unit
+// for /reports/archive. A STARTUP report is one-time, generated by the
+// onboarding wizard from however much sync history exists at that point
+// (periodKey is the literal string "STARTUP", enforcing at most one via the
+// same unique constraint MONTHLY rows use their real "YYYY-MM" periodKey
+// for). A MONTHLY report is generated lazily — see getOrCreateCurrentReport,
+// src/lib/reports.ts — the first time /reports is visited for a new period;
+// that same visit finalizes (PDF-renders + archives) whatever MONTHLY report
+// was still OPEN, since this app has no cron/worker process to do it in the
+// background (see src/instrumentation.ts).
+model Report {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  type      ReportType
+  periodKey String // "YYYY-MM" for MONTHLY; "STARTUP" sentinel otherwise
+  status    ReportStatus @default(OPEN)
+
+  // { overspendingBuckets, newBucketSuggestions, detectedRecurring,
+  // budgetingIssues } — see ReportFindings, src/lib/reports.ts.
+  findings  Json
+  narrative String @db.Text
+
+  // Filled only at archive time — an OPEN report's numbers can still change
+  // (the current month isn't closed yet), so there's nothing final to render
+  // until it's superseded.
+  pdfBytes   Bytes?
+  archivedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([householdId, periodKey])
+  @@index([householdId, type, status])
+}
+
+enum BudgetPlanStatus {
+  PENDING
+  CONFIRMED
+  DISMISSED
+}
+
+// The forward-looking "Set the Month" budget allocation, surfaced at month
+// rollover alongside the (retrospective) MONTHLY Report — see
+// src/lib/budget-plan.ts and checkMonthRolloverForHousehold. One row per
+// household per month; periodKey is the NEW, in-progress month being budgeted,
+// NOT the just-completed month the sibling Report covers. Stays PENDING (and a
+// dashboard banner + /budget control show) until the household confirms it —
+// on confirm, bucket monthlyCapCents / Household.monthlySurplusTargetCents /
+// payoffExtraCents / SavingsGoal.monthlyTargetCents are all written to match
+// and the control disappears until next month. Generated lazily the same way
+// Report is (getOrCreateCurrentReport) — the hourly rollover job creates it
+// proactively, a /budget visit creates it on demand.
+model BudgetPlan {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  periodKey String // "YYYY-MM" of the month being budgeted (the new, in-progress month)
+  status    BudgetPlanStatus @default(PENDING)
+
+  // The merged deterministic + AI proposal — see BudgetPlanAllocation in
+  // src/lib/budget-plan.ts: poolCents, lockedObligations, per-bucket rows
+  // (proposed + alternates + rationale), surplus, savings-goal rows,
+  // new-bucket suggestions, and seasonalAlerts. On confirm this is overwritten
+  // with the final confirmed snapshot.
+  allocation Json
+
+  // Overall AI explanation of the proposal; "" when AI isn't configured (the
+  // allocation is still a usable deterministic fallback).
+  explanation String  @db.Text
+  aiGenerated Boolean @default(false)
+
+  confirmedAt DateTime?
+  dismissedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([householdId, periodKey])
+  @@index([householdId, status])
+}
+
+// Dedupes notifications: at most one push per bucket/period/level.
+// One row per household per calendar day — upserted (not just inserted)
+// every time /networth is loaded, so the day's row always reflects the
+// latest computed value rather than whatever it happened to be on first
+// load. This is plain arithmetic already computed for the page anyway (no
+// AI/API cost like BillsInsight/MonthlyInsight above), so there's no reason
+// to gate it — the trend indicator just compares today's value against the
+// most recent prior day's row. See getNetWorthTrend in networth-history.ts.
+model NetWorthSnapshot {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  dateKey       String // "YYYY-MM-DD"
+  netWorthCents Int
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([householdId, dateKey])
+}
+
+model DebtSnapshot {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  dateKey         String // "YYYY-MM-DD"
+  totalDebtCents  Int
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([householdId, dateKey])
+}
+
+model BucketAlert {
+  id       String           @id @default(cuid())
+  bucketId String
+  bucket   Bucket           @relation(fields: [bucketId], references: [id], onDelete: Cascade)
+  period   String // "YYYY-MM"
+  level    BucketAlertLevel
+  sentAt   DateTime         @default(now())
+
+  @@unique([bucketId, period, level])
+}
+
+// Dedupes the NEW_CYCLE push: at most one per household per calendar month.
+// See checkMonthRolloverForHousehold, src/lib/scheduled-notifications.ts.
+// NEW_REPORT has no dedup table of its own — it reuses Report's own
+// [householdId, periodKey] uniqueness (see that same function).
+model CycleAlert {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  periodKey String // "YYYY-MM" of the cycle that started
+  sentAt    DateTime @default(now())
+
+  @@unique([householdId, periodKey])
+}
+
+// Dedupes the opt-in WEEKLY_BUCKET_REPORT push: at most one per bucket per
+// week. See checkWeeklyBucketDigests, src/lib/scheduled-notifications.ts.
+model BucketDigest {
+  id       String @id @default(cuid())
+  bucketId String
+  bucket   Bucket @relation(fields: [bucketId], references: [id], onDelete: Cascade)
+
+  weekKey String // "YYYY-MM-DD" of that week's Sunday, same convention as GoalReminder.weekKey
+  sentAt  DateTime @default(now())
+
+  @@unique([bucketId, weekKey])
+}
+
+// Dedupes the opt-in BUCKET_TRANSACTION push: at most one per transaction,
+// ever — unlike BucketAlert (once per bucket/period/threshold-level), this
+// fires per transaction, so the transaction itself is the dedup key. See
+// checkAndSendBucketAlerts, buckets.ts.
+model BucketTransactionAlert {
+  id            String      @id @default(cuid())
+  transactionId String      @unique
+  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  sentAt DateTime @default(now())
+}
+
+// Dedupes the three household-wide "needs a human" pushes (NEEDS_BUCKET,
+// RECEIPT_NEEDS_REVIEW, NEEDS_LABEL_P2P) — see checkNudgeAlerts,
+// scheduled-notifications.ts. Each check compares the newest item currently
+// in its queue against `anchor`; a push only goes out (and anchor advances)
+// once something newer than the last push shows up, so a lingering
+// unresolved queue doesn't re-page every hourly run. Independent of
+// SuggestionDismissal, which is a per-user/per-week "I've seen this batch"
+// for the dashboard card only, not a push suppression.
+model NudgeAlert {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  kind   String // "NEEDS_BUCKET" | "RECEIPT_NEEDS_REVIEW" | "NEEDS_LABEL_P2P"
+  anchor DateTime // occurredOn/receivedAt of the newest item alerted so far
+
+  updatedAt DateTime @updatedAt
+
+  @@unique([householdId, kind])
+}
+
+model PushSubscription {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  endpoint String @unique
+  p256dh   String
+  auth     String
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+// Shared by Debt and SavingsGoal: today everything is MANUAL. SIMPLEFIN is
+// groundwork for Phase 3 — once a SimpleFIN connection exists, a debt or
+// goal can point at a synced account (simpleFinAccountId) and have its
+// balance/contributions update automatically instead of manual entry.
+enum DataSource {
+  MANUAL
+  SIMPLEFIN
+}
+
+// Asset-only — kept separate from DataSource (shared by Transaction/Debt/
+// RecurringBill) so AI_ESTIMATE can't leak into those models' type surface
+// where it would never actually apply.
+enum AssetSource {
+  MANUAL
+  SIMPLEFIN
+  AI_ESTIMATE
+  LIVE_PRICE
+}
+
+enum DebtType {
+  REVOLVING // credit card, personal loan: balance/APR/min payment
+  INSTALLMENT // BNPL-style: fixed payment count/amount, often 0% APR
+}
+
+// Orthogonal to DebtType, not a replacement — CARD/LOAN are only ever paired
+// with REVOLVING (same mechanics, just a display/grouping split so a manual
+// loan doesn't casually regain balance the way a card can — see
+// ManualDebtEditor's balance-increase confirm gate); BNPL is always paired
+// with INSTALLMENT and is forced server-side in createDebt regardless of
+// client input, so `debtType === "INSTALLMENT"` stays a reliable BNPL proxy
+// everywhere else in the codebase (debt-payoff.ts, bnpl-detect.ts, etc).
+enum DebtKind {
+  CARD
+  LOAN
+  BNPL
+}
+
+model Debt {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  name      String
+  debtType  DebtType   @default(REVOLVING)
+  kind      DebtKind   @default(CARD)
+  source    DataSource @default(MANUAL)
+  // Set once linked to a synced account — balance then updates from sync
+  // instead of manual entry (see checkAndSyncLinkedBalances).
+  accountId String?
+  account   Account?   @relation(fields: [accountId], references: [id], onDelete: SetNull)
+
+  // For a manual (accountId null) REVOLVING debt, auto-maintained by
+  // matchDebtPayments each sync: accrues aprBasisPoints interest per elapsed
+  // cycle, then subtracts any matched payment — see DebtBalanceReview below
+  // for why a computed drop to $0 doesn't write here immediately. New
+  // charges the household makes aren't visible to the app at all, so this
+  // is only ever an approximation between manual corrections (the "Current
+  // Balance" field) — see WORKING_ON.md's 2026-08-26 household discussion.
+  balanceCents    Int
+  aprBasisPoints  Int // APR * 100 (e.g. 20.15% -> 2015), avoids float drift
+  minPaymentCents Int
+  // True unless this debt was quick-created with nothing but a name (the
+  // bare "+ Add a new lender" path in createDebtPaymentFromTransaction,
+  // which defaults aprBasisPoints/minPaymentCents to 0) — every other
+  // creation path (AddDebtForm, UntrackedLiabilityAccounts' track form)
+  // already requires real values, so true is the safe default everywhere
+  // else. Set back to true whenever updateDebtTerms is saved. Drives the
+  // Debts nav tab's "needs attention" badge for REVOLVING debts.
+  termsConfirmed Boolean @default(true)
+
+  // True when the household has explicitly said this REVOLVING debt has no
+  // real minimum payment to track — minPaymentCents is forced to 0 whenever
+  // this is set (see updateDebtTerms/updateSyncedDebtTerms) and stays
+  // meaningless while it's on. Distinct from minPaymentCents just
+  // defaulting to 0 because termsConfirmed is still false. Threaded through
+  // three places that would otherwise treat a $0 minimum as a real, trackable
+  // one: debtSetupReason (stops nagging "Confirm minimum payment"),
+  // debtsWithInsufficientMinimum (a $0 minimum against real APR/balance
+  // would otherwise always trip "won't cover interest"), and
+  // matchDebtPayments (skips the amount-drift "did your minimum change?"
+  // review a real payment would otherwise trigger every cycle against an
+  // expected $0 — see MIN_PAYMENT match tolerance flooring at $5). Reset
+  // back to false by unhideDebtPaymentIfBalanceReturned whenever a paid-off
+  // ($0) debt's balance goes positive again — a fresh balance deserves a
+  // fresh confirmation, since "no minimum" may no longer hold.
+  ignoreMinimumPayment Boolean @default(false)
+
+  // Stamped the moment balanceCents transitions from >0 to 0 (manual edit,
+  // installment terms update, or a synced balance hitting zero) — cleared
+  // back to null if the balance ever goes positive again (a correction, a
+  // new charge on a "paid off" card). Powers the dashboard's "paid off this
+  // week" card the same way RecurringBill.lastPaidDate powers the bills
+  // one. See nextPaidOffDate in src/lib/debt-payoff.ts.
+  paidOffDate DateTime? @db.Date
+
+  // The balance right before that same >0 -> 0 transition — "how much was
+  // paid off," for a debt whose closing payment has no linked Transaction to
+  // read the amount from yet (a SimpleFIN balance sync confirms $0 well
+  // before the actual closing charge posts/matches — real report,
+  // 2026-09-17: Sam's Club Card showed a bare star with no dollar figure on
+  // both This Week's Bills and the Payment Calendar). Same transition and
+  // same nulled-on-restore lifecycle as paidOffDate, just the dollar amount
+  // instead of the date — see nextPaidOffAmountCents in src/lib/debt-payoff.ts,
+  // always called alongside nextPaidOffDate.
+  paidOffAmountCents Int?
+
+  // The last real minimum payment this debt carried while paid off — what
+  // the payoff plan rolls into the next debt once it's freed
+  // (computeAlreadyFreedMinimums). minPaymentCents itself can legitimately
+  // drop to $0 for a paid-off card (its statement now shows nothing due),
+  // which silently erased the rollover (real report, 2026-10-03: Quicksilver's
+  // freed $25 vanished, every plan extra fell back to the bare $100).
+  // Stamped every sync from minPaymentCents while paid off and minimum > 0
+  // (stampFreedMinimums, simplefin-sync.ts); cleared once the balance returns.
+  freedMinimumCents Int?
+
+  // Free-text note — originally INSTALLMENT-only ("Sarah's laptop", what the
+  // purchase actually was, distinct from `name`'s lender/merchant title),
+  // opened up to REVOLVING too (2026-08-21) for things like a deferred-
+  // interest promo deadline ("0% until 10/23 — must be $0 by then") that
+  // this app has no dedicated field for. Same "distinct from the identity
+  // field" relationship to `name` as Transaction.label has to `merchant`.
+  label String?
+
+  // INSTALLMENT only
+  installmentsTotal     Int?
+  installmentsRemaining Int?
+  // INSTALLMENT only (2026-08-16) — the day the purchase/plan was made.
+  // Anchors matchInstallmentPayments' search floor (src/lib/debt-payments.ts)
+  // so it never looks for a payment before the plan existed, and lets a
+  // plan set up after the fact backfill its already-happened installments
+  // from this date forward instead of only "one cycle back" the way
+  // backfillDebtPaymentHistory does for REVOLVING.
+  purchaseDate DateTime? @db.Date
+
+  // INSTALLMENT/BNPL only (2026-09-11) — which of allBnplKeywords()
+  // (bnpl-detect.ts) this plan's lender matched on, captured once and never
+  // re-derived from `name` afterward. Every BNPL-identity call site used to
+  // re-run `name.toLowerCase().includes(keyword)` against the live,
+  // household-editable `name` on every sync — renaming "Nike - Klarna" to
+  // "Nike Shoes" silently dropped it out of keyword-based attribution and
+  // let a sibling plan's payment get misattributed to it (real incident,
+  // 2026-08-22). Null for a never-yet-matched or pre-migration plan (self-
+  // heals: the next sync that successfully matches one writes it here,
+  // permanently, via lockInBnplKeyword — see debt-payments.ts) — every
+  // reader falls back to the live name-based match for that case, same as
+  // before this field existed.
+  bnplKeyword String?
+
+  // INSTALLMENT/BNPL only — the itemization + total from the email receipt
+  // for the original purchase, once one has been linked to this plan (see
+  // Receipt.debtId). Mirrors Transaction.receiptItems/receiptTotalCents; the
+  // bank never sees the purchase as one charge so this is the only place its
+  // line items can live. [{ description, qty, unitPriceCents, totalCents }]
+  receiptItems      Json?
+  receiptTotalCents Int?
+
+  // Default true — a household's debt-free-date/attack-order simulation
+  // (simulatePayoff/computeAttackOrder, src/lib/debt-payoff.ts) includes
+  // every debt by default, same as always. Added 2026-08-16 so a BNPL plan
+  // (typically 0% APR, paid off on a fixed short schedule regardless of
+  // anything else) can be excluded from that simulation without deleting
+  // it — applies to any debt, not just INSTALLMENT. A debt with this false
+  // still renders on /debts with its own balance; it just sits out of
+  // simulatePayoff/computeAttackOrder the same way a paid-off ($0 balance)
+  // debt already does (see debts/page.tsx's activeDebtInputs).
+  includeInPayoffPlan Boolean @default(true)
+
+  // A household's "stop showing this" call (hideDebt, debts/actions.ts) —
+  // paid off, no longer wanted (manual debts only — see hideDebt's own
+  // doc comment for why a debt still linked to a live Account stays
+  // $0-balance-only), or cascaded from its Account going hidden (see
+  // Account.hiddenAt, hideAccountsWithLinkedDebts in
+  // src/lib/simplefin-sync.ts — the only way an Account ever goes hidden;
+  // there's no manual per-account equivalent of this field). Timestamped
+  // (rather than a plain boolean) so restoreDebt (debts/actions.ts) can
+  // show "hidden since" and purgeInactive
+  // (src/app/settings/simplefin/actions.ts) can offer "hidden for over a
+  // year" as its purge-eligibility cutoff. Null = visible normally.
+  // Self-heals back to null the moment balanceCents returns from $0 to
+  // positive (unhideDebtPaymentIfBalanceReturned, src/lib/debt-payments.ts,
+  // already called from every balanceCents write path) — but only for that
+  // specific $0->positive transition, not any balance change, so a manual
+  // debt hidden while still owed isn't force-revived by an unrelated sync.
+  // A hidden debt drops out of the payoff simulation/attack order too (see
+  // activeDebts in payoff-planner.tsx) — deliberate: a debt you can't see
+  // on /debts shouldn't silently keep steering a plan you also can't see
+  // it in. Never affects net worth or budget totals either way.
+  hiddenAt DateTime?
+
+  sortOrder Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  payments      Transaction[]
+  merchantRules MerchantRule[]
+  patterns      RecurringPattern[]
+  // Email receipts for the original purchase behind this plan — see
+  // Receipt.debtId (INSTALLMENT/BNPL only in practice).
+  receipts      Receipt[]
+  // At most one — see DebtPayment.debtId's @unique.
+  debtPayment   DebtPayment?
+  // Reverse side of Asset.debtId — the mortgage/auto loan this debt is,
+  // when a HOME_EQUITY/VEHICLE_EQUITY asset has been pointed at it (see
+  // linkAssetDebt). One debt secures at most one asset.
+  asset         Asset?
+  payoffExtraConfirmations PayoffExtraConfirmation[]
+  payoffExtraSkips PayoffExtraSkip[]
+  minimumSkips     DebtMinimumSkip[]
+  payoffExtraSnapshots PayoffExtraSnapshot[]
+  // At most one — see DebtBalanceReview.debtId's @unique.
+  balanceReview DebtBalanceReview?
+  billNotices   BillNoticeEmail[]
+
+  @@index([householdId])
+}
+
+// A household's "yes, I sent it" confirmation for one paycheck's projected
+// extra payoff payment toward one debt (src/lib/debt-payoff.ts's
+// projectPaymentCalendar) — the minimum-payment half of the same "this
+// cycle" checklist already exists via DebtPayment.lastPaidDate/
+// markDebtPaymentPaid; this is the new piece for the extra-payment half,
+// which has no DB-backed tracker of its own otherwise (it's purely
+// projected from the live simulation). Unique on (debtId, paycheckDate) so
+// checking it off is idempotent and a new pay cycle naturally starts
+// unconfirmed again — no separate "unconfirm on rollover" logic needed.
+model PayoffExtraConfirmation {
+  id           String    @id @default(cuid())
+  householdId  String
+  household    Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  debtId       String
+  debt         Debt      @relation(fields: [debtId], references: [id], onDelete: Cascade)
+  paycheckDate DateTime  @db.Date
+  amountCents  Int
+  confirmedAt  DateTime  @default(now())
+
+  @@unique([debtId, paycheckDate])
+  @@index([householdId])
+}
+
+// A household's "not this one" decision for one paycheck's projected extra
+// payoff payment toward one debt — the household declines it, not merely
+// hasn't confirmed it yet (see PayoffExtraConfirmation above, its opposite-
+// leaning counterpart). The current cycle's own payday is otherwise assumed
+// to go through on schedule (real balance/isPayoff — household correction,
+// 2026-09-04: "yesterday's still going through," not held back until
+// SimpleFIN catches up); a skip is the one way to forfeit it instead —
+// projectCyclePlan's past-payday branch (src/lib/debt-payoff.ts) reads this
+// to render the line struck-through with an Undo on the /debts list view and
+// leave that amount off the working balance. simulatePayoff (the projected
+// debt-free date/chart) is unaffected either way — it only ever counts a
+// future payday's extra, so a skip on the current cycle's own payday was
+// never counted there to begin with. Unique on (debtId, paycheckDate) so
+// re-skipping is idempotent and a new pay cycle naturally starts unskipped
+// again — same "no separate rollover cleanup" shape as PayoffExtraConfirmation.
+model PayoffExtraSkip {
+  id           String    @id @default(cuid())
+  householdId  String
+  household    Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  debtId       String
+  debt         Debt      @relation(fields: [debtId], references: [id], onDelete: Cascade)
+  paycheckDate DateTime  @db.Date
+  skippedAt    DateTime  @default(now())
+  // Frozen at the moment of skipping, from exactly what the household saw on
+  // the "Skip this extra payment?" confirm — projectCyclePlan re-derives a
+  // payday's own amount from *today's* live debt roster/priority order every
+  // time it runs, so re-displaying a past skip via that same live simulation
+  // drifts the moment the roster changes (a debt dropping out of the plan
+  // afterward silently inflates an earlier skip's shown amount to whatever
+  // that payday's pool would be under the new roster instead of the old one
+  // — real report, 2026-09-14: Amazon Card's Sep 3 skip read $162.28, a
+  // figure that only makes sense after Sam's Club Card left the plan, not
+  // the ~$21 it actually was when skipped). Nullable so a pre-fix row (no
+  // persisted amount) still falls back to the live simulation, same as ever.
+  amountCents  Int?
+  isPayoff     Boolean?
+
+  @@unique([debtId, paycheckDate])
+  @@index([householdId])
+}
+
+// A household's "skip it" decision for one *already-covered* minimum payment
+// on one debt — the minimum for that cycle was satisfied early by a payment
+// bigger than the minimum (a $177 payment against an $84 minimum, made to
+// cover a purchase), so the regular due-date line still listed on /debts is
+// optional and can be forfeited. Display-only by design: a covered minimum
+// never rolls into amountDueCents or the next cycle whether or not it's
+// skipped (matchDebtPayments already marked the cycle paid); this row just
+// records "don't expect it" so the line renders struck-through with an Undo
+// (see resolveMinimumLedger, src/lib/minimum-ledger.ts). Only ever offered
+// while the cycle's minimum really is satisfied — an unsatisfied minimum has
+// no skip and rolls forward like always. Mirrors PayoffExtraSkip: unique on
+// (debtId, dueDate) so re-skipping is idempotent and a new cycle starts
+// unskipped with no rollover cleanup. amountCents is frozen at skip time.
+model DebtMinimumSkip {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  debtId      String
+  debt        Debt      @relation(fields: [debtId], references: [id], onDelete: Cascade)
+  dueDate     DateTime  @db.Date
+  amountCents Int
+  skippedAt   DateTime  @default(now())
+
+  @@unique([debtId, dueDate])
+  @@index([householdId])
+}
+
+// What the payoff plan's per-debt extra allocation actually was for a given
+// Sun–Sat week — the live plan (projectHouseholdExtraAllocations) always
+// simulates forward from *today's* current balances and priority order, so
+// it has no memory of what it said last week once a debt's state has since
+// changed (real household correction, 2026-09-06: today's plan had moved
+// its priority order on to Amazon/Venture, so re-asking it for "last week"
+// wrongly showed those instead of the household's own real answer — Sam's
+// Club, then Quicksilver, then Amazon). This table is that memory: one row
+// per (debt, week), upserted every sync while that week is still the
+// current one (see snapshotPlannedExtraForCurrentWeek, debt-payments.ts) so
+// it always reflects the latest known plan *as of that week* — once a new
+// week starts, sync stops touching this week's rows and they become the
+// permanent record a later "Last Week's Bills"-style read relies on.
+// Confirmation/skip status isn't duplicated here — PayoffExtraConfirmation/
+// PayoffExtraSkip above already persist independently of which week is
+// "current," keyed the same way (debtId + paycheckDate).
+model PayoffExtraSnapshot {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  debtId      String
+  debt        Debt      @relation(fields: [debtId], references: [id], onDelete: Cascade)
+  weekStart   DateTime  @db.Date
+  dueDate     DateTime  @db.Date
+  amountCents Int
+  isPayoff    Boolean
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([debtId, weekStart])
+  @@index([householdId])
+}
+
+model SavingsGoal {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  name               String
+  // Free-text "what is this for / when do I want it" — purely descriptive,
+  // same convention as Debt.label or Transaction.notes. Fed into the AI
+  // feedback prompt (see GoalInsight) for context an amount/date alone
+  // can't give ("a used Model 3, ideally before the lease on my current
+  // car ends").
+  description        String?
+  // How much this goal is *for* — the amount to save, not an absolute
+  // account-balance target. For a linked goal, progress is measured from
+  // baselineCents, so a $3k goal on a Money Market that already holds $5k
+  // completes when the balance reaches $8k.
+  targetAmountCents  Int
+  targetDate         DateTime? @db.Date
+  // Linked goal: the live account balance (overwritten every SimpleFIN sync).
+  // Manual goal: the running sum of SavingsContribution rows. Either way,
+  // "saved toward the goal" is currentAmountCents - baselineCents (see
+  // goalSavedCents, src/lib/savings.ts).
+  currentAmountCents Int       @default(0)
+  // The linked account's balance at the moment it was linked — the starting
+  // line progress is measured from, so pre-existing money in the account
+  // isn't counted as progress toward this goal (household ask, 2026-09-10).
+  // 0 for a manual goal, and for any goal linked before this column existed
+  // (those keep the old whole-balance behavior until re-linked).
+  baselineCents      Int       @default(0)
+
+  source    DataSource @default(MANUAL)
+  accountId String?
+  account   Account?   @relation(fields: [accountId], references: [id], onDelete: SetNull)
+
+  // Household opt-in for the weekly "go move money toward this goal" push —
+  // off by default, same as every other opt-in toggle in this schema.
+  // Checked (and the corresponding GoalReminder row written) from the
+  // dashboard's page load, not a real schedule — see GoalReminder.
+  reminderEnabled Boolean @default(false)
+
+  // Deliberate monthly contribution target, written by confirmBudgetPlan from
+  // the "Set the Month" control (a savings-goal slider, or a one-click sinking
+  // fund created off a seasonal heads-up). 0 = no committed monthly amount
+  // (fall back to the derived pace figure). Feeds the weekly reminder body,
+  // on-track tracking, and the AI goal-feedback prompt.
+  monthlyTargetCents Int @default(0)
+
+  // The single "General Savings" catch-all goal — where confirmBudgetPlan
+  // parks surplus routed to savings once every dated goal is on pace (or when
+  // there are no goals at all), so no budgeted dollar is ever left untracked.
+  // Auto-created by confirmBudgetPlan the first time it's needed. At most one
+  // row true per household (partial unique index — Prisma can't express the
+  // WHERE clause, so it's in the migration SQL and never dropped by
+  // `prisma migrate diff`; same pattern as Household_isDemo_key).
+  isCatchAll Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  contributions SavingsContribution[]
+  alerts        GoalAlert[]
+  reminders     GoalReminder[]
+  insights      GoalInsight[]
+
+  @@index([householdId])
+}
+
+// Dedup log for the weekly reminderEnabled push — one row per goal per
+// calendar week (Sunday-start, see currentWeekKey in src/lib/period.ts).
+// Same try-create/catch-unique-violation dedup pattern as GoalAlert above,
+// just keyed by week instead of milestone level so it repeats every week
+// instead of firing once ever.
+model GoalReminder {
+  id     String      @id @default(cuid())
+  goalId String
+  goal   SavingsGoal @relation(fields: [goalId], references: [id], onDelete: Cascade)
+
+  weekKey String // "YYYY-MM-DD" of that week's Sunday
+  sentAt  DateTime @default(now())
+
+  @@unique([goalId, weekKey])
+}
+
+// Cached AI feedback for a goal — same "check on read, regenerate if stale"
+// pattern as BillsInsight/MonthlyInsight, keyed by calendar week instead of
+// day/month since a goal's numbers move slowly enough that daily is
+// wasteful but monthly is too sparse to feel responsive to a new
+// contribution. estimatedMonthlySaveableCents is a snapshot of
+// getHouseholdSavingsCapacity at generation time, shown alongside the
+// narrative so the two never visually disagree.
+model GoalInsight {
+  id     String      @id @default(cuid())
+  goalId String
+  goal   SavingsGoal @relation(fields: [goalId], references: [id], onDelete: Cascade)
+
+  weekKey                       String
+  feedback                      String @db.Text
+  estimatedMonthlySaveableCents Int
+
+  createdAt DateTime @default(now())
+
+  @@unique([goalId, weekKey])
+}
+
+model SavingsContribution {
+  id     String      @id @default(cuid())
+  goalId String
+  goal   SavingsGoal @relation(fields: [goalId], references: [id], onDelete: Cascade)
+
+  amountCents Int
+  occurredOn  DateTime @db.Date
+  note        String?
+
+  // Optional + SetNull (not Restrict, the schema default for a required
+  // relation) — a manually-logged contribution's own amount/date/note is
+  // real household data that must survive the member who logged it being
+  // removed later (deleteMember, src/app/settings/members/actions.ts);
+  // only the "who logged this" attribution should disappear.
+  createdByUserId String?
+  createdByUser   User?   @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([goalId])
+}
+
+enum GoalAlertLevel {
+  MILESTONE_25
+  MILESTONE_50
+  MILESTONE_75
+  MILESTONE_100
+}
+
+model GoalAlert {
+  id     String         @id @default(cuid())
+  goalId String
+  goal   SavingsGoal    @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  level  GoalAlertLevel
+  sentAt DateTime       @default(now())
+
+  @@unique([goalId, level])
+}
+
+model AuditLog {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  action String
+  detail Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+}
+
+enum BankConnectionStatus {
+  ACTIVE
+  ERROR
+}
+
+// One per household. The SimpleFIN access URL carries HTTP Basic Auth
+// credentials embedded in it, so it's encrypted at rest (AES-256-GCM,
+// see src/lib/crypto.ts) — never stored or logged in plaintext.
+model BankConnection {
+  id          String    @id @default(cuid())
+  householdId String    @unique
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  accessUrlEncrypted String
+  status             BankConnectionStatus @default(ACTIVE)
+  lastSyncedAt       DateTime?
+  lastError          String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  accounts Account[]
+}
+
+// Per-household AI provider config — same 1:1-optional-secret shape as
+// BankConnection above. No row means AI features (categorization
+// suggestions, monthly feedback, asset estimates, bill summaries — see
+// src/lib/ai.ts) simply no-op for that household; there is no env-var
+// fallback.
+model HouseholdAiSettings {
+  id          String    @id @default(cuid())
+  householdId String    @unique
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  provider        AiProvider
+  apiKeyEncrypted String
+  // Verified with a real test call at save time (see saveAiSettings) so a
+  // typo'd/revoked key is rejected before it's ever persisted. status/
+  // lastError are then kept current by every subsequent real AI call (see
+  // recordAiHealth in ai-provider.ts) — same "flips to ERROR + a message
+  // the moment something fails, clears itself the moment it works again"
+  // convention as BankConnection.lastError above.
+  status    AiConnectionStatus @default(ACTIVE)
+  lastError String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum AiConnectionStatus {
+  ACTIVE
+  ERROR
+}
+
+enum AccountType {
+  CHECKING
+  SAVINGS
+  CREDIT_CARD
+  LOAN
+  INVESTMENT
+  OTHER
+}
+
+enum SyncMode {
+  TRANSACTIONS
+  // Some account types (e.g. Venmo, per SimpleFIN's own known limitations)
+  // report a reliable balance but a spotty transaction feed. Those fall
+  // back to day-over-day balance diffing instead of per-transaction sync.
+  BALANCE_ONLY
+}
+
+model Account {
+  id               String         @id @default(cuid())
+  householdId      String
+  household        Household      @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  bankConnectionId String
+  bankConnection   BankConnection @relation(fields: [bankConnectionId], references: [id], onDelete: Cascade)
+
+  simpleFinAccountId String      @unique
+  name               String
+  orgName            String?
+  accountType        AccountType @default(OTHER)
+  syncMode           SyncMode    @default(TRANSACTIONS)
+
+  // CHECKING/SAVINGS only — a cash account has no separate Asset row (see
+  // getNetWorth's cashAccounts query), so unlike an INVESTMENT account
+  // (unlink = delete its Asset row, see Asset.accountId) there's nothing to
+  // delete to stop counting it. This flag is that off-switch instead, with
+  // the same "still syncs, just not counted" semantics — flipped back by
+  // the same "Connected but not counted" UI that re-tracks investments.
+  excludedFromNetWorth Boolean @default(false)
+  // CHECKING/SAVINGS only — same reasoning as Asset.name for a linked
+  // asset: `name` above is overwritten by SimpleFIN's raw account name on
+  // every sync (see simplefin-sync.ts's upsert), so a household-chosen
+  // label needs its own field to survive the next sync. Null = show `name`
+  // unchanged (the common case, nothing customized yet).
+  displayName String?
+
+  // Whether a spend transaction on this account is eligible for
+  // categorizeUncategorizedTransactions' auto bucket-assignment (merchant
+  // rule or AI guess) and the "Needs a bucket" nag queue (2026-08-14) — a
+  // household's budget is usually built around one checking account, with
+  // credit cards/loans just float that gets paid off from it, so a card
+  // purchase auto-filing into a spending bucket double-counts the household's
+  // real cash flow. Set explicitly at account creation in simplefin-sync.ts
+  // (true for CHECKING/SAVINGS, false otherwise) and never overwritten by a
+  // later sync, so a household's manual toggle survives — see the
+  // "Connected accounts" section of /settings/simplefin, which is also where
+  // a specific card can be flipped back on (e.g. one deliberately used for
+  // points, paid off from checking every cycle — the purchase then
+  // auto-files into a real spending bucket exactly like a checking swipe
+  // would, while the checking-side payoff still separately shows as a debt
+  // payment; see DebtPayment.bucketId for how both surface together).
+  // Unrelated to payment/transfer detection (isLiabilityAccount in
+  // simplefin-sync.ts) — a card's own payment-reducing transactions are
+  // always classified as a transfer regardless of this flag, since that's
+  // "is this a payment," not "is this budget spend."
+  budgetTracked Boolean @default(true)
+
+  balanceCents Int
+  // CHECKING/SAVINGS only — manually entered/edited by the household (see
+  // updateAccountApy, src/app/networth/actions.ts), never touched by sync:
+  // SimpleFIN is a balance/transaction aggregator, not a rates API, so
+  // there's no live source for this. Same "*100" convention as
+  // Debt.aprBasisPoints (e.g. 4.50% -> 450). Lets the monthly report's
+  // "big surplus" suggestion (src/lib/reports.ts) compare a real APY the
+  // household confirmed against a debt's real APR, rather than the AI
+  // naming a specific product/rate it doesn't actually have. Null = not set.
+  apyBasisPoints Int?
+  // null = household-wide (v1 default), groundwork for kid-owned accounts later
+  ownerId      String?
+  owner        User?   @relation("AccountOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+
+  // A household's "this account is gone" state — set only the moment
+  // SimpleFIN actually stops returning it in a sync (see the
+  // accounts.length-guarded block in syncHousehold, src/lib/simplefin-sync.ts
+  // — previously hard-deleted a vanished account outright; now hides it
+  // instead so its transaction/debt/asset history stays put). Deliberately
+  // has no manual per-account equivalent — a household hiding a still-owed
+  // Debt (hideDebt, only ever $0-balance-only for one linked to a live
+  // Account) never sets this, so a still-connected card can never become
+  // purge-eligible on its own just because its debt is paid off or hidden.
+  // Cascades to hide any linked Debt too (same timestamp) so a hidden
+  // account never leaves an orphaned debt card still showing on /debts —
+  // see hideAccountsWithLinkedDebts. Never self-heals: there's no reliable
+  // "it's back" signal to react to, so it stays hidden until restoreAccount
+  // (src/app/settings/simplefin/actions.ts) brings it back by hand or
+  // purgeInactive deletes it (once hidden over a year). Null = visible
+  // normally.
+  hiddenAt DateTime?
+
+  // Debounce for the hiddenAt detection above — set the first sync run an
+  // otherwise-nonempty feed comes back without this account, cleared the
+  // moment it reappears in one. Only once this has stayed set for
+  // GONE_FROM_FEED_GRACE_MS (syncHousehold) does the account actually get
+  // hidden. Real incident, 2026-09-11: a single flaky SimpleFIN response for
+  // one specific card (Sam's Club, already known to have an intermittent
+  // upstream connection) omitted it from an otherwise-normal multi-account
+  // sync — every sibling account on the same connection kept syncing fine
+  // every run before and after — and the old one-miss-and-you're-hidden
+  // logic silently hid a still-live, still-connected account + its linked
+  // debt. Null = not currently missing from the feed.
+  missingFromFeedSince DateTime?
+
+  lastSyncedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  transactions Transaction[]
+  debts        Debt[]
+  savingsGoals SavingsGoal[]
+  incomes      Income[]
+  assets       Asset[]
+
+  @@index([householdId])
+}
+
+enum PaycheckCadence {
+  // True biweekly (26/yr) — 2 calendar months/year land a 3rd "bonus" paycheck.
+  BIWEEKLY
+  // Semi-monthly (24/yr, e.g. 1st & 15th) — no bonus months.
+  SEMI_MONTHLY
+  MONTHLY
+}
+
+model Income {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  name        String
+  // The raw synced merchant text a deposit needs to equal (case-insensitive,
+  // see matchIncomePayments) to be recognized as a payment for this Income —
+  // set once at creation from the actual transaction/suggestion merchant and
+  // never touched by updateIncome, so renaming `name` to something friendlier
+  // ("Dad's Paycheck") can't silently break future matching the way it did
+  // when matching compared straight against `name` (same fix as Debt's
+  // accountOrgName being separate from its editable `name`). Null for a
+  // manual income with nothing to match against.
+  merchant    String?
+  amountCents Int // amount per single paycheck (not a monthly total)
+  cadence     PaycheckCadence @default(BIWEEKLY)
+  // The next *unreceived* paycheck's expected date — same "always points at
+  // the next unpaid/unreceived occurrence" convention as
+  // RecurringBill.nextDueDate, rolled forward by matchIncomePayments the
+  // moment a matching synced deposit is found. Manually-entered incomes
+  // with no accountId never auto-advance (nothing to match against), so
+  // this is only ever a projection for those.
+  nextPayDate     DateTime? @db.Date
+  lastReceivedDate DateTime? @db.Date
+
+  source    DataSource @default(MANUAL)
+  accountId String?
+  account   Account?   @relation(fields: [accountId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  payments Transaction[]
+
+  @@index([householdId])
+}
+
+enum AssetType {
+  RETIREMENT_401K
+  RETIREMENT_IRA
+  RETIREMENT_PENSION
+  HOME_EQUITY
+  VEHICLE_EQUITY
+  INVESTMENT
+  CRYPTO
+  OTHER
+}
+
+// Net worth = assets - Debt.balanceCents. Not bank-syncable in general (no
+// safe/legitimate lookup exists for 401k balances or home value by
+// SSN/address — see DataSource comment), so this is manual entry, updated
+// whenever the household checks. Held ready to link to a SimpleFIN Account
+// later in case a specific custodian happens to be supported.
+model Asset {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  name       String
+  assetType  AssetType @default(OTHER)
+  valueCents Int
+  asOfDate   DateTime  @db.Date
+
+  source    AssetSource @default(MANUAL)
+  accountId String?
+  account   Account?    @relation(fields: [accountId], references: [id], onDelete: SetNull)
+
+  // HOME_EQUITY/VEHICLE_EQUITY only — the mortgage/auto loan this asset's
+  // full value should be netted against for an "equity" headline number
+  // (see linkAssetDebt). Net worth's total already subtracts every debt
+  // regardless of this link; it only changes what a single asset row
+  // displays. @unique because one debt secures at most one asset.
+  debtId String? @unique
+  debt   Debt?   @relation(fields: [debtId], references: [id], onDelete: SetNull)
+
+  // Vehicle (year/make/model/trim/mileage/condition) or home
+  // (address/beds/baths/sqft) specifics — present only when the household
+  // opted into AI-estimated value. Presence of this field is what makes an
+  // asset eligible for refreshStaleAssetEstimates's monthly re-estimate;
+  // null means purely manual forever. See src/lib/asset-estimate.ts.
+  estimateDetails   Json?
+  estimateUpdatedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([householdId])
+}
+
+enum EmailConnectionStatus {
+  ACTIVE
+  ERROR
+  // Reserved for a future "connected but temporarily stop polling" toggle —
+  // not settable from the UI yet.
+  PAUSED
+}
+
+// Per-USER IMAP mailbox connection (unlike BankConnection/HouseholdAiSettings,
+// which are per-household) — every household member can connect their own
+// inbox, and receipts from any of them feed the same household's
+// transactions (a spouse's Amazon order confirmation is just as useful as
+// the owner's). No row for a user means nothing is polled for them. Same
+// encrypted-secret + self-healing status/lastError convention as
+// BankConnection. Parsing still uses the household's single configured AI
+// provider (HouseholdAiSettings), shared across all members' mailboxes.
+model EmailConnection {
+  id     String @id @default(cuid())
+  // No longer @unique — a member can connect more than one inbox (household
+  // request, 2026-09-11: e.g. a personal + a work inbox, both landing
+  // receipts for the same household). Every read site already scopes by
+  // `userId` expecting 0-or-1 rows going back to when this WAS unique; each
+  // now returns/acts on the specific row a caller names, not "the" row.
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Denormalized from the user (set at creation) so receipt-sync can scope
+  // by household in one query, consistent with every other model here.
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  imapHost              String
+  imapPort              Int    @default(993)
+  imapUser              String
+  imapPasswordEncrypted String
+
+  status    EmailConnectionStatus @default(ACTIVE)
+  lastError String?
+
+  lastPolledAt DateTime?
+  // Two cursors for a newest-first, 90-day-bounded scan (see receipt-sync.ts):
+  //   lastSeenUid      — highest INBOX UID processed; steady-state polls only
+  //                      look at `uid > lastSeenUid` (genuinely new mail).
+  //   oldestPolledUid  — the downward backfill boundary; each poll also walks
+  //                      `uid < oldestPolledUid` (within 90 days) newest-first
+  //                      until it reaches the 90-day floor (then it's <= 1 and
+  //                      backfill is done). Null until the first poll.
+  lastSeenUid     Int?
+  oldestPolledUid Int?
+
+  // The connecting member's explicit consent to have their matching email
+  // contents sent to the household's configured AI provider for parsing.
+  // Required to save (see connectEmail) — a mailbox is broader access than a
+  // read-only bank token, so this is deliberately not implied.
+  aiConsentAt DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  receipts     Receipt[]
+  billNotices  BillNoticeEmail[]
+
+  @@index([householdId])
+  @@index([userId])
+}
+
+enum ReceiptKind {
+  ORDER_CONFIRMATION
+  PAYMENT_SENT
+  PAYMENT_RECEIVED
+  SUBSCRIPTION
+  SHIPPING
+  OTHER
+}
+
+enum ReceiptMatchState {
+  // Parsed, no transaction matched yet — retried every sync (a bank charge
+  // often posts 1-2 days after the email).
+  UNMATCHED
+  // Linked to exactly one transaction.
+  MATCHED
+  // 2+ equally-plausible transactions — left for a human to link
+  // (receipt-linker.tsx).
+  AMBIGUOUS
+  // Not a receipt, non-USD, or a duplicate of an already-linked charge —
+  // recorded so it's never reparsed, purged on the next sweep.
+  STALE
+  // A human said "not a household charge" — excluded from matching, purged.
+  DISMISSED
+  // Linked to a BNPL installment plan (Debt) rather than a single
+  // transaction — the purchase's bank charge is spread across installments
+  // so no one transaction carries its total. See Receipt.debtId. Kept (not
+  // purged), like MATCHED.
+  MATCHED_TO_PLAN
+}
+
+// Transient bookkeeping for the email-receipt pipeline (see
+// src/lib/receipt-sync.ts): dedup key, match-retry state, and the parsed
+// fields until a transaction adopts them. NOT a user-browsable archive — the
+// durable enrichment lives on Transaction (resolvedMerchant/receiptItems/
+// receiptTotalCents), and rows here are purged (STALE/DISMISSED immediately,
+// UNMATCHED/AMBIGUOUS after 30 days — see purgeStaleReceipts). Raw email
+// bodies are never stored.
+model Receipt {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  emailConnectionId String
+  emailConnection   EmailConnection @relation(fields: [emailConnectionId], references: [id], onDelete: Cascade)
+
+  // IMAP Message-ID. Scoped to the connection (two members can legitimately
+  // each receive the same broadcast email with the same Message-ID) — the
+  // pair is the real dedup key, so a message is parsed at most once per
+  // mailbox.
+  messageId  String
+  receivedAt DateTime
+
+  kind        ReceiptKind
+
+  // A merchant refund/return confirmation ("Refund amount $16.13, refunded to
+  // Sam's Club Mastercard ending 1234") — money coming BACK, so it only ever
+  // matches a credit, and once matched it links that credit to the original
+  // purchase it undoes (linkRefundToPurchase, receipt-sync.ts). refundTo /
+  // refundToLast4: the payment method the email says the money goes to,
+  // which narrows matching to that account (household request, 2026-10-04).
+  isRefund      Boolean @default(false)
+  refundTo      String?
+  refundToLast4 String?
+  party       String?
+  // Only meaningful for PAYMENT_SENT/PAYMENT_RECEIVED — whether `party` is a
+  // person vs a business (see Transaction.resolvedMerchantIsPerson).
+  partyIsPerson Boolean @default(false)
+  // For a PAYMENT_SENT/PAYMENT_RECEIVED receipt — which P2P app it came from
+  // ("Venmo", "PayPal", "Cash App", "Zelle", "Apple Cash"), from the email's
+  // sender domain or body. Drives the app name + logo shown on the linker
+  // card and the matched row, and marks the receipt as P2P for match scoping.
+  p2pApp      String?
+  totalCents  Int?
+  occurredOn  DateTime? @db.Date
+  orderNumber String?
+  noteText    String?
+  // [{ description, qty, unitPriceCents, totalCents }]
+  lineItems   Json?
+
+  transactionId String?      @unique
+  transaction   Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+
+  // The second (or third) bank transaction for a receipt whose total split
+  // across more than one charge — see Transaction.extraLegReceiptId's
+  // comment. `transaction` above stays the single "primary" leg everywhere
+  // else in the app (dashboard/bucket displays, MerchantRule aliasing); this
+  // is purely additive bookkeeping so those extra legs stop looking like
+  // unmatched charges.
+  extraLegs Transaction[] @relation("ReceiptExtraLeg")
+
+  // Set instead of transactionId when this is the receipt for the original
+  // purchase behind a BNPL installment plan (matchReceiptToBnplPlan /
+  // linkReceiptToPlan, src/lib/receipt-sync.ts). The bank only ever sees the
+  // installment payments to Affirm/Klarna/etc., so there's no single
+  // transaction for the purchase total to match — the itemization instead
+  // lands on Debt.receiptItems. matchState is MATCHED_TO_PLAN in this case.
+  // Not @unique — a plan could in principle collect more than one (a
+  // combined order), last write wins on Debt.receiptItems.
+  debtId String?
+  debt   Debt?  @relation(fields: [debtId], references: [id], onDelete: SetNull)
+
+  matchState    ReceiptMatchState @default(UNMATCHED)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([emailConnectionId, messageId])
+  @@index([householdId])
+  @@index([matchState])
+  @@index([debtId])
+}
+
+// Learned "this receipt merchant bills as this bank descriptor" pairs, so a
+// receipt→charge match survives a merchant that reads nothing like its
+// receipt (Classifieds.com → "Mountain Digital Media", a storefront → its payment
+// processor). Written the moment a household manually links a receipt to a
+// charge whose merchant text `plausibleReceiptCharge` would have rejected
+// (linkReceiptToTransaction / the /settings/email picker); read by
+// matchOneReceipt, which treats an alias hit as name-plausible. Both sides
+// stored lowercased/trimmed. (2026-08-31.)
+model ReceiptMerchantAlias {
+  id           String   @id @default(cuid())
+  householdId  String
+  household    Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  receiptParty String
+  merchantText String
+  createdAt    DateTime @default(now())
+
+  @@unique([householdId, receiptParty, merchantText])
+  @@index([householdId, receiptParty])
+}
+
+enum BillNoticeTargetType {
+  BILL
+  DEBT
+}
+
+enum BillNoticeStatus {
+  // Parsed, not yet run through matching.
+  PENDING
+  // Matched to a RecurringBill/Debt and the amount differed — a
+  // BillAmountReview or DebtAmountReview now exists for it.
+  REVIEW_CREATED
+  // Matched to a RecurringBill/Debt but the stated amount equals what's
+  // already tracked — nothing to ask about.
+  NO_CHANGE
+  // 2+ plausibly-named RecurringBill/Debt candidates — left for a human to
+  // link (see /settings/email's bill-notice linker).
+  AMBIGUOUS
+  // Nothing resembles the extracted biller name closely enough to guess —
+  // same manual-linking surface as AMBIGUOUS.
+  UNMATCHED
+  // A human said "not one I track" — excluded from matching, purged.
+  DISMISSED
+}
+
+// Transient bookkeeping for a parsed "amount due" email — same pipeline as
+// Receipt (see src/lib/receipt-sync.ts) but for a notice that arrives BEFORE
+// any payment posts, so there's no transaction to match against. Instead
+// this is matched by biller name to an existing RecurringBill/Debt (see
+// src/lib/bill-notice-match.ts) and compared against that record's tracked
+// amount — a mismatch produces a BillAmountReview/DebtAmountReview
+// (source: EMAIL) for the household to confirm, never an automatic write
+// (email extraction is less trustworthy than a bank-observed payment).
+// Purged the same way Receipt is (see purgeStaleBillNotices,
+// src/lib/bill-notice-sync.ts): DISMISSED/NO_CHANGE/REVIEW_CREATED-and-
+// resolved immediately, PENDING/AMBIGUOUS/UNMATCHED after 30 days.
+model BillNoticeEmail {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  emailConnectionId String
+  emailConnection   EmailConnection @relation(fields: [emailConnectionId], references: [id], onDelete: Cascade)
+
+  // Same (emailConnectionId, messageId) dedup convention as Receipt.
+  messageId  String
+  receivedAt DateTime
+
+  billerName     String
+  amountDueCents Int
+  // Captured for display context only — never auto-written to
+  // RecurringBill.nextDueDate/DebtPayment.nextDueDate. Due-date drift
+  // detection is out of scope for this pipeline.
+  dueDate        DateTime? @db.Date
+  accountLast4   String?
+
+  targetType BillNoticeTargetType?
+  billId     String?
+  bill       RecurringBill? @relation(fields: [billId], references: [id], onDelete: SetNull)
+  debtId     String?
+  debt       Debt?          @relation(fields: [debtId], references: [id], onDelete: SetNull)
+
+  status BillNoticeStatus @default(PENDING)
+
+  amountReview     BillAmountReview?
+  debtAmountReview DebtAmountReview?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([emailConnectionId, messageId])
+  @@index([householdId])
+  @@index([status])
+  @@index([billId])
+  @@index([debtId])
+}
+
+// A pending "your bill's amount changed" question for a RecurringBill,
+// sourced from a parsed BillNoticeEmail — the RecurringBill equivalent of
+// DebtAmountReview(source: EMAIL). Bills have no bank-sync-triggered review
+// today (matchBillPayments silently refreshes amountCents from a real
+// payment — see that field's comment), but an email-sourced change gets one
+// regardless, since email extraction is inherently less trustworthy.
+// Resolving it (confirmBillAmountChanged/declineBillAmountChanged in
+// src/app/bills/actions.ts) deletes the row either way.
+model BillAmountReview {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  billId String
+  bill   RecurringBill @relation(fields: [billId], references: [id], onDelete: Cascade)
+
+  // Unique: a notice produces at most one pending review — matchBillNoticeAmounts
+  // updates the existing pending row in place rather than creating a second one
+  // (same convention as DebtAmountReview.billNoticeEmailId; no DB-level
+  // @@unique([billId]) for the same reason DebtAmountReview has none — a
+  // code-level findFirst guard, not a DB constraint).
+  billNoticeEmailId String          @unique
+  billNoticeEmail   BillNoticeEmail @relation(fields: [billNoticeEmailId], references: [id], onDelete: Cascade)
+
+  observedAmountCents Int
+  // Snapshot of RecurringBill.amountCents at detection time, so the review
+  // card can show "expected $X, saw $Y" even if amountCents itself moves
+  // before this gets resolved.
+  expectedAmountCents Int
+  // Context captured off the notice for display only — never auto-applied.
+  dueDate      DateTime? @db.Date
+  accountLast4 String?
+
+  createdAt DateTime @default(now())
+
+  @@index([householdId])
+  @@index([billId])
+}

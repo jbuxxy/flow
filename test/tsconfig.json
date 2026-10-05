@@ -1,0 +1,17 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "incremental": false,
+    // Node's test runner resolves the *.ts helper import at runtime, so the
+    // import specifier has to carry its extension — allow it for the type
+    // checker too. (The root tsconfig excludes this directory so its
+    // `next build` typecheck is unaffected.)
+    "allowImportingTsExtensions": true,
+    "types": ["node"]
+  },
+  // src/types carries the next-auth Session/User augmentation that the src
+  // modules under test (access.ts, auth.config.ts, …) type against.
+  "include": ["**/*.ts", "../src/types/**/*.d.ts"],
+  "exclude": []
+}

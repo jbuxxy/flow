@@ -1,0 +1,297 @@
+"use client";
+
+import { formatCents } from "@/lib/money";
+import { formatDate } from "@/lib/date";
+import { useChartHover, ChartHoverTooltip } from "@/components/chart-hover";
+import type { PayoffResult } from "@/lib/debt-payoff";
+import { LINE_SERIES_COLORS, TOTAL_COLOR } from "@/lib/chart-colors";
+import { SwipeCarousel } from "@/components/swipe-carousel";
+import { ChartRiseReveal } from "@/components/chart-rise-reveal";
+
+const WIDTH = 640;
+const HEIGHT = 220;
+const MARGIN = { top: 16, right: 12, bottom: 28, left: 52 };
+const PLOT_W = WIDTH - MARGIN.left - MARGIN.right;
+const PLOT_H = HEIGHT - MARGIN.top - MARGIN.bottom;
+
+function formatCompact(cents: number): string {
+  const dollars = cents / 100;
+  const abs = Math.abs(dollars);
+  if (abs >= 1_000_000) return `$${(abs / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1)}M`;
+  if (abs >= 1_000) return `$${Math.round(abs / 1_000)}K`;
+  return `$${Math.round(abs)}`;
+}
+
+function niceTicks(min: number, max: number, count = 4): number[] {
+  if (min === max) return [min];
+  const rawStep = (max - min) / count;
+  const magnitude = 10 ** Math.floor(Math.log10(rawStep));
+  const residual = rawStep / magnitude;
+  const step = (residual >= 5 ? 10 : residual >= 2 ? 5 : residual >= 1 ? 2 : 1) * magnitude;
+  const niceMin = Math.floor(min / step) * step;
+  const niceMax = Math.ceil(max / step) * step;
+  const ticks: number[] = [];
+  for (let v = niceMin; v <= niceMax + step / 2; v += step) ticks.push(Math.round(v));
+  return ticks;
+}
+
+const TOTAL_ID = "__total";
+
+// Projected per-debt remaining balance over the life of the plan, plus a
+// combined total line — the household's own multi-year "what does this look
+// like" view, built from simulatePayoff's timeline (see debt-payoff.ts).
+// `debts` is expected to already be every still-owed debt (in the attack
+// plan or not — a plan-excluded debt still counts toward "when is the
+// household debt-free," it just never gets extra payments cascaded onto
+// it) with paid-off debts filtered out by the caller before this ever
+// renders, so every one of them gets its own named line — no color-slot
+// cap, no "Other" bucket standing in for debts we didn't bother to name.
+export function PayoffProjectionChart({
+  debts,
+  timeline,
+  startDate,
+}: {
+  debts: { id: string; name: string }[];
+  timeline: PayoffResult["timeline"];
+  startDate: Date;
+}) {
+  // Sample down to at most ~60 points — a 50-year monthly timeline is
+  // hundreds of entries, far more resolution than an SVG this size can
+  // usefully render, and a debt that pays off in year 2 doesn't need every
+  // one of the remaining 48 flat-zero years plotted.
+  const lastMonthWithBalance = timeline.reduce(
+    (last, p, i) => (p.totalRemainingCents > 0 ? i : last),
+    0,
+  );
+  const trimmed = timeline.slice(0, Math.min(timeline.length, lastMonthWithBalance + 2));
+  const stride = Math.max(1, Math.ceil(trimmed.length / 60));
+  const points = trimmed.filter((_, i) => i % stride === 0 || i === trimmed.length - 1);
+
+  // `timeline[i].month` is 1-indexed from simulatePayoff's tick loop, where
+  // tick 1 represents startDate's own calendar month (not one month later —
+  // see the matching `month - 1` in simulatePayoff's own date math), so the
+  // mapping back to a real date needs the same -1.
+  const monthDate = (month: number) => {
+    // Snap to the 1st (UTC) before shifting — a late-in-month startDate
+    // (day 29–31) otherwise overflows a shorter target month and mislabels
+    // the axis by a month. Only month/year is read off this.
+    const d = new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth() + month - 1, 1));
+    return d;
+  };
+
+  const xMax = Math.max(points.length - 1, 1);
+  const allValues = points.flatMap((p) => [p.totalRemainingCents, ...debts.map((d) => p.perDebtRemainingCents[d.id] ?? 0)]);
+  const rawMax = allValues.length ? Math.max(...allValues) : 0;
+  const ticks = niceTicks(0, rawMax * 1.05 || 100);
+  const yMax = ticks[ticks.length - 1] || 1;
+
+  const xScale = (i: number) => MARGIN.left + (xMax === 0 ? PLOT_W / 2 : (i / xMax) * PLOT_W);
+  const yScale = (cents: number) => MARGIN.top + PLOT_H - (cents / yMax) * PLOT_H;
+
+  const debtSeries = debts.map((d, i) => ({ id: d.id, name: d.name, color: LINE_SERIES_COLORS[i % LINE_SERIES_COLORS.length] }));
+  const seriesList = [...debtSeries, { id: TOTAL_ID, name: "Total", color: TOTAL_COLOR }];
+
+  // A handful of evenly spaced x-axis labels — same "don't render more than
+  // the plot can usefully show" reasoning as the ~60-point sampling above.
+  const xTickCount = Math.min(5, points.length);
+  const xTickIndices = [
+    ...new Set(
+      Array.from({ length: xTickCount }, (_, i) => Math.round((i * (points.length - 1)) / Math.max(xTickCount - 1, 1))),
+    ),
+  ];
+
+  function lineFor(getCents: (p: PayoffResult["timeline"][number]) => number) {
+    return points.map((p, i) => `${i === 0 ? "M" : "L"}${xScale(i)},${yScale(getCents(p))}`).join(" ");
+  }
+
+  const { hoverIndex, svgRef, contentBox, pointerHandlers } = useChartHover(
+    WIDTH,
+    HEIGHT,
+    points.length,
+    (i) => xScale(i),
+  );
+
+  const hovered = hoverIndex !== null ? points[hoverIndex] : null;
+
+  if (points.length < 2) {
+    return <p className="text-xs text-gray-500 dark:text-neutral-400">Not enough data yet to project a chart.</p>;
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap gap-x-3 gap-y-1">
+        {seriesList.map((s) => (
+          <span key={s.id} className="flex items-center gap-1.5 text-xs text-neutral-600 dark:text-neutral-400">
+            <span className={`h-2 w-2 shrink-0 rounded-full ${s.color.dot}`} />
+            {s.name}
+          </span>
+        ))}
+      </div>
+
+      <SwipeCarousel>
+      <div key="chart" className="relative">
+        <svg
+          ref={svgRef}
+          viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
+          className="w-full touch-none select-none"
+          {...pointerHandlers}
+        >
+          {ticks.map((t) => (
+            <g key={t}>
+              <line
+                x1={MARGIN.left}
+                x2={WIDTH - MARGIN.right}
+                y1={yScale(t)}
+                y2={yScale(t)}
+                className="stroke-blue-100 dark:stroke-neutral-800"
+                strokeWidth={1}
+              />
+              <text
+                x={MARGIN.left - 8}
+                y={yScale(t)}
+                textAnchor="end"
+                dominantBaseline="middle"
+                className="fill-gray-500 dark:fill-neutral-400 text-[9px]"
+              >
+                {formatCompact(t)}
+              </text>
+            </g>
+          ))}
+
+          {xTickIndices.map((i) => (
+            <text
+              key={i}
+              x={xScale(i)}
+              y={MARGIN.top + PLOT_H + 16}
+              textAnchor="middle"
+              className="fill-gray-500 dark:fill-neutral-400 text-[9px]"
+            >
+              {formatDate(monthDate(points[i].month), { month: "short", year: "2-digit" })}
+            </text>
+          ))}
+
+          {/* Every projected balance line rises up out of the x-axis
+              together on mount (see ChartRiseReveal). */}
+          <ChartRiseReveal width={WIDTH} height={HEIGHT} baselineY={MARGIN.top + PLOT_H}>
+            {debtSeries.map((s) => (
+              <path
+                key={s.id}
+                d={lineFor((p) => p.perDebtRemainingCents[s.id] ?? 0)}
+                fill="none"
+                className={s.color.stroke}
+                strokeWidth={2}
+                strokeLinejoin="round"
+                strokeLinecap="round"
+              />
+            ))}
+            <path
+              d={lineFor((p) => p.totalRemainingCents)}
+              fill="none"
+              className={TOTAL_COLOR.stroke}
+              strokeWidth={2.5}
+              strokeDasharray="5 3"
+              strokeLinejoin="round"
+              strokeLinecap="round"
+            />
+          </ChartRiseReveal>
+
+          {hovered && hoverIndex !== null && (
+            <line
+              x1={xScale(hoverIndex)}
+              x2={xScale(hoverIndex)}
+              y1={MARGIN.top}
+              y2={MARGIN.top + PLOT_H}
+              className="stroke-neutral-400 dark:stroke-neutral-600"
+              strokeWidth={1}
+            />
+          )}
+        </svg>
+
+        {hovered && hoverIndex !== null && contentBox && (
+          <ChartHoverTooltip
+            contentBox={contentBox}
+            viewBoxWidth={WIDTH}
+            viewBoxHeight={HEIGHT}
+            anchorX={xScale(hoverIndex)}
+            anchorY={yScale(rawMax)}
+          >
+            <div className="font-semibold text-neutral-900 dark:text-neutral-100">
+              {formatDate(monthDate(hovered.month), { month: "short", year: "numeric" })}
+            </div>
+            {debtSeries
+              .filter((s) => (hovered.perDebtRemainingCents[s.id] ?? 0) > 0)
+              .map((s) => (
+                <div key={s.id} className="flex items-center gap-1.5 text-gray-600 dark:text-neutral-400">
+                  <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${s.color.dot}`} />
+                  {s.name}: {formatCents(hovered.perDebtRemainingCents[s.id] ?? 0)}
+                </div>
+              ))}
+            <div className="flex items-center gap-1.5 font-medium text-neutral-900 dark:text-neutral-100">
+              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${TOTAL_COLOR.dot}`} />
+              Total: {formatCents(hovered.totalRemainingCents)}
+            </div>
+          </ChartHoverTooltip>
+        )}
+      </div>
+
+      <div key="table" className="flex flex-col gap-1">
+        <p className="px-1 text-[11px] text-gray-500 dark:text-neutral-400">Remaining balance by month</p>
+        <div className="max-h-48 overflow-y-auto overflow-x-auto rounded-lg border border-blue-100 dark:border-neutral-800">
+          <table className="w-full text-xs">
+            <thead className="sticky top-0 z-10 bg-white dark:bg-neutral-900">
+              <tr className="border-b border-blue-100 dark:border-neutral-800">
+                <th className="px-2 py-1.5 text-left font-medium text-gray-500 dark:text-neutral-400">Month</th>
+                {debtSeries.map((s) => (
+                  <th key={s.id} className="px-2 py-1.5 text-right font-medium text-gray-500 dark:text-neutral-400">
+                    {s.name}
+                  </th>
+                ))}
+                <th className="border-l border-blue-100 dark:border-neutral-800 px-2 py-1.5 text-right font-semibold text-neutral-700 dark:text-neutral-300">
+                  Total
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {points.map((p) => (
+                <tr key={p.month} className="border-b border-blue-100 dark:border-neutral-800 last:border-0">
+                  <td className="px-2 py-1.5 text-neutral-700 dark:text-neutral-300">
+                    {formatDate(monthDate(p.month), { month: "short", year: "numeric" })}
+                  </td>
+                  {debtSeries.map((s) => {
+                    const cents = p.perDebtRemainingCents[s.id] ?? 0;
+                    return (
+                      <td
+                        key={s.id}
+                        className={`px-2 py-1.5 text-right font-medium ${
+                          cents > 0
+                            ? "text-neutral-900 dark:text-neutral-100"
+                            : "text-neutral-300 dark:text-neutral-600"
+                        }`}
+                      >
+                        {/* A paid-off (or not-yet-started) debt reads as a
+                            dash, not "$0.00" — makes the payoff progression
+                            scannable down each column (household request,
+                            2026-09-01). */}
+                        {cents > 0 ? formatCents(cents) : "–"}
+                      </td>
+                    );
+                  })}
+                  <td
+                    className={`border-l border-blue-100 dark:border-neutral-800 px-2 py-1.5 text-right font-semibold ${
+                      p.totalRemainingCents > 0
+                        ? "text-neutral-900 dark:text-neutral-100"
+                        : "text-neutral-300 dark:text-neutral-600"
+                    }`}
+                  >
+                    {p.totalRemainingCents > 0 ? formatCents(p.totalRemainingCents) : "–"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </SwipeCarousel>
+    </div>
+  );
+}

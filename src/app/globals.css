@@ -1,0 +1,311 @@
+@import "tailwindcss";
+
+/* Class-based dark mode (toggle-driven) instead of Tailwind v4's default
+   media-query-only `dark:` — see src/components/theme-provider.tsx. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --background: #f9fafb;
+  --foreground: #171717;
+  /* Tells the browser which palette to render its own native form-control
+     chrome in (<select> dropdown panels, checkboxes, scrollbars) — without
+     this, those default to a light UA stylesheet regardless of our .dark
+     class, which is what made every <select> in the app render pale-gray
+     text on a white background in dark mode (the option list itself isn't
+     something Tailwind's `dark:` utilities can reach). */
+  color-scheme: light;
+
+  /* Three-tier stacking scale — the single source of truth for every fixed/
+     absolute overlay's z-index, referenced via `z-[var(--z-*)]`. Before
+     this, every overlay hardcoded its own literal (z-20, z-40, z-50…) by
+     guessing what it needed to clear, and two different dropdowns
+     (select-field.tsx, category-picker.tsx) each independently had to be
+     bumped twice — once past the fixed nav/header, again past the PWA
+     install banner — because nothing recorded what value actually clears
+     what (real incident, 2026-09-09). Bump a tier here and every consumer
+     picks it up.
+       --z-chrome:   persistent fixed page chrome (bottom nav, top header,
+                     desktop sidebar) — always visible, never covers an
+                     intentionally-opened overlay.
+       --z-overlay:  dismissible overlays that sit above chrome but aren't
+                     mid-interaction (profile menu, PWA install banner,
+                     chart tooltips, the "New Category" modal backdrop).
+       --z-toast:    transient confirmation toasts (<Toaster />) — above
+                     chrome and the PWA banner, but deliberately below open
+                     option lists so a toast firing mid-selection can't
+                     cover (or swallow the touch-scroll of) a dropdown.
+       --z-dropdown: open option lists (SelectField, CategoryPicker) — must
+                     beat every fixed/absolute element in the app, since a
+                     lower tier here just gets covered (and its touch-scroll
+                     swallowed) by whatever's rendered later in the DOM. */
+  --z-chrome: 40;
+  --z-overlay: 50;
+  --z-toast: 55;
+  --z-dropdown: 60;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-comfortaa: var(--font-comfortaa);
+}
+
+/* Deliberately NO `@media (prefers-color-scheme: dark)` fallback here — it
+   was tried (see git history/2026-08-10 incident in WORKING_ON.md) and is
+   actively wrong: a bare `:root` media query overrides these variables
+   whenever the OS is dark, with no way to check the `.dark` class, so it
+   silently wins over an explicit "Light" choice while the OS is dark
+   (Tailwind's `.dark`-gated utility classes went light correctly, but the
+   raw --background/--foreground vars stayed black underneath — a broken
+   mixed state). The inline script in layout.tsx's <head> already runs
+   synchronously before first paint in every real case (system, light, or
+   dark), so there's no flash to guard against; :root.dark below is the
+   only place dark values should ever be set. */
+:root.dark {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+  color-scheme: dark;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-comfortaa);
+}
+
+/* Tailwind v4's Preflight ships `cursor: default` on <button> — a deliberate
+   break from v3 that this app was built against, so every button/toggle lost
+   its hover pointer app-wide. Restore it for anything that actually performs
+   an action; disabled controls and plain text inputs keep their defaults. */
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  summary,
+  select:not(:disabled),
+  label:has(input[type="checkbox"]:not(:disabled)),
+  label:has(input[type="radio"]:not(:disabled)) {
+    cursor: pointer;
+  }
+}
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.5s ease-out both;
+}
+
+/* ------------------------------------------------------------------ *
+   Icon micro-animations. Each one is tied to a real state change — an
+   AI call in flight, a copy confirmed, a debt hitting $0 — never idle
+   decoration. All are switched off under prefers-reduced-motion below.
+ * ------------------------------------------------------------------ */
+
+/* Sparkles while an AI action is pending — a slow shimmer that doubles
+   as the "thinking" affordance in place of a bare spinner. */
+@keyframes twinkle {
+  0%, 100% { opacity: 1; transform: scale(1) rotate(0deg); }
+  50% { opacity: 0.55; transform: scale(0.85) rotate(-12deg); }
+}
+.animate-twinkle {
+  animation: twinkle 1.1s ease-in-out infinite;
+}
+
+/* PartyPopper on a payoff / celebration card — one shake-and-settle
+   burst as the card mounts. */
+@keyframes celebrate {
+  0% { transform: scale(0.6) rotate(-18deg); opacity: 0; }
+  55% { transform: scale(1.15) rotate(8deg); opacity: 1; }
+  75% { transform: scale(0.96) rotate(-4deg); }
+  100% { transform: scale(1) rotate(0deg); }
+}
+.animate-celebrate {
+  animation: celebrate 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  transform-origin: 70% 70%;
+}
+
+/* Bigger, longer burst for the "Paid Off This Week" card. */
+@keyframes celebrate-lg {
+  0% { transform: scale(0.6) rotate(-18deg); opacity: 0; }
+  40% { transform: scale(1.35) rotate(10deg); opacity: 1; }
+  65% { transform: scale(1.05) rotate(-6deg); }
+  85% { transform: scale(1.15) rotate(3deg); }
+  100% { transform: scale(1.1) rotate(0deg); }
+}
+.animate-celebrate-lg {
+  animation: celebrate-lg 1.3s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  transform-origin: 70% 70%;
+}
+
+/* Check drawing itself on when an action confirms (link copied, etc.) —
+   targets the single <path> Lucide renders inside the <svg>. */
+@keyframes draw-check {
+  from { stroke-dashoffset: 24; }
+  to { stroke-dashoffset: 0; }
+}
+.animate-draw-check path {
+  stroke-dasharray: 24;
+  animation: draw-check 0.4s ease-out both;
+}
+
+/* ------------------------------------------------------------------ *
+   Chart & meter intro motion — one idea, "grow from your own origin,"
+   so every chart and progress meter in the app draws itself in as one
+   coordinated system on page load:
+     • .chart-bar   bars/segments   → wipe out from the left edge
+     • .chart-rise-group line/area plots  → rise up from the baseline
+     • .chart-fill  markers / dots   → fade in
+   All share one curve + duration. `.chart-bar` and `.chart-fill` fire as
+   CSS mount animations (replay on page open / full reload, not on a
+   background data refresh); a multi-piece chart (donut wedges, stacked-bar
+   or stat segments) staggers them in series order via --chart-index.
+   `.chart-rise-group` instead fires when the element first scrolls/swipes
+   into view (as does CircularProgress's JS-driven ring intro) — see its
+   notes below and use-first-in-view.ts. The resting (post-animation, reduced-motion) state
+   is the element's natural one, so nothing needs a fallback value.
+
+   .chart-rise-group is the bottom-up reveal for a line/area plot — the
+   whole line, at full width, squished flat onto the x-axis and then
+   growing vertically up into its real shape (household preference,
+   2026-09-08: "rising out of the bottom, I should see the whole
+   trendline take shape" — NOT a left-to-right wipe, NOT a rectangular
+   reveal). Driven by <ChartRiseReveal> (chart-rise-reveal.tsx): it wraps
+   the data marks in a <g> and flips that <g>'s inline `transform` from
+   scaleY(0) to scaleY(1) one frame after mount, anchored at the plot's
+   baseline (transform-box: view-box + an explicit transform-origin in
+   viewBox units). This class just carries the transition.
+   Two learnings paid for in production:
+     • it's a `transform` transition, NOT an animated `clip-path` — the
+       latter silently does nothing on SVG in Safari (2026-09-08 report).
+     • it's on the rendered <g>, NOT a <clipPath> child — `transform` +
+       `transform-box` on a clipPath child renders nothing at all in
+       mobile Chrome (2026-09-08 report).
+   The vertical scale does briefly thin the stroke on the way up; that's
+   the "taking shape" read the household asked for, so it stays.
+   Reduced motion kills the transition (below) → snaps straight to shown.
+ * ------------------------------------------------------------------ */
+:root {
+  --chart-motion-duration: 620ms;
+  --chart-motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --chart-motion-stagger: 65ms;
+}
+
+@keyframes chart-grow-x {
+  from {
+    transform: scaleX(0);
+  }
+}
+@keyframes chart-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.chart-bar {
+  transform-origin: left center;
+  animation: chart-grow-x var(--chart-motion-duration) var(--chart-motion-ease) both;
+  animation-delay: calc(var(--chart-index, 0) * var(--chart-motion-stagger));
+}
+.chart-rise-group {
+  /* The <g> wrapping a line chart's data marks (see ChartRiseReveal).
+     transform-box + transform-origin are set inline per-instance (viewBox
+     units, anchored at the plot baseline); this just carries the transition
+     that the scaleY(0)→scaleY(1) mount flip rides. */
+  transition: transform var(--chart-motion-duration) var(--chart-motion-ease);
+}
+.chart-fill {
+  animation: chart-fade-in var(--chart-motion-duration) var(--chart-motion-ease) both;
+  animation-delay: calc(120ms + var(--chart-index, 0) * var(--chart-motion-stagger));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-twinkle,
+  .animate-celebrate,
+  .animate-celebrate-lg,
+  .animate-draw-check path,
+  .animate-fade-in-up,
+  .chart-bar,
+  .chart-fill {
+    animation: none !important;
+  }
+  .chart-rise-group {
+    transition: none !important;
+  }
+  /* DonutChart draws its wedges in with an inline transition rather than a
+     keyframe animation (it's coordinated with hover state in JS). */
+  .chart-wedge {
+    transition: stroke-width 150ms ease-out !important;
+  }
+}
+
+/* Thin, rounded scrollbars everywhere (modal bodies, dropdown lists, the
+   AI chat transcript, tables) instead of the browser's default chunky,
+   square-edged one, which stands out against this app's rounded/soft
+   visual language. Same neutral-300/neutral-700 (+one-step-darker on
+   hover) as every border in the app, so it reads as part of the UI
+   instead of OS chrome. `background-clip: content-box` with a transparent
+   border is what gives the thumb its inset, padded look instead of a bare
+   rectangle flush against the track edges. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #d1d5db transparent;
+}
+:root.dark * {
+  scrollbar-color: #404040 transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: #d1d5db;
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background-color: #9ca3af;
+}
+:root.dark *::-webkit-scrollbar-thumb {
+  background-color: #404040;
+}
+:root.dark *::-webkit-scrollbar-thumb:hover {
+  background-color: #525252;
+}
+
+/* /budget allocation sliders (allocation-slider-group.tsx): the native range
+   is transparent and only handles input — its thumb is sized to match the
+   drawn 22px thumb (THUMB_PX) so pointer position and visual position agree. */
+.alloc-range {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+}
+.alloc-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 22px;
+  height: 22px;
+}
+.alloc-range::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  border: 0;
+}
