@@ -21,7 +21,7 @@ jobs:
       # never connects, and the unit suite never touches a database.
       DATABASE_URL: postgresql://placeholder:placeholder@localhost:5432/placeholder
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
