@@ -36,7 +36,7 @@ import {
   type VerifiedAuthenticationResponse,
   type RegistrationResponseJSON,
   type AuthenticationResponseJSON,
-  type AuthenticatorTransportFuture,
+  type AuthenticatorTransport,
 } from "@simplewebauthn/server";
 
 export const RP_NAME = "Flow";
@@ -82,7 +82,7 @@ export async function buildRegistrationOptions(
     // user — the browser sees its own credential in this list and refuses.
     excludeCredentials: existingCredentials.map((c) => ({
       id: c.credentialId,
-      transports: c.transports as AuthenticatorTransportFuture[],
+      transports: c.transports as AuthenticatorTransport[],
     })),
     authenticatorSelection: {
       // "platform" — Face ID / Touch ID / Windows Hello, not a roaming
@@ -125,7 +125,7 @@ export async function buildAuthenticationOptions(credentials: CredentialForCerem
       ? {
           allowCredentials: credentials.map((c) => ({
             id: c.credentialId,
-            transports: c.transports as AuthenticatorTransportFuture[],
+            transports: c.transports as AuthenticatorTransport[],
           })),
         }
       : {}),
@@ -152,7 +152,7 @@ export async function verifyAuthentication(
       id: credential.credentialId,
       publicKey: Buffer.from(credential.publicKey, "base64url"),
       counter: Number(credential.counter),
-      transports: credential.transports as AuthenticatorTransportFuture[],
+      transports: credential.transports as AuthenticatorTransport[],
     },
   });
 }
