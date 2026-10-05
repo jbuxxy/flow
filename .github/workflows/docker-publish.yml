@@ -34,7 +34,7 @@ jobs:
       # with everything else the build touches — see Dockerfile's own
       # comment on why it has to be a build arg (NEXT_PUBLIC_* vars are
       # inlined by `next build`, too late to supply at container runtime).
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with:
           context: .
           push: true
