@@ -92,18 +92,18 @@ export type CycleMinimum = {
   // Every real payment landing in the current calendar month, flat — kept
   // for payoff-planner.tsx's calendar view (thisCycleDayEvents), which wants
   // "every real payment this month" without caring about slot structure.
-  payments: { id: string; amountCents: number; occurredOn: Date }[];
+  payments: { id: string; amountCents: number; occurredOn: Date; pending?: boolean }[];
   // Every real payment landing in the *previous* calendar month, flat — feeds
   // payoff-planner.tsx's "Last Month" calendar page (a look-back at what was
   // actually paid), which is calendar-view-only and never touches slot
   // structure or projections.
-  lastMonthPayments: { id: string; amountCents: number; occurredOn: Date }[];
+  lastMonthPayments: { id: string; amountCents: number; occurredOn: Date; pending?: boolean }[];
   // One entry per expected occurrence of this debt's cadence landing in the
   // current calendar month (usually one for MONTHLY/ANNUAL, sometimes 2-3
   // for WEEKLY/BIWEEKLY) — `payment` is the real payment that satisfied it,
   // oldest-first positionally, or null while still open. See
   // src/lib/cycle-slots.ts.
-  slots: { date: Date; payment: { id: string; amountCents: number; occurredOn: Date } | null }[];
+  slots: { date: Date; payment: { id: string; amountCents: number; occurredOn: Date; pending?: boolean } | null }[];
   // Real payments this month beyond the expected slot count — paid ahead of
   // schedule, or just extra/rounding-up. For a no-minimum
   // (ignoreMinimumPayment) debt, page.tsx folds its slot-consuming payment(s)
@@ -111,12 +111,12 @@ export type CycleMinimum = {
   // use extraPaymentsBeyondSlots below instead of this field for anything
   // that needs the true beyond-slot total (e.g. netting against a projected
   // payoff-plan extra).
-  extraPayments: { id: string; amountCents: number; occurredOn: Date }[];
+  extraPayments: { id: string; amountCents: number; occurredOn: Date; pending?: boolean }[];
   // The same figure as `extraPayments`, but never folded for
   // ignoreMinimumPayment display — real payments beyond the expected slot
   // count, full stop. Matches src/lib/debt-payments.ts's
   // correctedDueDateByDebtId.extraPaidCents (what the dashboard/buckets use).
-  extraPaymentsBeyondSlots: { id: string; amountCents: number; occurredOn: Date }[];
+  extraPaymentsBeyondSlots: { id: string; amountCents: number; occurredOn: Date; pending?: boolean }[];
   // Ids of real payments matched to a payoff-plan payday's extra (see
   // splitPlanExtraPayments, cycle-slots.ts) — rendered with the emerald
   // extra-payment treatment instead of a plain "paid" line. Optional: only
@@ -368,6 +368,7 @@ export function DebtRow({
                 date={p.occurredOn}
                 amountCents={p.amountCents}
                 payoff={p.id === payoffPaymentId}
+                pending={p.pending}
               />
             ),
           });
@@ -563,6 +564,7 @@ export function DebtRow({
           date={p.occurredOn}
           amountCents={p.amountCents}
           payoff={p.id === payoffPaymentId}
+          pending={p.pending}
         />
       ),
     });

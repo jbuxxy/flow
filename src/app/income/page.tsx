@@ -61,7 +61,7 @@ export default async function IncomePage() {
       where: { householdId, direction: "CREDIT", countsAsIncome: true, ...currentPeriodPatternWhere() },
       include: {
         category: { select: { name: true } },
-        transactions: { orderBy: { occurredOn: "desc" }, select: { id: true, amountCents: true, occurredOn: true, ...PAYMENT_RECEIPT_SELECT } },
+        transactions: { orderBy: { occurredOn: "desc" }, select: { id: true, amountCents: true, occurredOn: true, pending: true, ...PAYMENT_RECEIPT_SELECT } },
       },
       orderBy: { createdAt: "asc" },
     }),
@@ -79,7 +79,7 @@ export default async function IncomePage() {
         // (selected below) is what shows wherever this pattern's categoryName
         // is used (household feedback, 2026-09-11).
         bill: { select: { name: true, category: { select: { name: true } } } },
-        transactions: { orderBy: { occurredOn: "desc" }, select: { id: true, amountCents: true, occurredOn: true, ...PAYMENT_RECEIPT_SELECT } },
+        transactions: { orderBy: { occurredOn: "desc" }, select: { id: true, amountCents: true, occurredOn: true, pending: true, ...PAYMENT_RECEIPT_SELECT } },
       },
       orderBy: { label: "asc" },
     }),

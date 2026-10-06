@@ -576,7 +576,7 @@ export default async function TransactionsPage({
             dueDateLocked: true,
             active: true,
             createdAt: true,
-            transactions: { orderBy: { occurredOn: "desc" }, select: { id: true, amountCents: true, occurredOn: true, ...PAYMENT_RECEIPT_SELECT } },
+            transactions: { orderBy: { occurredOn: "desc" }, select: { id: true, amountCents: true, occurredOn: true, pending: true, ...PAYMENT_RECEIPT_SELECT } },
           },
         },
         account: { select: { name: true, displayName: true, budgetTracked: true } },

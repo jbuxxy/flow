@@ -42,6 +42,7 @@ export default async function BucketsPage() {
         merchant: true,
         amountCents: true,
         occurredOn: true,
+        pending: true,
         notes: true,
         label: true,
         aiSuggestedBucketId: true,

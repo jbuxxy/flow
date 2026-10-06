@@ -21,7 +21,7 @@ import { amountToleranceCents } from "@/lib/amount-tolerance";
 // "the minimum"). A payment of about the minimum, or any payment on/after the
 // due date, is the slot's own payment and reads as before.
 
-type LedgerPayment = { id: string; amountCents: number; occurredOn: Date };
+type LedgerPayment = { id: string; amountCents: number; occurredOn: Date; pending?: boolean };
 
 export type MinimumLedgerEntry =
   // A real payment row (the slot's own payment, an overpayment that covered

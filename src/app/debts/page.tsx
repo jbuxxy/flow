@@ -118,7 +118,7 @@ export default async function DebtsPage() {
       lastPaidDate: true,
       dueDateLocked: true,
       createdAt: true,
-      payments: { select: { id: true, amountCents: true, occurredOn: true } },
+      payments: { select: { id: true, amountCents: true, occurredOn: true, pending: true } },
     },
   });
 
@@ -247,7 +247,7 @@ export default async function DebtsPage() {
         // as a negative credit (see filterDebtPaymentTwins, debt-payments.ts)
         // — this ledger always shows "amount paid," never the account-native
         // sign.
-        payment.payments.map((p) => ({ id: p.id, amountCents: Math.abs(p.amountCents), occurredOn: p.occurredOn }))
+        payment.payments.map((p) => ({ id: p.id, amountCents: Math.abs(p.amountCents), occurredOn: p.occurredOn, pending: p.pending }))
       : [];
     // occurrencesInPeriod walks backward from nextDueDate assuming the
     // cadence has held uniformly forever — true for a REVOLVING billing

@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useRef, useState, useTransition } from "react";
-import { AlertTriangle, CalendarClock, Check, Clock, CreditCard, DollarSign, Link2, LogOut, Receipt, Repeat, Scissors, X } from "lucide-react";
+import { AlertTriangle, CalendarClock, Check, CreditCard, DollarSign, Link2, LogOut, Receipt, Repeat, Scissors, X } from "lucide-react";
 import { formatCents } from "@/lib/money";
 import { formatDate } from "@/lib/date";
 import { reassignTransaction, setAmountRoutingRule } from "@/app/buckets/actions";
@@ -13,6 +13,7 @@ import { updatePattern, deletePattern, linkReceiptToTransaction, dismissReceipt,
 import type { PatternData } from "@/components/pattern-row";
 import { useTransactionLabelEditor } from "@/components/transaction-label-editor";
 import { MerchantLogo } from "@/components/merchant-logo";
+import { PendingIcon } from "@/components/pending-icon";
 import { ReceiptDetailBlock } from "@/components/receipt-detail-block";
 import { deriveP2PDisplay, bankDescriptionFor } from "@/lib/transaction-display";
 import { SelectField } from "@/components/select-field";
@@ -645,13 +646,7 @@ export function TransactionRow({
           <span className="flex min-w-0 flex-1 items-center gap-1.5 font-medium text-neutral-900 dark:text-neutral-100">
             <MerchantLogo merchant={logoMerchant} size={16} allowGuess={!p2pApp} />
             <span className="shrink-0">{displayMerchant}</span>
-            {transaction.pending && (
-              <Clock
-                size={12}
-                className="shrink-0 text-amber-700 dark:text-amber-400"
-                aria-label="Pending"
-              />
-            )}
+            {transaction.pending && <PendingIcon />}
             {transaction.hasReceipt && (
               <Receipt
                 size={12}

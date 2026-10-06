@@ -53,7 +53,7 @@ export type PatternData = {
   // Full history — every transaction this pattern has ever matched, not
   // scoped to any one cycle. For "did *this* cycle get paid," see
   // cyclePaid/currentCyclePayments instead.
-  payments: { id: string; occurredOn: string; amountCents: number; receipt: PaymentReceipt | null }[];
+  payments: { id: string; occurredOn: string; amountCents: number; pending: boolean; receipt: PaymentReceipt | null }[];
   // Both server-computed via cyclePaymentStatus (src/lib/cycle-slots.ts) —
   // the same calendar-month-bounded buildCycleSlots primitive
   // DebtPaymentRow/DebtRow use, so PatternRow's own "paid this cycle"
@@ -62,7 +62,7 @@ export type PatternData = {
   // pattern-row.tsx's own comment). false/[] for an unscheduled pattern
   // (no cadence/nextDueDate — PatternRow never reads these for one).
   cyclePaid: boolean;
-  currentCyclePayments: { id: string; occurredOn: string; amountCents: number; receipt: PaymentReceipt | null }[];
+  currentCyclePayments: { id: string; occurredOn: string; amountCents: number; pending: boolean; receipt: PaymentReceipt | null }[];
 };
 
 // Every server page constructing a PatternData prop needs the same
@@ -94,13 +94,14 @@ export function serializePatternDates<
     createdAt: Date;
     // Select with PAYMENT_RECEIPT_SELECT (src/lib/payment-receipt.ts) so
     // each payment carries its receipt for the card's paid line/ledger.
-    transactions: ({ id: string; amountCents: number; occurredOn: Date } & PaymentReceiptSource)[];
+    transactions: ({ id: string; amountCents: number; occurredOn: Date; pending: boolean } & PaymentReceiptSource)[];
   },
 >(p: T, monthStart: Date, monthEnd: Date) {
   const paymentsAbs = p.transactions.map((t) => ({
     id: t.id,
     amountCents: Math.abs(t.amountCents),
     occurredOn: t.occurredOn,
+    pending: t.pending,
     receipt: paymentReceiptOf(t),
   }));
   const { cyclePaid, currentCyclePayments } =

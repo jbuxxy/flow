@@ -8,6 +8,7 @@ import { ExtraPaymentIcon } from "@/components/extra-payment-icon";
 import type { PoolBreakdown } from "@/lib/debt-payoff";
 import type { PaymentReceipt } from "@/lib/payment-receipt";
 import { useReceiptToggle } from "@/components/receipt-toggle";
+import { PendingIcon } from "@/components/pending-icon";
 
 export type EntryLineState = "due" | "paid" | "expected";
 
@@ -48,7 +49,9 @@ export type EntryLineState = "due" | "paid" | "expected";
 // always wins — see leadingIcon below). `receipt` (a paid line's matched
 // payment) adds the receipt glyph after the date that toggles its "From
 // Receipt" block under the row — skipped on an `onToggle` row, whose whole
-// line is already a button.
+// line is already a button. `pending` (the matched payment hasn't settled
+// at the bank yet) adds the same amber clock /transactions shows after the
+// date.
 export function EntryLine({
   state,
   date,
@@ -66,6 +69,7 @@ export function EntryLine({
   children,
   poolBreakdown,
   receipt,
+  pending = false,
 }: {
   state: EntryLineState;
   date: Date;
@@ -87,6 +91,7 @@ export function EntryLine({
   // day popover already shows (see ExtraPaymentIcon).
   poolBreakdown?: PoolBreakdown;
   receipt?: PaymentReceipt | null;
+  pending?: boolean;
 }) {
   const { trigger: receiptTrigger, panel: receiptPanel } = useReceiptToggle(onToggle ? null : receipt);
   const emerald = state === "expected";
@@ -124,6 +129,7 @@ export function EntryLine({
           {approximate ? "~" : ""}
           {formatDate(date, { month: "short", day: "numeric" })}
         </span>
+        {pending && <PendingIcon />}
         {receiptTrigger}
         {inlineAfterDate}
       </span>

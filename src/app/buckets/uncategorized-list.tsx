@@ -9,6 +9,7 @@ import { showToast } from "@/lib/toast";
 import { TrackAsBillForm } from "./[id]/track-as-bill-form";
 import { TransactionLabelEditor } from "@/components/transaction-label-editor";
 import { MerchantLogo } from "@/components/merchant-logo";
+import { PendingIcon } from "@/components/pending-icon";
 import { SelectField } from "@/components/select-field";
 import { CategoryPicker, type CategoryOption } from "@/app/bills/category-picker";
 
@@ -17,6 +18,7 @@ type UncategorizedTxn = {
   merchant: string;
   amountCents: number;
   occurredOn: Date;
+  pending: boolean;
   notes: string | null;
   label: string | null;
   aiSuggestedBucketId: string | null;
@@ -199,6 +201,7 @@ function Row({
           <p className="flex items-center gap-1.5 truncate font-medium text-neutral-900 dark:text-neutral-100">
             <MerchantLogo merchant={txn.merchant} size={16} allowGuess />
             <span className="truncate">{txn.merchant}</span>
+            {txn.pending && <PendingIcon />}
           </p>
           <p className="text-xs text-gray-500 dark:text-neutral-400">
             {formatDate(txn.occurredOn, { month: "short", day: "numeric" })}

@@ -81,6 +81,7 @@ export default async function RecurringPage() {
               id: true,
               amountCents: true,
               occurredOn: true,
+              pending: true,
               reimbursedBy: { select: { id: true, merchant: true, amountCents: true, occurredOn: true } },
               ...PAYMENT_RECEIPT_SELECT,
             },
@@ -96,7 +97,7 @@ export default async function RecurringPage() {
             // carries its own; the parent bill's own category (already
             // selected above) is what its construction site below uses.
             include: {
-              transactions: { orderBy: { occurredOn: "desc" }, select: { id: true, amountCents: true, occurredOn: true, ...PAYMENT_RECEIPT_SELECT } },
+              transactions: { orderBy: { occurredOn: "desc" }, select: { id: true, amountCents: true, occurredOn: true, pending: true, ...PAYMENT_RECEIPT_SELECT } },
             },
           },
         },
@@ -130,6 +131,7 @@ export default async function RecurringPage() {
               id: true,
               amountCents: true,
               occurredOn: true,
+              pending: true,
               notAccountedFor: true,
               ...ACCOUNTED_FOR_SELECT,
             },
@@ -142,7 +144,7 @@ export default async function RecurringPage() {
           bucket: { select: { name: true } },
           debt: { select: { name: true, account: { select: { displayName: true } } } },
           category: { select: { name: true } },
-          transactions: { orderBy: { occurredOn: "desc" }, select: { id: true, amountCents: true, occurredOn: true, ...PAYMENT_RECEIPT_SELECT } },
+          transactions: { orderBy: { occurredOn: "desc" }, select: { id: true, amountCents: true, occurredOn: true, pending: true, ...PAYMENT_RECEIPT_SELECT } },
         },
         orderBy: { label: "asc" },
       }),
@@ -185,6 +187,7 @@ export default async function RecurringPage() {
       id: p.id,
       amountCents: p.amountCents,
       occurredOn: p.occurredOn,
+      pending: p.pending,
       reimbursedBy: p.reimbursedBy,
       receipt: paymentReceiptOf(p),
     }));
@@ -200,6 +203,7 @@ export default async function RecurringPage() {
       id: p.id,
       amountCents: p.amountCents,
       occurredOn: p.occurredOn.toISOString().slice(0, 10),
+      pending: p.pending,
       receipt: p.receipt,
       reimbursedBy: p.reimbursedBy.map((r) => ({
         id: r.id,
@@ -283,6 +287,7 @@ export default async function RecurringPage() {
       id: t.id,
       amountCents: Math.abs(t.amountCents),
       occurredOn: t.occurredOn,
+      pending: t.pending,
       notAccountedFor: t.notAccountedFor,
       accountedForBy: accountedForDisplayList(t),
     }));

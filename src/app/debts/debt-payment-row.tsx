@@ -7,6 +7,7 @@ import { formatCents } from "@/lib/money";
 import { formatDate, dueDateProximity } from "@/lib/date";
 import { pickPayoffPaymentTime, type PoolBreakdown } from "@/lib/debt-payoff";
 import { EntryLine } from "@/components/entry-line";
+import { PendingIcon } from "@/components/pending-icon";
 import {
   linkPaymentAccountedFor,
   unlinkPaymentAccountedFor,
@@ -108,6 +109,7 @@ export type DebtPaymentPayment = {
   id: string;
   amountCents: number;
   occurredOn: string; // ISO date
+  pending: boolean;
   // See the schema comment on Transaction.accountedForLinks — every already-
   // bucketed purchase this specific payment has been confirmed to cover
   // (e.g. two same-day Groceries/Fuel purchases on this same card, paid off
@@ -360,6 +362,7 @@ function LedgerPaymentRow({
         date={new Date(payment.occurredOn)}
         amountCents={payment.amountCents}
         payoff={isPayoff}
+        pending={payment.pending}
         inlineAfterDate={accountedForToggle}
       >
         {panels}
@@ -377,6 +380,7 @@ function LedgerPaymentRow({
         )}
         <span className="flex flex-1 items-center gap-1.5 text-neutral-500 dark:text-neutral-400">
           {label}
+          {payment.pending && <PendingIcon />}
           {accountedForToggle}
         </span>
         <span className="font-medium text-neutral-800 dark:text-neutral-200">{formatCents(payment.amountCents)}</span>

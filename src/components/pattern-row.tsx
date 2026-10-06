@@ -286,6 +286,7 @@ export function PatternRow({
                   (currentCyclePayments.find((p) => p.occurredOn === pattern.lastPaidDate) ?? currentCyclePayments[0])
                     ?.receipt
                 }
+                pending={currentCyclePayments.some((p) => p.pending)}
               />
             ) : (
               <EntryLine

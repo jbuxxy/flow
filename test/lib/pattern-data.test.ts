@@ -23,14 +23,14 @@ function pattern(overrides: {
   lastPaidDate?: Date | null;
   cadence?: "WEEKLY" | "BIWEEKLY" | "MONTHLY" | "ANNUAL" | null;
   createdAt?: Date;
-  transactions?: ({ id: string; amountCents: number; occurredOn: Date } & Partial<PaymentReceiptSource>)[];
+  transactions?: ({ id: string; amountCents: number; occurredOn: Date; pending?: boolean } & Partial<PaymentReceiptSource>)[];
 }) {
   return {
     nextDueDate: overrides.nextDueDate ?? null,
     lastPaidDate: overrides.lastPaidDate ?? null,
     cadence: overrides.cadence ?? null,
     createdAt: overrides.createdAt ?? utc(2026, 1, 1),
-    transactions: (overrides.transactions ?? []).map((t) => ({ ...NO_RECEIPT, ...t })),
+    transactions: (overrides.transactions ?? []).map((t) => ({ ...NO_RECEIPT, pending: false, ...t })),
   };
 }
 
@@ -92,8 +92,8 @@ describe("serializePatternDates", () => {
       monthEnd,
     );
     assert.deepEqual(result.payments, [
-      { id: "t1", amountCents: 1234, occurredOn: "2026-07-03", receipt: null },
-      { id: "t2", amountCents: 5678, occurredOn: "2026-08-03", receipt: null },
+      { id: "t1", amountCents: 1234, occurredOn: "2026-07-03", pending: false, receipt: null },
+      { id: "t2", amountCents: 5678, occurredOn: "2026-08-03", pending: false, receipt: null },
     ]);
   });
 
@@ -129,5 +129,19 @@ describe("serializePatternDates", () => {
       receiptTotalCents: null,
     });
     assert.equal(result.payments.find((p) => p.id === "t0")!.receipt, null);
+  });
+
+  test("a still-pending payment keeps its flag through to the cycle ledger (paid line's clock icon)", () => {
+    const result = serializePatternDates(
+      pattern({
+        nextDueDate: utc(2026, 9, 10),
+        cadence: "MONTHLY",
+        transactions: [{ id: "t1", amountCents: -5000, occurredOn: utc(2026, 9, 10), pending: true }],
+      }),
+      monthStart,
+      monthEnd,
+    );
+    assert.equal(result.currentCyclePayments[0].pending, true);
+    assert.equal(result.payments[0].pending, true);
   });
 });

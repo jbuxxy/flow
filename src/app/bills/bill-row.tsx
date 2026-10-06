@@ -64,6 +64,7 @@ export type BillData = {
     id: string;
     amountCents: number;
     occurredOn: string;
+    pending: boolean;
     // Its matched email receipt, if any (paymentReceiptOf) — the paid
     // line/ledger glyph that opens the "From Receipt" block.
     receipt: PaymentReceipt | null;
@@ -83,6 +84,7 @@ export type BillData = {
     id: string;
     amountCents: number;
     occurredOn: string;
+    pending: boolean;
     // Its matched email receipt, if any (paymentReceiptOf) — the paid
     // line/ledger glyph that opens the "From Receipt" block.
     receipt: PaymentReceipt | null;
@@ -411,6 +413,7 @@ export function BillRow({
                   date={new Date(bill.lastPaidDate!)}
                   amountCents={currentCyclePayments.length > 0 ? totalCents : bill.amountCents}
                   receipt={paidReceipt}
+                  pending={currentCyclePayments.some((p) => p.pending)}
                 />
               ) : isSkipped ? (
                 // Same muted + trailing Undo treatment PayoffExtraSkip already

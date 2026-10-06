@@ -9,6 +9,7 @@ import type { ReceiptLineItem } from "@/app/transactions/transaction-row";
 import { reassignTransaction, setAmountRoutingRule } from "../actions";
 import { useTransactionLabelEditor } from "@/components/transaction-label-editor";
 import { MerchantLogo } from "@/components/merchant-logo";
+import { PendingIcon } from "@/components/pending-icon";
 import { ReceiptDetailBlock } from "@/components/receipt-detail-block";
 import { deriveP2PDisplay, bankDescriptionFor } from "@/lib/transaction-display";
 import { SelectField } from "@/components/select-field";
@@ -201,6 +202,7 @@ export function TransactionRow({
           <span className="flex min-w-0 flex-1 items-center gap-1.5 font-medium text-neutral-900 dark:text-neutral-100">
             <MerchantLogo merchant={logoMerchant} size={16} allowGuess={!p2pApp} />
             <span className="shrink-0">{displayMerchant}</span>
+            {transaction.pending && <PendingIcon />}
             {transaction.hasReceipt && (
               <Receipt
                 size={12}

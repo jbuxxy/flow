@@ -5,6 +5,7 @@ import { formatCents } from "@/lib/money";
 import { formatDate } from "@/lib/date";
 import type { PaymentReceipt } from "@/lib/payment-receipt";
 import { useReceiptToggle } from "@/components/receipt-toggle";
+import { PendingIcon } from "@/components/pending-icon";
 
 export type CycleLedgerPayment = {
   id: string;
@@ -13,6 +14,7 @@ export type CycleLedgerPayment = {
   // Its matched receipt, if any — glyph after the date toggles the "From
   // Receipt" block under that payment (see useReceiptToggle).
   receipt?: PaymentReceipt | null;
+  pending?: boolean;
 };
 
 function LedgerPaymentLine({ payment: p, primaryOccurredOn }: { payment: CycleLedgerPayment; primaryOccurredOn: string | null }) {
@@ -26,6 +28,7 @@ function LedgerPaymentLine({ payment: p, primaryOccurredOn }: { payment: CycleLe
             {formatDate(new Date(p.occurredOn), { month: "short", day: "numeric" })}
             {p.occurredOn === primaryOccurredOn ? " · this cycle" : " · extra"}
           </span>
+          {p.pending && <PendingIcon />}
           {trigger}
         </span>
         <span className="font-medium text-neutral-800 dark:text-neutral-200">{formatCents(p.amountCents)}</span>
