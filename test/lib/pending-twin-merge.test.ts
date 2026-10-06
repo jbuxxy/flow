@@ -1,6 +1,6 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { pendingRowRetirable, phantomTwinMergeData } from "@/lib/pending-twin-merge";
+import { pendingRowRetirable, phantomTwinMergeData, settleOrphanPendingInPlace } from "@/lib/pending-twin-merge";
 
 const row = (o: Record<string, unknown> = {}) => ({ isIncome: false, isTransfer: false, oneOff: false, ...o });
 
@@ -57,5 +57,28 @@ describe("pendingRowRetirable", () => {
     assert.equal(pendingRowRetirable({ ...base, pendingUpdatedAt: t(20, 44), twinUpdatedAt: t(20, 44) }), false);
     // Outside a sync.
     assert.equal(pendingRowRetirable({ ...base, syncStartedAt: null, pendingUpdatedAt: t(20, 33), twinUpdatedAt: t(20, 43) }), false);
+  });
+});
+
+describe("settleOrphanPendingInPlace", () => {
+  const cutoff = new Date(Date.UTC(2026, 8, 29));
+  const base = { hasTwin: false, accountedForLinks: 1, orphanCutoff: cutoff };
+
+  describe("regressions", () => {
+    // 2026-10-06: Sam's Club $141.49 hold last seen Sep 28, a card payment
+    // linked as covering it, posted copy never delivered — sat pending.
+    test("no twin, covered by a payment, gone past the orphan wait: settle", () => {
+      assert.equal(settleOrphanPendingInPlace({ ...base, pendingUpdatedAt: new Date(Date.UTC(2026, 8, 28)) }), true);
+    });
+  });
+
+  test("still inside the orphan wait: leave it for a slow twin", () => {
+    assert.equal(settleOrphanPendingInPlace({ ...base, pendingUpdatedAt: new Date(Date.UTC(2026, 9, 1)) }), false);
+  });
+
+  test("a twin exists or nothing vouches for it: not this path", () => {
+    const old = new Date(Date.UTC(2026, 8, 20));
+    assert.equal(settleOrphanPendingInPlace({ ...base, hasTwin: true, pendingUpdatedAt: old }), false);
+    assert.equal(settleOrphanPendingInPlace({ ...base, accountedForLinks: 0, pendingUpdatedAt: old }), false);
   });
 });

@@ -87,3 +87,22 @@ export function pendingRowRetirable(opts: {
     opts.twinUpdatedAt >= opts.syncStartedAt
   );
 }
+
+// A stale pending row with no posted twin that a card payment was already
+// confirmed to cover ("already accounted for") is a real, settled charge —
+// the payment proves it — whose posted copy the aggregator just never
+// delivered. Deleting it would drop a real purchase from its bucket and
+// orphan the payment's link (the payment then double-counts); leaving it
+// meant pending forever. Settle it in place instead — but only once it's been
+// gone from the feed as long as an orphaned receipt waits, so a twin that's
+// merely slow to post still gets the normal merge. Real report, 2026-10-06: a
+// $141.49 Sam's Club hold on the Synchrony card sat pending 10 days after the
+// household paid it, its posted charge never sent.
+export function settleOrphanPendingInPlace(opts: {
+  hasTwin: boolean;
+  accountedForLinks: number;
+  pendingUpdatedAt: Date;
+  orphanCutoff: Date;
+}): boolean {
+  return !opts.hasTwin && opts.accountedForLinks > 0 && opts.pendingUpdatedAt < opts.orphanCutoff;
+}

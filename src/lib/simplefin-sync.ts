@@ -43,7 +43,7 @@ import {
 } from "@/lib/debt-payment-pattern";
 import { P2P_DISCOVERY_KEYWORDS } from "@/lib/p2p-keywords";
 import { nameSimilarity } from "@/lib/fuzzy-match";
-import { pendingRowRetirable, phantomTwinMergeData } from "@/lib/pending-twin-merge";
+import { pendingRowRetirable, phantomTwinMergeData, settleOrphanPendingInPlace } from "@/lib/pending-twin-merge";
 import { todayAsUTCDate } from "@/lib/date";
 import { tryAutoLinkRefund, tryAutoLinkGenericCredit } from "@/lib/refund-match";
 import { creditDoesNotIdentifyPayee } from "@/lib/reimbursements";
@@ -626,6 +626,17 @@ async function reconcileStalePendingRows(householdId: string, syncStartedAt: Dat
         graceCutoff,
       })
     ) {
+      continue;
+    }
+    if (
+      settleOrphanPendingInPlace({
+        hasTwin: twin != null,
+        accountedForLinks: p._count.accountedForByLinks,
+        pendingUpdatedAt: p.updatedAt,
+        orphanCutoff: new Date(Date.now() - ORPHAN_RECEIPT_RELEASE_MS),
+      })
+    ) {
+      await db.transaction.update({ where: { id: p.id }, data: { pending: false } });
       continue;
     }
     const data = twin ? phantomTwinMergeData(p, twin) : {};
