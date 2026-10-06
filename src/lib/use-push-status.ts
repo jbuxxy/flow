@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
-import { currentPushSubscription } from "@/lib/push-client";
+import { ensurePushSubscription } from "@/lib/push-client";
 
 export type PushStatus = "checking" | "off" | "on" | "denied" | "unsupported";
 
@@ -21,12 +21,11 @@ export function usePushStatus(): [PushStatus, Dispatch<SetStateAction<PushStatus
   // react-hooks/set-state-in-effect trap this repo's lint config catches
   // (see WORKING_ON.md's Theme section — cost real iteration time before).
   useEffect(() => {
-    currentPushSubscription()
-      .then((sub) => {
-        if (typeof Notification === "undefined") setStatus("unsupported");
-        else if (Notification.permission === "denied") setStatus("denied");
-        else setStatus(sub ? "on" : "off");
-      })
+    // Not just a read: repairs a subscription the OS silently dropped (see
+    // ensurePushSubscription). Shared across every mounted instance, so the
+    // repair runs at most once per page load.
+    ensurePushSubscription()
+      .then((result) => setStatus(result === "repaired" ? "on" : result))
       .catch(() => setStatus("unsupported"));
   }, []);
 
