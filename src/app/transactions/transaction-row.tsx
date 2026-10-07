@@ -480,6 +480,9 @@ export function TransactionRow({
       ? // Amber, not the settled green "Income" a confirmed credit shows —
         // the sync-time default read identically to a decided one, so
         // nothing said "still needs you" (household report, 2026-10-07).
+        // Just the tag, like amber "Uncategorized" — a border + inline
+        // Confirm strip was tried and rejected as too much; Confirm As
+        // Income stays in the kebab.
         { text: "Unconfirmed Income", amber: true, icon: null as "debt" | "recurring" | null }
     : isRefundCandidate
       ? transaction.refundReviewDismissed
@@ -633,10 +636,7 @@ export function TransactionRow({
   );
 
   return (
-    <li
-      ref={rowRef}
-      className={`relative rounded-lg border px-3 py-2 text-sm ${needsP2PIncomeConfirm ? "border-amber-300 dark:border-amber-800" : "border-blue-100 dark:border-neutral-800"}`}
-    >
+    <li ref={rowRef} className="relative rounded-lg border border-blue-100 dark:border-neutral-800 px-3 py-2 text-sm">
       <div
         role="button"
         tabIndex={0}
@@ -794,33 +794,6 @@ export function TransactionRow({
           </RowActions>
         </p>
       </div>
-
-      {/* The one-tap answer for the common case, on the collapsed row itself
-          — "Confirm As Income" only ever lived in the kebab, so an
-          unconfirmed credit gave no hint it was waiting on anyone
-          (household report, 2026-10-07). Reimbursement/recurring stay in
-          the kebab alongside it. */}
-      {needsP2PIncomeConfirm && (
-        <div className="mt-2 flex items-center justify-end gap-2 border-t border-amber-200 dark:border-amber-900/60 pt-2">
-          <span className="min-w-0 flex-1 text-xs text-amber-700 dark:text-amber-400">
-            Is this income? Reimbursement and recurring options are in the ⋮ menu.
-          </span>
-          <button
-            type="button"
-            onClick={() =>
-              startMarkIncome(async () => {
-                await preservingScroll(() => reassignTransaction(transaction.id, { income: true }));
-                showToast("Confirmed As Income");
-              })
-            }
-            disabled={markIncomePending}
-            className="flex shrink-0 items-center gap-1 rounded-lg bg-emerald-700 dark:bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
-          >
-            <Check size={13} />
-            {markIncomePending ? "…" : "Confirm Income"}
-          </button>
-        </div>
-      )}
 
       {expanded && (
         <div className="mt-2 flex flex-col gap-2 border-t border-blue-100 dark:border-neutral-800 pt-2">
