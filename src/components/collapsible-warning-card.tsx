@@ -28,7 +28,7 @@ export function useCollapsedState(storageKey: string): [boolean, (next: boolean)
 // as collapsing any other (2026-08-19). `storageKey` is per card *type*
 // (and, for CountWarning, per instance) — not per rendered instance — so
 // collapsing "Debts need setup" on the dashboard also starts it collapsed
-// on /debts and /settings/simplefin, the same way dismissing an item there
+// on /debts and /settings/accounts, the same way dismissing an item there
 // is one shared piece of state, not a per-page one. See useStoredBoolean
 // (src/lib/use-stored-boolean.ts) for why this is useSyncExternalStore-based
 // rather than a lazy useState + effect.

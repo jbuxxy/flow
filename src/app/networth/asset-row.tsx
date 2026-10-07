@@ -231,7 +231,7 @@ export function AssetRow({
   const equityCents = hasLinkedDebt ? asset.valueCents - asset.debt!.balanceCents : asset.valueCents;
   const linkedAccount = asset.accountId ? accounts.find((a) => a.id === asset.accountId) : undefined;
   // A linked (SIMPLEFIN-sourced) asset reads its headline name live from the
-  // account's own friendly name (renamed centrally on /settings/simplefin,
+  // account's own friendly name (renamed centrally on /settings/accounts,
   // via AccountEditor) rather than the Asset's own `name` field — the
   // two used to drift independently (a separate rename form right here),
   // which meant renaming an account in Settings silently stopped applying
@@ -437,7 +437,7 @@ export function AssetRow({
           {hasLinkedDebt && (
             <p className="text-xs text-gray-500 dark:text-neutral-400">
               This name follows the linked loan — rename it from{" "}
-              <NextLink href="/settings/simplefin" className="underline">
+              <NextLink href="/settings/accounts" className="underline">
                 Settings → Accounts
               </NextLink>
               .
@@ -556,7 +556,7 @@ export function AssetRow({
       {editing && linked && (
         <p className="border-t border-blue-100 dark:border-neutral-800 pt-2 text-xs text-gray-500 dark:text-neutral-400">
           This name follows the connected account — rename it from{" "}
-          <NextLink href="/settings/simplefin" className="underline">
+          <NextLink href="/settings/accounts" className="underline">
             Settings → Accounts
           </NextLink>
           .

@@ -475,7 +475,7 @@ export function DebtPaymentRow({
             "Mark this payment paid" and the ledger below stay available
             either way — those aren't term-editing. */}
         <Link
-          href="/settings/simplefin"
+          href="/settings/accounts"
           aria-label="Edit in Settings"
           title="Edit in Settings"
           className="shrink-0 text-xs text-blue-900 dark:text-blue-300 hover:underline"

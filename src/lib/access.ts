@@ -30,7 +30,7 @@ export function canViewNetWorth(user: { role: string }): boolean {
 }
 
 // Shared server-action guard for anything owner-only — was previously
-// duplicated locally in settings/simplefin/actions.ts; now also used by
+// duplicated locally in settings/accounts/actions.ts; now also used by
 // debts/actions.ts (2026-08-21: debts went fully read-only for non-owner
 // full-access members — they can still view /debts, including the payoff
 // calendar and "paid off this week," but every mutation — create, balance/

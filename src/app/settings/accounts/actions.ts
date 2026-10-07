@@ -52,14 +52,14 @@ export async function connectSimpleFin(
     console.error("Initial SimpleFIN sync failed:", err);
   }
 
-  revalidatePath("/settings/simplefin");
+  revalidatePath("/settings/accounts");
   return {};
 }
 
 export async function syncNow() {
   const session = await requireOwner();
   await syncHousehold(session.user.householdId);
-  revalidatePath("/settings/simplefin");
+  revalidatePath("/settings/accounts");
   revalidatePath("/debts");
   revalidatePath("/savings");
   revalidatePath("/buckets");
@@ -68,7 +68,7 @@ export async function syncNow() {
 export async function disconnectSimpleFin() {
   const session = await requireOwner();
   await db.bankConnection.delete({ where: { householdId: session.user.householdId } });
-  revalidatePath("/settings/simplefin");
+  revalidatePath("/settings/accounts");
 }
 
 // The manual override for Account.budgetTracked (2026-08-14, generalized to
@@ -85,7 +85,7 @@ export async function setAccountBudgetTracked(accountId: string, budgetTracked: 
   if (!belongsToHousehold(account, session.user.householdId)) return;
 
   await db.account.update({ where: { id: accountId }, data: { budgetTracked } });
-  revalidatePath("/settings/simplefin");
+  revalidatePath("/settings/accounts");
   revalidatePath("/buckets");
 }
 
@@ -121,7 +121,7 @@ export async function renameAccount(
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
 
   await db.account.update({ where: { id: accountId }, data: { displayName: parsed.data.name } });
-  revalidatePath("/settings/simplefin");
+  revalidatePath("/settings/accounts");
   revalidatePath("/networth");
   revalidatePath("/debts");
   revalidatePath("/buckets");
@@ -160,7 +160,7 @@ export async function updateAccountApy(
   }
 
   await db.account.update({ where: { id: accountId }, data: { apyBasisPoints } });
-  revalidatePath("/settings/simplefin");
+  revalidatePath("/settings/accounts");
   revalidatePath("/networth");
   revalidatePath("/reports");
   return {};
@@ -195,7 +195,7 @@ export async function restoreAccount(accountId: string) {
   await db.account.update({ where: { id: accountId }, data: { hiddenAt: null, missingFromFeedSince: null } });
   await db.debt.updateMany({ where: { accountId }, data: { hiddenAt: null } });
   revalidatePath("/settings/hidden");
-  revalidatePath("/settings/simplefin");
+  revalidatePath("/settings/accounts");
   revalidatePath("/debts");
   revalidatePath("/buckets");
   revalidatePath("/networth");
@@ -255,7 +255,7 @@ export async function deleteHiddenItem(kind: "debt" | "account", id: string) {
   }
 
   revalidatePath("/settings/hidden");
-  revalidatePath("/settings/simplefin");
+  revalidatePath("/settings/accounts");
   revalidatePath("/settings/database");
   revalidatePath("/debts");
   revalidatePath("/buckets");

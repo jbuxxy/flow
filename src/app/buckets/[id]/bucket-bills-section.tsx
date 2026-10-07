@@ -38,7 +38,7 @@ type SortableItem = RecurringSortable &
 // otherwise invisible from anywhere that actually lists it, since the index
 // page has no per-bucket view of pending suggestions). No manual "add a bill"/"add a
 // transaction" form here (removed 2026-08-15, along with manual debt
-// creation moving to /settings/simplefin) — this household doesn't track
+// creation moving to /settings/accounts) — this household doesn't track
 // cash transactions at all, so every bill/transaction here comes from a
 // synced account; "Track as a bill" from /transactions (createBillFromTransaction)
 // is the only way a bill gets created now.

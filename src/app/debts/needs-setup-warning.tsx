@@ -10,7 +10,7 @@ import type { DebtNeedingSetup } from "@/lib/debt-payments";
 
 // Same card/dismiss pattern as MinPaymentWarning (min-payment-warning.tsx) —
 // a debt missing terms/due date/etc. only ever showed as a small per-row
-// pill before (debt-row.tsx, settings/simplefin/page.tsx), easy to miss
+// pill before (debt-row.tsx, settings/accounts/page.tsx), easy to miss
 // entirely when the actual "why does my profile have a red dot" question
 // starts from Settings, not a specific debt row (real report, 2026-08-19).
 // Yellow, not red (2026-08-19 follow-up, tuned from an initial amber that
@@ -50,7 +50,7 @@ export function NeedsSetupWarning({
     >
       <p className="mt-1 text-xs text-neutral-900 dark:text-white">
         Edit these in{" "}
-        <Link href="/settings/simplefin" className="underline underline-offset-2">
+        <Link href="/settings/accounts" className="underline underline-offset-2">
           Account Settings
         </Link>{" "}
         to fill in what&apos;s missing.

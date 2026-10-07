@@ -18,7 +18,7 @@ export default async function SecuritySettingsPage() {
   });
 
   // Formatted server-side (container TZ, same convention as the SimpleFIN
-  // "last synced" timestamp, settings/simplefin/page.tsx) and passed down as
+  // "last synced" timestamp, settings/accounts/page.tsx) and passed down as
   // a plain string — a client component re-running toLocaleDateString on the
   // same Date at hydration risks a server/browser TZ mismatch (see
   // src/lib/date.ts's formatDate comment); this side-steps it entirely by

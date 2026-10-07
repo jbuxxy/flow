@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 
 // "Hidden over a year" purge-eligibility window. Still enforced server-side
-// by deleteHiddenItem (src/app/settings/simplefin/actions.ts) for anything
+// by deleteHiddenItem (src/app/settings/accounts/actions.ts) for anything
 // that isn't a plain manual debt — a synced account that vanished from the
 // feed, or a debt still linked to one, keeps this safety delay before it
 // can be permanently deleted.

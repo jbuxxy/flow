@@ -91,7 +91,7 @@ export default async function DebtsPage() {
     ]);
   const debtsNeedingSetup = isOwner ? await getActiveDebtsNeedingSetup(session.user.householdId) : [];
   // Prefer a linked account's friendly nickname (set in
-  // /settings/simplefin) over the raw one-time-copied Debt.name — see
+  // /settings/accounts) over the raw one-time-copied Debt.name — see
   // WORKING_ON.md's 2026-08-15 account-settings consolidation entry.
   // accountRawName/accountOrgName are captured separately, before `name`
   // gets overwritten above — logo matching (debt-row.tsx) also searches
@@ -462,7 +462,7 @@ export default async function DebtsPage() {
       width="wide"
       titleActions={
         <Link
-          href="/settings/simplefin"
+          href="/settings/accounts"
           aria-label="Account Settings"
           title="Account Settings — track a newly connected card/loan, rename accounts, add/edit/delete manual debts, edit interest/minimum payment/due date"
           className="text-neutral-400 dark:text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300"

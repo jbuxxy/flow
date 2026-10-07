@@ -138,7 +138,7 @@ export const ALL_NOTIFICATION_TYPES = Object.keys(NOTIFICATION_TYPE_META) as Not
 // No UI to act on a debt-amount review unless you're the OWNER — the
 // dashboard's DebtAmountReviewCard (src/app/page.tsx) is owner-only even
 // though a full-access non-owner can view /debts read-only. Same reasoning
-// for ACCOUNT_SYNC_ISSUE: /settings/simplefin's reconnect/re-auth actions are
+// for ACCOUNT_SYNC_ISSUE: /settings/accounts's reconnect/re-auth actions are
 // all requireOwner()-gated, so a non-owner has nothing to do about it anyway.
 const OWNER_ONLY: NotificationType[] = [
   "DEBT_AMOUNT_REVIEW",

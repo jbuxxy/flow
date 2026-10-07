@@ -110,7 +110,7 @@ export function AiSettingsPanel({
   return (
     <div className="rounded-xl border border-blue-100 dark:border-neutral-800 p-4">
       {/* Same title+status-dot-on-the-left, actions-right-aligned layout as
-          the SimpleFIN Status card (settings/simplefin/page.tsx) — an `h3`
+          the SimpleFIN Status card (settings/accounts/page.tsx) — an `h3`
           so it picks up Comfortaa from the global h1-h6 rule, same as every
           other card title in the app. */}
       <div className="flex items-center justify-between gap-3">

@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { getHiddenItems } from "@/lib/hidden-items";
 import { AppShell } from "@/components/app-shell";
-import { HiddenItems } from "@/app/settings/simplefin/hidden-items";
+import { HiddenItems } from "@/app/settings/accounts/hidden-items";
 
 export default async function HiddenItemsPage() {
   const session = await auth();

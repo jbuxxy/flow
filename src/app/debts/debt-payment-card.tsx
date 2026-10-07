@@ -43,7 +43,7 @@ export type DebtPaymentWithName = DebtPaymentData & {
   // redundant there.
   linked: boolean;
   // Debt.includeInPayoffPlan — same emerald Target icon
-  // src/app/settings/simplefin/page.tsx already shows on its connected-
+  // src/app/settings/accounts/page.tsx already shows on its connected-
   // account badges ("Included in the Debt Payoff Plan"), propagated here
   // alongside `linked` (2026-08-26 household request) so a plan-tracked
   // debt reads the same way on its Bills/Buckets payment card too.
@@ -81,7 +81,7 @@ export function DebtPaymentCard({
   variant?: "default" | "bucket";
 }) {
   // "Payment 3 of 12" — mirrors ManualDebtEditor's/DebtRow's own
-  // currentPayment derivation (src/app/settings/simplefin/manual-debt-editor.tsx,
+  // currentPayment derivation (src/app/settings/accounts/manual-debt-editor.tsx,
   // src/app/debts/debt-row.tsx).
   const currentPayment =
     debtPayment.installmentsTotal != null && debtPayment.installmentsRemaining != null

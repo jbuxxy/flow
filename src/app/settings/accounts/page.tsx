@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { PartyPopper, EyeOff, Target, Landmark, PiggyBank, CreditCard, Wallet, Binoculars } from "lucide-react";
+import { buildBnplSchedule } from "@/lib/bnpl-schedule";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { formatCents } from "@/lib/money";
@@ -31,6 +32,17 @@ import { TrackAsDebtForm } from "./track-as-debt-form";
 import { ManualDebtEditor } from "./manual-debt-editor";
 import { AccountsUsageSynopsis } from "./accounts-usage-synopsis";
 import { HideDebtButton } from "./hide-debt-button";
+import { ExpandableSummary } from "./expandable-summary";
+import {
+  ActivityList,
+  BnplScheduleList,
+  DetailGrid,
+  DetailSection,
+  DetailTile,
+  cadenceLabel,
+  shortDate,
+  type ActivityItem,
+} from "./account-details";
 import type { AccountType, SyncMode } from "@prisma/client";
 
 const TYPE_LABEL: Record<AccountType, string> = {
@@ -47,7 +59,7 @@ const SYNC_MODE_LABEL: Record<SyncMode, string> = {
   BALANCE_ONLY: "Balance Only",
 };
 
-export default async function SimpleFinSettingsPage() {
+export default async function AccountsSettingsPage() {
   const session = await auth();
   if (!session?.user) redirect("/login");
   if (!hasFullAccess(session.user)) redirect("/");
@@ -70,7 +82,7 @@ export default async function SimpleFinSettingsPage() {
   ] = await Promise.all([
     db.bankConnection.findUnique({
       where: { householdId },
-      include: { accounts: { orderBy: { name: "asc" } } },
+      include: { accounts: { orderBy: { name: "asc" }, include: { owner: { select: { name: true } } } } },
     }), // budgetTracked/displayName come along for free — accounts isn't a `select`
     db.debt.findMany({
       where: { householdId },
@@ -130,6 +142,7 @@ export default async function SimpleFinSettingsPage() {
       debtId: true,
       cadence: true,
       toleranceCents: true,
+      amountDueCents: true,
       categoryId: true,
       nextDueDate: true,
       bucketId: true,
@@ -143,6 +156,7 @@ export default async function SimpleFinSettingsPage() {
         id: p.id,
         cadence: p.cadence,
         toleranceCents: p.toleranceCents,
+        amountDueCents: p.amountDueCents,
         categoryId: p.categoryId,
         nextDueDate: p.nextDueDate.toISOString().slice(0, 10),
         bucketId: p.bucketId,
@@ -161,6 +175,186 @@ export default async function SimpleFinSettingsPage() {
     select: { debtPayment: { select: { debtId: true } } },
   });
   const debtIdsWithPendingReview = new Set(pendingReviews.map((r) => r.debtPayment.debtId));
+
+  // Expanded-card data (2026-10-07): every payment linked to each visible
+  // debt, oldest first — a BNPL plan's schedule wants all of them, a card/
+  // loan just its latest few. Positive = money paid toward the debt; a synced
+  // debt's own account also carries the negative mirror credit ("Payment from
+  // Checking"), dropped below so a payment isn't listed twice.
+  const visibleDebtIds = debts.filter((d) => !d.hiddenAt).map((d) => d.id);
+  const debtAccountIdById = new Map(debts.map((d) => [d.id, d.accountId]));
+  const paymentTxns = await db.transaction.findMany({
+    where: { householdId, debtId: { in: visibleDebtIds }, amountCents: { gt: 0 } },
+    select: { id: true, debtId: true, accountId: true, occurredOn: true, amountCents: true, merchant: true, label: true, pending: true },
+    orderBy: [{ occurredOn: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+  });
+  const paymentsByDebtId = new Map<string, ActivityItem[]>();
+  for (const t of paymentTxns) {
+    if (t.accountId && t.accountId === debtAccountIdById.get(t.debtId!)) continue;
+    const list = paymentsByDebtId.get(t.debtId!) ?? [];
+    list.push({
+      id: t.id,
+      date: t.occurredOn.toISOString().slice(0, 10),
+      label: t.label ?? t.merchant,
+      amountCents: t.amountCents,
+      pending: t.pending,
+    });
+    paymentsByDebtId.set(t.debtId!, list);
+  }
+  const recentPayments = (debtId: string) => (paymentsByDebtId.get(debtId) ?? []).slice(-5).reverse();
+
+  // Latest few transactions on each connected account — charges, credits
+  // and pending ones alike — for its "Recent Activity" list. A card/loan
+  // shows its own account's feed too (household request, 2026-10-07: every
+  // transaction, not just matched payments). One small query per account — a
+  // household has a handful, and `take` per account is what keeps a busy
+  // checking account from crowding out the rest.
+  const activityAccounts = (connection?.accounts ?? []).filter((a) => !a.hiddenAt);
+  const activityByAccountId = new Map<string, ActivityItem[]>(
+    await Promise.all(
+      activityAccounts.map(async (a) => {
+        const txns = await db.transaction.findMany({
+          where: { householdId, accountId: a.id },
+          select: { id: true, occurredOn: true, amountCents: true, merchant: true, resolvedMerchant: true, label: true, pending: true },
+          orderBy: [{ occurredOn: "desc" }, { createdAt: "desc" }],
+          take: 5,
+        });
+        return [
+          a.id,
+          txns.map((t) => ({
+            id: t.id,
+            date: t.occurredOn.toISOString().slice(0, 10),
+            label: t.label ?? t.resolvedMerchant ?? t.merchant,
+            amountCents: t.amountCents,
+            pending: t.pending,
+          })),
+        ] as const;
+      }),
+    ),
+  );
+
+  const bucketNameById = new Map(buckets.map((b) => [b.id, b.name]));
+  const categoryNameById = new Map(categories.map((c) => [c.id, c.name]));
+  type DebtRow = (typeof debts)[number];
+  type TrackedPayment = NonNullable<ReturnType<typeof debtPaymentByDebtId.get>>;
+
+  // The debt half of an expanded card — shared by synced cards/loans and
+  // manual ones (BNPL gets its own layout below).
+  const debtTermsTiles = (d: DebtRow, dp: TrackedPayment | null) => {
+    const isPaidOff = d.balanceCents === 0;
+    return (
+      <DetailGrid>
+        <DetailTile label="APR" value={`${(d.aprBasisPoints / 100).toFixed(2)}%`} />
+        <DetailTile
+          label="Minimum"
+          value={d.ignoreMinimumPayment ? "No Minimum" : `${formatCents(d.minPaymentCents)}/mo`}
+          tone={d.ignoreMinimumPayment ? "muted" : "default"}
+        />
+        {dp && !isPaidOff && (
+          <DetailTile
+            label="Amount Due"
+            value={formatCents(dp.amountDueCents)}
+            tone={dp.amountDueCents > 0 ? "bad" : "good"}
+          />
+        )}
+        <DetailTile
+          label="Next Due"
+          value={dp?.nextDueDate && !isPaidOff ? `${dp.dueDateLocked ? "" : "~"}${shortDate(dp.nextDueDate)}` : "—"}
+          tone={dp?.nextDueDate && !isPaidOff ? (dp.dueDateLocked ? "default" : "warn") : "muted"}
+        />
+        <DetailTile label="Cadence" value={cadenceLabel(dp?.cadence)} />
+        <DetailTile
+          label="Payoff Plan"
+          value={d.includeInPayoffPlan ? "Included" : "Not Included"}
+          tone={d.includeInPayoffPlan ? "good" : "muted"}
+        />
+        <DetailTile label="Bucket" value={(dp?.bucketId && bucketNameById.get(dp.bucketId)) || "None"} tone={dp?.bucketId ? "default" : "muted"} />
+        <DetailTile
+          label="Category"
+          value={(dp?.categoryId && categoryNameById.get(dp.categoryId)) || "None"}
+          tone={dp?.categoryId ? "default" : "muted"}
+        />
+        {d.paidOffDate && <DetailTile label="Paid Off" value={shortDate(d.paidOffDate.toISOString())} tone="good" />}
+        {d.label && <DetailTile label="Label" value={d.label} />}
+      </DetailGrid>
+    );
+  };
+
+  // A manual debt has no account feed of its own — its activity is the
+  // payments matched to it.
+  const recentPaymentsSection = (debtId: string) => (
+    <DetailSection title="Recent Activity">
+      <ActivityList items={recentPayments(debtId)} empty="No Payments Matched Yet." />
+    </DetailSection>
+  );
+
+  // A BNPL plan's expanded card: plan facts, then every installment.
+  const bnplDetails = (d: DebtRow, dp: TrackedPayment | null) => {
+    const schedule = buildBnplSchedule({
+      installmentsTotal: d.installmentsTotal,
+      installmentsRemaining: d.installmentsRemaining,
+      paymentCents: d.minPaymentCents,
+      balanceCents: d.balanceCents,
+      nextDueDate: dp?.nextDueDate ?? null,
+      cadence: dp?.cadence ?? "BIWEEKLY",
+      paidPayments: (paymentsByDebtId.get(d.id) ?? []).map((p) => ({ date: p.date, amountCents: p.amountCents })),
+    });
+    const paidCents = schedule.filter((r) => r.status === "PAID").reduce((sum, r) => sum + r.amountCents, 0);
+    const paidCount = schedule.filter((r) => r.status === "PAID").length;
+    const originalCents = d.receiptTotalCents ?? (d.installmentsTotal ? d.minPaymentCents * d.installmentsTotal : null);
+    return (
+      <>
+        <DetailGrid>
+          <DetailTile label="Purchased" value={d.purchaseDate ? shortDate(d.purchaseDate.toISOString()) : "—"} tone={d.purchaseDate ? "default" : "muted"} />
+          <DetailTile label="Original Amount" value={originalCents != null ? formatCents(originalCents) : "—"} />
+          <DetailTile label="Payment" value={formatCents(d.minPaymentCents)} />
+          <DetailTile label="Cadence" value={cadenceLabel(dp?.cadence)} />
+          <DetailTile label="Paid So Far" value={formatCents(paidCents)} tone="good" />
+          <DetailTile label="Remaining" value={formatCents(d.balanceCents)} tone={d.balanceCents > 0 ? "bad" : "good"} />
+          <DetailTile label="APR" value={`${(d.aprBasisPoints / 100).toFixed(2)}%`} />
+          <DetailTile
+            label="Payoff Plan"
+            value={d.includeInPayoffPlan ? "Included" : "Not Included"}
+            tone={d.includeInPayoffPlan ? "good" : "muted"}
+          />
+          <DetailTile label="Bucket" value={(dp?.bucketId && bucketNameById.get(dp.bucketId)) || "None"} tone={dp?.bucketId ? "default" : "muted"} />
+          <DetailTile
+            label="Category"
+            value={(dp?.categoryId && categoryNameById.get(dp.categoryId)) || "None"}
+            tone={dp?.categoryId ? "default" : "muted"}
+          />
+          {d.paidOffDate && <DetailTile label="Paid Off" value={shortDate(d.paidOffDate.toISOString())} tone="good" />}
+          {d.label && <DetailTile label="Label" value={d.label} />}
+        </DetailGrid>
+        <DetailSection
+          title="Payment Schedule"
+          aside={d.installmentsTotal ? `${paidCount} of ${d.installmentsTotal} Paid` : undefined}
+        >
+          {schedule.length > 0 ? (
+            <BnplScheduleList rows={schedule} />
+          ) : (
+            <p className="text-xs text-gray-500 dark:text-neutral-400">
+              Set the payment count and first payment date (pencil above) to see the schedule.
+            </p>
+          )}
+          {schedule.length > 0 && d.balanceCents > 0 && !dp?.nextDueDate && (
+            <p className="text-xs text-gray-500 dark:text-neutral-400">Set the first payment date to project upcoming payments.</p>
+          )}
+        </DetailSection>
+      </>
+    );
+  };
+
+  const manualDebtDetails = (d: DebtRow) => {
+    const dp = debtPaymentByDebtId.get(d.id) ?? null;
+    if (d.debtType === "INSTALLMENT") return bnplDetails(d, dp);
+    return (
+      <>
+        <DetailSection title="Terms">{debtTermsTiles(d, dp)}</DetailSection>
+        {recentPaymentsSection(d.id)}
+      </>
+    );
+  };
 
   // What each synced account actually feeds — the whole point of this
   // section is answering "is this connected account doing anything yet?"
@@ -226,6 +420,7 @@ export default async function SimpleFinSettingsPage() {
   const goalByAccountId = new Map(goals.map((g) => [g.accountId!, g]));
   const untrackedByAccountId = new Map(untrackedLiabilities.map((a) => [a.id, a]));
   const CASH_TYPES: AccountType[] = ["CHECKING", "SAVINGS"];
+  const showApy = (t: AccountType) => t !== "CREDIT_CARD" && t !== "LOAN";
   // One entry per line (see simplefin-sync.ts) — a per-institution auth
   // problem doesn't flip the whole connection to status ERROR, so this list
   // is the real source of truth for "something needs re-authorizing." Each
@@ -577,56 +772,33 @@ export default async function SimpleFinSettingsPage() {
                           <HideDebtButton debtId={debt.id} debtName={displayName} />
                         )}
                       </div>
-                      <div className="mt-0.5 flex items-start justify-between gap-2">
-                        <div className="min-w-0 flex-1">
-                          <p className="text-xs text-gray-500 dark:text-neutral-400">
-                            {a.orgName ? `${a.orgName} · ` : ""}
-                            {TYPE_LABEL[a.accountType]} · {SYNC_MODE_LABEL[a.syncMode]}
-                          </p>
-                          {CASH_TYPES.includes(a.accountType) && a.excludedFromNetWorth && (
-                            <p className="mt-0.5 text-xs text-amber-700 dark:text-amber-400">
-                              Not Counted —{" "}
-                              <Link href="/networth" className="underline">
-                                Add It
-                              </Link>
-                            </p>
-                          )}
-                          {a.accountType === "INVESTMENT" && !asset && !goal && (
-                            <p className="mt-0.5 text-xs text-amber-700 dark:text-amber-400">
-                              Not Tracked —{" "}
-                              <Link href="/networth" className="underline">
-                                Add It
-                              </Link>
-                            </p>
-                          )}
-                          {(a.accountType === "CREDIT_CARD" || a.accountType === "LOAN") && (
-                            <>
-                              {debt && paidOff ? (
-                                <p className="mt-0.5 flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400">
+                      <ExpandableSummary
+                        storageKey={a.id}
+                        summary={
+                          <>
+                            <span className="block text-xs text-gray-500 dark:text-neutral-400">
+                              {a.orgName ? `${a.orgName} · ` : ""}
+                              {TYPE_LABEL[a.accountType]} · {SYNC_MODE_LABEL[a.syncMode]}
+                            </span>
+                            {(a.accountType === "CREDIT_CARD" || a.accountType === "LOAN") &&
+                              (debt && paidOff ? (
+                                <span className="mt-0.5 flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400">
                                   <PartyPopper size={13} /> Paid Off
                                   {debt.paidOffDate &&
                                     ` ${formatDate(debt.paidOffDate, { month: "short", day: "numeric", year: "numeric" })}`}
-                                </p>
+                                </span>
                               ) : debt ? (
-                                <p className={`mt-0.5 text-xs ${debtNeedsSetupNow ? "text-amber-700 dark:text-amber-400" : "text-gray-500 dark:text-neutral-400"}`}>
+                                <span
+                                  className={`mt-0.5 block text-xs ${debtNeedsSetupNow ? "text-amber-700 dark:text-amber-400" : "text-gray-500 dark:text-neutral-400"}`}
+                                >
                                   {debtLabel}
-                                </p>
+                                </span>
                               ) : (
-                                <>
-                                  <p className="mt-0.5 text-xs text-amber-700 dark:text-amber-400">Not Tracked</p>
-                                  {isOwner && untracked && (
-                                    <TrackAsDebtForm
-                                      accountId={a.id}
-                                      balanceCents={a.balanceCents}
-                                      knownMinPaymentCents={untracked.knownMinPaymentCents}
-                                    />
-                                  )}
-                                </>
-                              )}
-                            </>
-                          )}
-                        </div>
-                        <div className="flex shrink-0 items-start gap-1.5">
+                                <span className="mt-0.5 block text-xs text-amber-700 dark:text-amber-400">Not Tracked</span>
+                              ))}
+                          </>
+                        }
+                        balance={
                           <span
                             className={`font-medium ${
                               !showBalance
@@ -638,8 +810,103 @@ export default async function SimpleFinSettingsPage() {
                           >
                             {showBalance ? formatCents(a.balanceCents) : "••••"}
                           </span>
-                        </div>
-                      </div>
+                        }
+                        footer={
+                          <>
+                            {CASH_TYPES.includes(a.accountType) && a.excludedFromNetWorth && (
+                              <p className="mt-0.5 text-xs text-amber-700 dark:text-amber-400">
+                                Not Counted —{" "}
+                                <Link href="/networth" className="underline">
+                                  Add It
+                                </Link>
+                              </p>
+                            )}
+                            {a.accountType === "INVESTMENT" && !asset && !goal && (
+                              <p className="mt-0.5 text-xs text-amber-700 dark:text-amber-400">
+                                Not Tracked —{" "}
+                                <Link href="/networth" className="underline">
+                                  Add It
+                                </Link>
+                              </p>
+                            )}
+                            {(a.accountType === "CREDIT_CARD" || a.accountType === "LOAN") && !debt && isOwner && untracked && (
+                              <TrackAsDebtForm
+                                accountId={a.id}
+                                balanceCents={a.balanceCents}
+                                knownMinPaymentCents={untracked.knownMinPaymentCents}
+                              />
+                            )}
+                          </>
+                        }
+                      >
+                        <DetailSection title="Account">
+                          <DetailGrid>
+                            <DetailTile label="Institution" value={a.orgName ?? "—"} tone={a.orgName ? "default" : "muted"} />
+                            <DetailTile label="Type" value={TYPE_LABEL[a.accountType]} />
+                            <DetailTile label="Sync Mode" value={SYNC_MODE_LABEL[a.syncMode]} />
+                            <DetailTile
+                              label="Last Synced"
+                              value={
+                                a.lastSyncedAt
+                                  ? a.lastSyncedAt.toLocaleString("en-US", { month: "short", day: "2-digit", hour: "numeric", minute: "2-digit" })
+                                  : "Never"
+                              }
+                              tone={a.lastSyncedAt ? "default" : "muted"}
+                            />
+                            <DetailTile
+                              label="Transactions"
+                              value={a.budgetTracked ? "Used" : "Not Used"}
+                              tone={a.budgetTracked ? "good" : "muted"}
+                            />
+                            <DetailTile
+                              label="Net Worth"
+                              value={
+                                CASH_TYPES.includes(a.accountType)
+                                  ? a.excludedFromNetWorth
+                                    ? "Not Counted"
+                                    : "Counted"
+                                  : a.accountType === "INVESTMENT"
+                                    ? asset
+                                      ? `Asset · ${asset.name}`
+                                      : goal
+                                        ? `Goal · ${goal.name}`
+                                        : "Not Tracked"
+                                    : a.accountType === "CREDIT_CARD" || a.accountType === "LOAN"
+                                      ? debt
+                                        ? "Counted as Debt"
+                                        : "Not Tracked"
+                                      : "—"
+                              }
+                              tone={
+                                isCashAsset || isInvestmentAsset || isInvestmentGoal || isTrackedDebt
+                                  ? "good"
+                                  : a.accountType === "OTHER"
+                                    ? "muted"
+                                    : "warn"
+                              }
+                            />
+                            {showApy(a.accountType) && (
+                              <DetailTile
+                                label="APY"
+                                value={a.apyBasisPoints != null ? `${(a.apyBasisPoints / 100).toFixed(2)}%` : "—"}
+                                tone={a.apyBasisPoints != null ? "good" : "muted"}
+                              />
+                            )}
+                            {a.owner?.name && <DetailTile label="Owner" value={a.owner.name} />}
+                            {a.displayName && a.displayName !== a.name && <DetailTile label="Bank Name" value={a.name} wide />}
+                          </DetailGrid>
+                        </DetailSection>
+                        {debt && (
+                          <>
+                            <DetailSection title="Debt Terms">{debtTermsTiles(debt, debtPayment)}</DetailSection>
+                          </>
+                        )}
+                        {showBalance && (
+                          <DetailSection title="Recent Activity">
+                            <ActivityList items={activityByAccountId.get(a.id) ?? []} empty="No Transactions Yet." signFlip />
+                          </DetailSection>
+                        )}
+                      </ExpandableSummary>
                     </li>
                 );
               };
@@ -714,6 +981,7 @@ export default async function SimpleFinSettingsPage() {
                       categoryId={debtPaymentByDebtId.get(d.id)?.categoryId ?? null}
                       categories={categories}
                       linkableAccounts={linkableAccountsForManualDebt}
+                      details={manualDebtDetails(d)}
                     />
                   ))}
                 </ul>

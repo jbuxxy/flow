@@ -1408,7 +1408,7 @@ export async function matchInstallmentPayments(householdId: string): Promise<voi
 // creation (createDebt), so there's nothing left unconfirmed the way a
 // bare-quick-created REVOLVING debt or an unlocked due date can leave
 // behind. Shared by /debts (debts/page.tsx) and Account
-// Settings (settings/simplefin/page.tsx) so the two can't drift the way they
+// Settings (settings/accounts/page.tsx) so the two can't drift the way they
 // did until 2026-08-16: Settings' copy never checked for a pending
 // DebtAmountReview at all, so a debt with a pending "did your minimum
 // change?" question showed as fully confirmed there while /debts (and the
@@ -1437,7 +1437,7 @@ export function debtNeedsSetup(
 export const PENDING_REVIEW_SETUP_REASON = "Confirm minimum payment change";
 
 // The specific reason a debt fails debtNeedsSetup, in the same priority
-// order — settings/simplefin/page.tsx used to compute its own copy of this
+// order — settings/accounts/page.tsx used to compute its own copy of this
 // message inline, which is exactly what drifted out of sync with this
 // function once before (see the comment above); this is the one place the
 // message and the boolean can't disagree.
@@ -2474,7 +2474,7 @@ export async function getDebtPaymentsThisWeek(householdId: string, weekOf: Date 
   return [...rows, ...untrackedExtraRows];
 }
 
-// A household-set friendly nickname on the linked Account (/settings/simplefin)
+// A household-set friendly nickname on the linked Account (/settings/accounts)
 // wins over the raw one-time-copied Debt.name — same override
 // debts/page.tsx applies to its own `debts` array (2026-08-15 account
 // settings consolidation) and getDebtPaymentsThisWeek already applies per-row

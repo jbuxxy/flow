@@ -552,7 +552,7 @@ export default async function Home() {
           {bankNeedsAttention && (
             <AttentionLinkCard
               key="bank-sync"
-              href="/settings/simplefin"
+              href="/settings/accounts"
               title="Account Sync Needs Attention"
               subtitle="Connection missing or reporting an error"
               storageKey="bank-sync-attention"
@@ -579,7 +579,7 @@ export default async function Home() {
               }))}
               title="Untracked Liability Accounts"
               subtitle="Synced, but no debt is tracked for these yet."
-              href="/settings/simplefin"
+              href="/settings/accounts"
               linkLabel="Review in Account Settings →"
               storageKey="untracked-liabilities"
             />

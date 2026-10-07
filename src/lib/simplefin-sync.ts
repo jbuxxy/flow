@@ -68,7 +68,7 @@ const GONE_FROM_FEED_GRACE_MS = 2 * 60 * 60 * 1000;
 // hideDebt) must never imply the still-connected Account is "gone" too —
 // only an Account going hidden implies its Debt should too, never the
 // other way around. Undone by restoreAccount
-// (src/app/settings/simplefin/actions.ts) — see Account.hiddenAt in
+// (src/app/settings/accounts/actions.ts) — see Account.hiddenAt in
 // schema.prisma for why this never self-heals on its own.
 export async function hideAccountsWithLinkedDebts(accountIds: string[], now: Date = new Date()): Promise<void> {
   if (accountIds.length === 0) return;
@@ -1972,7 +1972,7 @@ export async function syncHousehold(householdId: string): Promise<SyncResult> {
           // See the schema comment on Account.budgetTracked — set once at
           // creation only (not re-applied on update, same as
           // excludedFromNetWorth below it), so a household's manual toggle
-          // in /settings/simplefin always wins over this default afterward.
+          // in /settings/accounts always wins over this default afterward.
           budgetTracked: accountType === "CHECKING" || accountType === "SAVINGS",
         },
         update: {
@@ -2035,7 +2035,7 @@ export async function syncHousehold(householdId: string): Promise<SyncResult> {
       // connected card/loan — termsConfirmed:false for anything but $0
       // means it immediately shows up as "Needs setup" (see
       // hasDebtsNeedingAttention) with the real terms one tap away in
-      // /settings/simplefin, same as the BNPL quick-lender-create path's
+      // /settings/accounts, same as the BNPL quick-lender-create path's
       // placeholder convention. Re-checked every sync (not just at first
       // connect) so an account that reaches $0 later still picks this up,
       // same self-healing convention as everything else here.
@@ -2357,13 +2357,13 @@ export async function syncHousehold(householdId: string): Promise<SyncResult> {
     // every single run while the household just hasn't gotten to it yet
     // would be pure noise. Owner-only (ACCOUNT_SYNC_ISSUE,
     // notification-preferences.ts) — fixing this is a requireOwner()-gated
-    // action on /settings/simplefin. Household request, 2026-09-27.
+    // action on /settings/accounts. Household request, 2026-09-27.
     if (newLastError && newLastError !== connection.lastError) {
       try {
         await sendPushToHouseholdForType(householdId, "ACCOUNT_SYNC_ISSUE", {
           title: "An Account Needs Attention",
           body: "A connected bank needs to be reconnected — check Settings > Accounts.",
-          url: "/settings/simplefin",
+          url: "/settings/accounts",
         });
       } catch (err) {
         console.error(`[account-sync-issue] household ${householdId} push failed:`, err);
@@ -2383,7 +2383,7 @@ export async function syncHousehold(householdId: string): Promise<SyncResult> {
         await sendPushToHouseholdForType(householdId, "ACCOUNT_SYNC_ISSUE", {
           title: "Account Sync Failed",
           body: `The last sync couldn't complete: ${message}`,
-          url: "/settings/simplefin",
+          url: "/settings/accounts",
         });
       } catch (pushErr) {
         console.error(`[account-sync-issue] household ${householdId} push failed:`, pushErr);

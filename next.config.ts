@@ -37,6 +37,12 @@ const nextConfig: NextConfig = {
   //   and a framed money app is a clickjacking target.
   // - Referrer-Policy: setup/invite tokens ride in the URL (/setup-totp
   //   ?token=…) — never leak a path+query to another origin.
+  // The Accounts settings page lived at /settings/simplefin until
+  // 2026-10-07 — already-sent notification links and bookmarks still point
+  // there.
+  async redirects() {
+    return [{ source: "/settings/simplefin", destination: "/settings/accounts", permanent: true }];
+  },
   async headers() {
     return [
       {

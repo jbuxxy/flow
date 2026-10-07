@@ -534,7 +534,7 @@ const renameDebtSchema = z.object({
 
 export type RenameDebtState = { error?: string };
 
-// The manual-debt counterpart to renameAccount (settings/simplefin/actions.ts)
+// The manual-debt counterpart to renameAccount (settings/accounts/actions.ts)
 // — a manual Debt's `name` had no rename affordance anywhere at all before
 // this (only ever set once, at creation). Writes `name` directly rather than
 // a separate displayName field the way renameAccount does: a manual debt has
@@ -556,7 +556,7 @@ export async function renameDebt(
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
 
   await db.debt.update({ where: { id: debtId }, data: { name: parsed.data.name } });
-  revalidatePath("/settings/simplefin");
+  revalidatePath("/settings/accounts");
   revalidatePath("/debts");
   revalidatePath("/networth");
   revalidatePath("/buckets");
@@ -741,7 +741,7 @@ export async function updateDebtTerms(
   }
   revalidatePath("/debts");
   revalidatePath("/buckets");
-  revalidatePath("/settings/simplefin");
+  revalidatePath("/settings/accounts");
   revalidatePath("/");
   return {};
 }
@@ -872,7 +872,7 @@ export async function updateDebtLabel(debtId: string, label: string) {
 
   await db.debt.update({ where: { id: debtId }, data: { label: label.trim().slice(0, 120) || null } });
   revalidatePath("/debts");
-  revalidatePath("/settings/simplefin");
+  revalidatePath("/settings/accounts");
   revalidatePath("/");
 }
 
@@ -918,7 +918,7 @@ export async function linkDebtAccount(debtId: string, accountId: string) {
   // Only a genuinely first-time link (this debt had no account before) can
   // represent a real "was $0, now has a balance" transition worth notifying
   // on — re-pointing an *already-linked* debt at a different account (the
-  // "Linked Account" control, settings/simplefin/account-editor.tsx) is a
+  // "Linked Account" control, settings/accounts/account-editor.tsx) is a
   // household correcting which account this debt maps to, not the balance
   // actually changing, so the two balances being compared don't belong to
   // the same real-world account at two points in time and firing
@@ -999,7 +999,7 @@ export async function linkDebtAccount(debtId: string, accountId: string) {
   }
   await reassignTransactionsForDebt(debtId);
   revalidatePath("/debts");
-  revalidatePath("/settings/simplefin");
+  revalidatePath("/settings/accounts");
   revalidatePath("/buckets");
   revalidatePath("/");
 }
@@ -1125,7 +1125,7 @@ export type UpdateSyncedDebtTermsState = { error?: string };
 // when a debt is linked to a synced account (2026-08-15 account-settings
 // consolidation) — those two previously wrote the same underlying fields
 // (DebtPayment.nextDueDate, Debt.minPaymentCents) from two separate forms on
-// /debts. Rendered from settings/simplefin/page.tsx instead; /debts shows
+// /debts. Rendered from settings/accounts/page.tsx instead; /debts shows
 // this data read-only for a linked debt (see debt-row.tsx). Manual/unlinked
 // debts keep using updateDebtTerms + updateDebtPayment exactly as before —
 // this action errors if the debt isn't actually linked to an account.
@@ -1244,7 +1244,7 @@ export async function updateSyncedDebtTerms(
   }
 
   revalidatePath("/debts");
-  revalidatePath("/settings/simplefin");
+  revalidatePath("/settings/accounts");
   revalidatePath("/buckets");
   revalidatePath("/");
   if (oldBucketId) revalidatePath(`/buckets/${oldBucketId}`);
@@ -1550,7 +1550,7 @@ export async function settleDebtAmountDue(debtPaymentId: string) {
 // as always — hiding a synced account's row is only ever meant to read as
 // "this is paid off and I don't need to see it," not a way to make a
 // still-owed connected card disappear. Purely a display toggle either way —
-// see deleteHiddenItem (src/app/settings/simplefin/actions.ts) for how a
+// see deleteHiddenItem (src/app/settings/accounts/actions.ts) for how a
 // household eventually reclaims one permanently, and restoreDebt below for
 // undoing this before then.
 //
@@ -1583,7 +1583,7 @@ export async function hideDebt(debtId: string) {
   await db.debt.update({ where: { id: debtId }, data: { hiddenAt: new Date() } });
   await db.debtPayment.updateMany({ where: { debtId }, data: { hiddenFromBucket: true } });
   revalidatePath("/settings/hidden");
-  revalidatePath("/settings/simplefin");
+  revalidatePath("/settings/accounts");
   revalidatePath("/debts");
   revalidatePath("/bills");
   if (debt.debtPayment?.bucketId) revalidatePath(`/buckets/${debt.debtPayment.bucketId}`);
@@ -1609,7 +1609,7 @@ export async function restoreDebt(debtId: string) {
   await db.debt.update({ where: { id: debtId }, data: { hiddenAt: null } });
   await db.debtPayment.updateMany({ where: { debtId }, data: { hiddenFromBucket: false } });
   revalidatePath("/settings/hidden");
-  revalidatePath("/settings/simplefin");
+  revalidatePath("/settings/accounts");
   revalidatePath("/debts");
   revalidatePath("/bills");
   if (debt.debtPayment?.bucketId) revalidatePath(`/buckets/${debt.debtPayment.bucketId}`);
@@ -1785,7 +1785,7 @@ export async function dismissMinPaymentWarning(debtId: string) {
     update: { createdAt: new Date() },
   });
   revalidatePath("/debts");
-  revalidatePath("/settings/simplefin");
+  revalidatePath("/settings/accounts");
   revalidatePath("/settings");
   revalidatePath("/");
 }
@@ -1820,7 +1820,7 @@ export async function dismissNeedsSetupWarning(debtId: string) {
     update: { createdAt: new Date() },
   });
   revalidatePath("/debts");
-  revalidatePath("/settings/simplefin");
+  revalidatePath("/settings/accounts");
   revalidatePath("/settings");
   revalidatePath("/");
 }
@@ -1921,7 +1921,7 @@ export async function setDebtPayoffOrder(orderedActiveDebtIds: string[]) {
 }
 
 // Same simple toggle shape as setAccountBudgetTracked
-// (settings/simplefin/actions.ts) — flips Debt.includeInPayoffPlan, which
+// (settings/accounts/actions.ts) — flips Debt.includeInPayoffPlan, which
 // debts/page.tsx reads to decide whether a debt participates in
 // simulatePayoff/computeAttackOrder (see the payoffEligibleDebtInputs split
 // there) or just sits listed with its balance, excluded. Any debt, not just
@@ -1935,7 +1935,7 @@ export async function setDebtIncludedInPayoffPlan(debtId: string, included: bool
 
   await db.debt.update({ where: { id: debtId }, data: { includeInPayoffPlan: included } });
   revalidatePath("/debts");
-  revalidatePath("/settings/simplefin");
+  revalidatePath("/settings/accounts");
   revalidatePath("/buckets");
   revalidatePath("/");
 }
@@ -2191,5 +2191,5 @@ export async function updateDebtKind(debtId: string, kind: "CARD" | "LOAN") {
 
   await db.debt.update({ where: { id: debtId }, data: { kind } });
   revalidatePath("/debts");
-  revalidatePath("/settings/simplefin");
+  revalidatePath("/settings/accounts");
 }

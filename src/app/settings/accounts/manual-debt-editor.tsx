@@ -19,6 +19,7 @@ async function toasted(run: () => Promise<unknown>, message = "Saved") {
   }
 }
 import { InstallmentProgressBar } from "@/components/installment-progress-bar";
+import { ExpandableSummary } from "./expandable-summary";
 import { PlanReceiptSection, type PlanReceiptItem } from "@/components/plan-receipt-section";
 import {
   renameDebt,
@@ -110,6 +111,7 @@ export function ManualDebtEditor({
   categoryId: trackedCategoryId,
   categories,
   linkableAccounts,
+  details,
 }: {
   debt: ManualDebt;
   nextDueDate: string | null;
@@ -118,7 +120,7 @@ export function ManualDebtEditor({
   // which this mirrors for the read-only summary line below).
   dueDateLocked: boolean;
   // INSTALLMENT only — the linked DebtPayment's current cadence/tolerance,
-  // when a tracker already exists (see settings/simplefin/page.tsx).
+  // when a tracker already exists (see settings/accounts/page.tsx).
   cadence: Cadence | null;
   toleranceCents: number | null;
   bucketId: string | null;
@@ -138,6 +140,9 @@ export function ManualDebtEditor({
   // only — a BNPL plan (INSTALLMENT) has no bank-account counterpart to
   // link to. Household request, 2026-09-14.
   linkableAccounts: { id: string; name: string; linkedElsewhere: boolean }[];
+  // The expanded panel (terms tiles / BNPL payment schedule) — built on the
+  // server by settings/accounts/page.tsx, which has the payment history.
+  details: React.ReactNode;
 }) {
   const [editing, setEditing] = useState(false);
   const renameWithId = renameDebt.bind(null, debt.id);
@@ -694,15 +699,16 @@ export function ManualDebtEditor({
         </div>
       )}
 
-      <div className="mt-1 flex items-start justify-between gap-2">
-        <div className="min-w-0 flex-1">
-          {paidOff ? (
-            <p className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400">
+      <ExpandableSummary
+        storageKey={debt.id}
+        summary={
+          paidOff ? (
+            <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400">
               <PartyPopper size={13} /> Paid Off
               {debt.paidOffDate && ` ${formatDate(new Date(debt.paidOffDate), { month: "short", day: "numeric", year: "numeric" })}`}
-            </p>
+            </span>
           ) : (
-            <p className="text-xs text-gray-500 dark:text-neutral-400">
+            <span className="block text-xs text-gray-500 dark:text-neutral-400">
               {(debt.aprBasisPoints / 100).toFixed(2)}% APR ·{" "}
               {!isInstallment && debt.ignoreMinimumPayment
                 ? "No Minimum"
@@ -721,22 +727,28 @@ export function ManualDebtEditor({
                   {` · due on the ${dueDateLocked ? "" : "~"}${ordinal(dayOfMonthUTC(nextDueDate))}`}
                 </span>
               )}
-            </p>
-          )}
-        </div>
-        <span
-          className={`shrink-0 font-medium ${paidOff ? "text-emerald-700 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}
-        >
-          {paidOff ? formatCents(0) : `-${formatCents(debt.balanceCents)}`}
-        </span>
-      </div>
-      {isInstallment && currentPayment && debt.installmentsTotal && (
-        // Its own full-width row (2026-08-26 — used to share the row with
-        // the balance amount above via flex-1, which left it stopping short
-        // of the card's true right edge instead of running the full width
-        // like everything else in the card).
-        <InstallmentProgressBar className="mt-1.5" currentPayment={currentPayment} total={debt.installmentsTotal} />
-      )}
+            </span>
+          )
+        }
+        balance={
+          <span className={`font-medium ${paidOff ? "text-emerald-700 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
+            {paidOff ? formatCents(0) : `-${formatCents(debt.balanceCents)}`}
+          </span>
+        }
+        footer={
+          isInstallment &&
+          currentPayment &&
+          debt.installmentsTotal && (
+            // Its own full-width row (2026-08-26 — used to share the row with
+            // the balance amount above via flex-1, which left it stopping
+            // short of the card's true right edge instead of running the full
+            // width like everything else in the card).
+            <InstallmentProgressBar className="mt-1.5" currentPayment={currentPayment} total={debt.installmentsTotal} />
+          )
+        }
+      >
+        {details}
+      </ExpandableSummary>
       </form>
       <PlanReceiptSection
         items={debt.receiptItems}

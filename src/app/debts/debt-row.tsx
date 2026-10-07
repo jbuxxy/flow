@@ -837,7 +837,7 @@ export function DebtRow({
         // DebtPaymentRow at all, so without this a debt needing setup
         // had no visible "go fix it" link anywhere here.
         <Link
-          href="/settings/simplefin"
+          href="/settings/accounts"
           className="mt-1 inline-block rounded-full bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-950/60"
         >
           Needs Setup — Edit in Settings →

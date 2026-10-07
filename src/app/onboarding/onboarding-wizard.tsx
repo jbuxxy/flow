@@ -7,7 +7,7 @@ import { SelectField } from "@/components/select-field";
 import { showToast } from "@/lib/toast";
 import { Switch } from "@/components/switch";
 import { GOAL_POSTURE_OPTIONS } from "@/lib/goal-posture";
-import { ConnectForm } from "@/app/settings/simplefin/connect-form";
+import { ConnectForm } from "@/app/settings/accounts/connect-form";
 import { AiSettingsPanel } from "@/app/settings/ai/ai-settings-panel";
 import { EmailConnectForm } from "@/app/settings/email/email-settings-panel";
 import {
@@ -233,7 +233,7 @@ function ConnectPhase({
                 Connected, but the first sync had a problem
               </p>
               <p className="text-xs text-amber-700 dark:text-amber-400">{bankSyncError}</p>
-              <a href="/settings/simplefin" className="text-xs font-medium underline">
+              <a href="/settings/accounts" className="text-xs font-medium underline">
                 Fix Connection or Retry Sync
               </a>
             </div>

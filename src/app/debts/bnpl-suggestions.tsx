@@ -13,7 +13,7 @@ import { SelectField } from "@/components/select-field";
 import { CategoryPicker, type CategoryOption } from "@/app/bills/category-picker";
 
 // Linking a new institution only ever happens on SimpleFIN's own bridge site
-// — our /settings/simplefin page is just where an already-issued setup token
+// — our /settings/accounts page is just where an already-issued setup token
 // gets pasted, and it dead-ends once a connection already exists. Send the
 // user straight to the bridge instead of into that dead end.
 const SIMPLEFIN_BRIDGE_URL = "https://bridge.simplefin.org";

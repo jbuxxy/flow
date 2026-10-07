@@ -177,7 +177,7 @@ export default async function SettingsPage() {
 
         {hasFullAccess(session.user) && (
           <Link
-            href="/settings/simplefin"
+            href="/settings/accounts"
             className="flex items-center justify-between rounded-xl border border-blue-100 dark:border-neutral-800 p-4"
           >
             <span className="flex items-center gap-3">
