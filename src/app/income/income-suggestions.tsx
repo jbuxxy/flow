@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { X } from "lucide-react";
+import { Calendar1, Check, X } from "lucide-react";
 import { formatCents } from "@/lib/money";
 import { acceptIncomeSuggestion, dismissIncomeSuggestion, markIncomeSuggestionOneOff } from "./actions";
 import { showToast } from "@/lib/toast";
@@ -43,7 +43,7 @@ function Card({ suggestion }: { suggestion: IncomeSuggestionData }) {
           seen {suggestion.occurrences}x
         </p>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex shrink-0 items-center gap-1.5">
         <button
           onClick={() =>
             startTransition(async () => {
@@ -55,9 +55,9 @@ function Card({ suggestion }: { suggestion: IncomeSuggestionData }) {
           disabled={pending}
           aria-label="Dismiss Suggestion"
           title="Dismiss"
-          className="text-neutral-400 dark:text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300 disabled:opacity-50"
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-neutral-400 dark:text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300 disabled:opacity-50"
         >
-          <X size={14} />
+          <X size={16} />
         </button>
         <button
           onClick={() =>
@@ -68,10 +68,11 @@ function Card({ suggestion }: { suggestion: IncomeSuggestionData }) {
             })
           }
           disabled={pending}
-          title="Counts toward this month, but won't be projected forward as recurring income"
-          className="rounded-lg border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 text-xs font-medium text-neutral-600 dark:text-neutral-300 disabled:opacity-50"
+          aria-label="Mark One-Time"
+          title="One-Time: Counts Toward This Month, Not Projected Forward"
+          className="flex h-8 w-8 items-center justify-center rounded-lg border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300 disabled:opacity-50"
         >
-          One-Time
+          <Calendar1 size={16} />
         </button>
         <button
           onClick={() =>
@@ -90,9 +91,11 @@ function Card({ suggestion }: { suggestion: IncomeSuggestionData }) {
             })
           }
           disabled={pending}
-          className="rounded-lg bg-emerald-700 dark:bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+          aria-label="Add As Income"
+          title="Add As Income"
+          className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-700 dark:bg-emerald-600 text-white disabled:opacity-50"
         >
-          {pending ? "…" : "Add As Income"}
+          <Check size={16} />
         </button>
       </div>
     </li>

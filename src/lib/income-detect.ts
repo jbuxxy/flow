@@ -18,12 +18,17 @@ export type IncomeSuggestion = {
 // the average — both land near a 14-16 day mean. This is only ever a
 // suggestion the user reviews before accepting, so it doesn't need to be
 // exact, just a reasonable first guess.
+//
+// Every gap must also sit in the cadence's own window, not just the mean —
+// scattered P2P credits (same-day pairs, a few days apart, then a 75-day
+// silence) averaged out to ~13 days and were suggested as "twice a month".
 export function classifyCadence(gaps: number[]): { cadence: PaycheckCadence; periodDays: number } | null {
   const avg = gaps.reduce((s, g) => s + g, 0) / gaps.length;
   const maxDev = Math.max(...gaps.map((g) => Math.abs(g - avg)));
+  const allWithin = (lo: number, hi: number) => gaps.every((g) => g >= lo && g <= hi);
   if (avg >= 12 && avg <= 16 && maxDev <= 3) return { cadence: "BIWEEKLY", periodDays: 14 };
-  if (avg >= 13 && avg <= 18) return { cadence: "SEMI_MONTHLY", periodDays: 15 };
-  if (avg >= 25 && avg <= 35) return { cadence: "MONTHLY", periodDays: 30 };
+  if (avg >= 13 && avg <= 18 && allWithin(10, 21)) return { cadence: "SEMI_MONTHLY", periodDays: 15 };
+  if (avg >= 25 && avg <= 35 && allWithin(24, 38)) return { cadence: "MONTHLY", periodDays: 30 };
   return null;
 }
 
@@ -88,7 +93,9 @@ export async function detectRecurringIncome(householdId: string): Promise<Income
     if (!classified) continue;
 
     const last = group[group.length - 1];
-    const amountCents = Math.round(group.reduce((s, t) => s + Math.abs(t.amountCents), 0) / group.length);
+    // The latest deposit, not the mean — it's what the user recognizes and
+    // what the next one most likely looks like (raises, changed withholding).
+    const amountCents = Math.abs(last.amountCents);
 
     suggestions.push({
       key,

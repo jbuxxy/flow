@@ -152,6 +152,12 @@ describe("classifyCadence (income)", () => {
     assert.deepEqual(incomeClassifyCadence([12, 19, 12, 19]), { cadence: "SEMI_MONTHLY", periodDays: 15 });
     assert.deepEqual(incomeClassifyCadence([30, 31]), { cadence: "MONTHLY", periodDays: 30 });
   });
+  test("scattered credits whose mean happens to be ~15 days aren't semi-monthly", () => {
+    // Real Venmo pattern: same-day pairs, a few days apart, then a 75-day gap.
+    assert.equal(incomeClassifyCadence([2, 8, 1, 0, 3, 3, 75]), null);
+    // Same for monthly: a ~30-day mean built from a 5 and a 55.
+    assert.equal(incomeClassifyCadence([5, 55]), null);
+  });
 });
 
 describe("guessBillCategoryLabel", () => {
