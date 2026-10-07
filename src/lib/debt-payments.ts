@@ -119,6 +119,22 @@ async function applyDefaultBucketIfMissing(
   for (const dp of missingBucket) dp.bucketId = defaultBucketId;
 }
 
+// A card statement closes at least 21 days before its due date (CARD Act),
+// so a card sitting at $0 that picks up a new charge any time after
+// `nextDueDate - 21 days` owes nothing on that due date: the statement it
+// belongs to closed while the balance was $0, or the balance hit $0 after the
+// close (the statement was paid in full). The new charge is due on the
+// following statement. matchDebtPayments leaves nextDueDate parked on the
+// occurrence until SYNC_LAG_GRACE_DAYS after it passes, so without rolling it
+// here the new balance read as that occurrence's open minimum (real report,
+// 2026-10-07: Sam's Club Card paid to $0 Oct 1, a $209.35 purchase Oct 4,
+// This Week's Bills showed a $29 minimum due Oct 4). A charge landing earlier
+// than 21 days out may make the statement, so that case keeps the occurrence.
+export const MIN_STATEMENT_DAYS_BEFORE_DUE = 21;
+export function balanceReturnSkipsOpenOccurrence(nextDueDate: Date, today: Date): boolean {
+  return today.getTime() > nextDueDate.getTime() - MIN_STATEMENT_DAYS_BEFORE_DUE * 86_400_000;
+}
+
 // The DebtPayment.hiddenFromBucket/Debt.hiddenAt counterpart to
 // nextPaidOffDate (debt-payoff.ts) — called from every path that writes
 // Debt.balanceCents (per-sync balance refresh, manual balance edit,
@@ -154,6 +170,19 @@ export async function unhideDebtPaymentIfBalanceReturned(
   // hidden (an ordinary tracked-but-no-minimum debt can hit this too), so
   // it doesn't factor into wasHidden below.
   await db.debt.updateMany({ where: { id: debtId, ignoreMinimumPayment: true }, data: { ignoreMinimumPayment: false } });
+
+  // The new charge belongs to the *next* statement, not the occurrence the
+  // tracker is still parked on — see balanceReturnSkipsOpenOccurrence.
+  const tracker = await db.debtPayment.findUnique({
+    where: { debtId },
+    select: { id: true, cadence: true, nextDueDate: true, debt: { select: { debtType: true } } },
+  });
+  if (tracker && tracker.debt.debtType === "REVOLVING" && balanceReturnSkipsOpenOccurrence(tracker.nextDueDate, todayAsUTCDate())) {
+    await db.debtPayment.update({
+      where: { id: tracker.id },
+      data: { nextDueDate: nextBillDueDate(tracker.cadence, tracker.nextDueDate, []), amountDueCents: 0 },
+    });
+  }
 
   // Only genuinely a "this was paid off and archived, and now isn't"
   // moment when something was actually hidden — both updateMany calls
