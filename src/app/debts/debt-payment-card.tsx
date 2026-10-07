@@ -148,6 +148,7 @@ export function DebtPaymentCard({
                   debtPayment.accountOrgName,
                 )}
                 size={16}
+                max={debtPayment.installmentsTotal !== null ? 2 : 1}
               />
               {debtPayment.debtName}
               {debtPayment.linked && (

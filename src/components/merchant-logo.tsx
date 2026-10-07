@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getMerchantLogoUrl, getCuratedDomains } from "@/lib/merchant-domains";
+import { getMerchantLogoUrl, getCuratedDomains, curatedLogoUrl, hunterLogoUrl } from "@/lib/merchant-domains";
 
 export { getMerchantLogoUrl };
 
@@ -40,13 +40,13 @@ async function resolveViaApi(merchant: string): Promise<string | null> {
 // ---------------------------------------------------------------------------
 
 /** Renders nothing (rather than a broken-image placeholder) once its own load fails. */
-function LogoImg({ domain, size, className }: { domain: string; size: number; className: string }) {
+function LogoImg({ src, size, className }: { src: string; size: number; className: string }) {
   const [failed, setFailed] = useState(false);
   if (failed) return null;
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
-      src={`https://logos.hunter.io/${domain}`}
+      src={src}
       alt=""
       aria-hidden="true"
       width={size}
@@ -98,18 +98,23 @@ export function MerchantLogo({ merchant, size = 20, className = "", allowGuess =
     };
   }, [merchant, curatedUrl, allowGuess]);
 
-  const domain = curatedUrl ? getCuratedDomains(merchant, 1)[0] : guessedDomain;
-  if (!domain) return null;
+  // A guessed domain was only ever verified against Hunter (see
+  // merchant-logo-resolve.ts), so it keeps Hunter's image — Google's favicon
+  // service answers an unknown domain with a generic globe, not nothing.
+  const src = curatedUrl ?? (guessedDomain ? hunterLogoUrl(guessedDomain) : null);
+  if (!src) return null;
 
-  return <LogoImg domain={domain} size={size} className={className} />;
+  return <LogoImg src={src} size={size} className={className} />;
 }
 
 /**
  * Every curated logo a composite name matches (up to `max`), shown side by
  * side — a BNPL debt named "Nike - Klarna" or "Klarna - Nike" gets both the
- * retailer's and the provider's logo, in either word order, instead of just
- * the first one MerchantLogo alone would resolve (household request,
- * 2026-09-13). Curated-table-only, same allowGuess-off reasoning as every
+ * provider's and the retailer's logo (provider first — see
+ * getCuratedDomains), in either word order, instead of just the first one
+ * MerchantLogo alone would resolve (household request, 2026-09-13). Callers
+ * pass max={1} for anything but a BNPL plan: only a BNPL name legitimately
+ * pairs two brands (household request, 2026-10-07). Curated-table-only, same allowGuess-off reasoning as every
  * caller of MerchantLogo that passes a household's own free-text label
  * rather than a real bank descriptor — no guessed fallback here.
  */
@@ -129,7 +134,7 @@ export function MerchantLogos({
   return (
     <span className={`inline-flex shrink-0 items-center gap-0.5 ${className}`}>
       {domains.map((domain) => (
-        <LogoImg key={domain} domain={domain} size={size} className="" />
+        <LogoImg key={domain} src={curatedLogoUrl(domain)} size={size} className="" />
       ))}
     </span>
   );

@@ -726,6 +726,7 @@ export function DebtRow({
               <MerchantLogos
                 merchant={debtLogoSearchText(debt.name, debt.accountRawName ?? null, debt.accountOrgName ?? null)}
                 size={16}
+                max={debt.kind === "BNPL" ? 2 : 1}
               />
               {debt.name}
               {(linked ? (

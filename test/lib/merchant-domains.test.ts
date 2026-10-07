@@ -1,6 +1,6 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { debtLogoSearchText, getCuratedDomain, getCuratedDomains, getMerchantLogoUrl } from "@/lib/merchant-domains";
+import { curatedLogoUrl, debtLogoSearchText, getCuratedDomain, getCuratedDomains, getMerchantLogoUrl } from "@/lib/merchant-domains";
 
 describe("getCuratedDomain", () => {
   test("matches a well-known merchant regardless of case", () => {
@@ -84,6 +84,21 @@ describe("getCuratedDomains", () => {
     const domains = getCuratedDomains("Klarna - Puma");
     assert.deepEqual([...domains].sort(), ["klarna.com", "puma.com"]);
   });
+
+  test("the BNPL provider leads even when its retailer sits earlier in the table", () => {
+    // Walmart's pattern (Superstores) precedes Klarna's (Finance) — real
+    // report, 2026-10-07: "Klarna - Walmart" showed Walmart's logo first.
+    assert.deepEqual(getCuratedDomains("Klarna - Walmart"), ["klarna.com", "walmart.com"]);
+    assert.deepEqual(getCuratedDomains("Walmart - Affirm"), ["affirm.com", "walmart.com"]);
+  });
+
+  test("max 1 on a BNPL name keeps the provider, not the retailer", () => {
+    assert.deepEqual(getCuratedDomains("Klarna - Walmart", 1), ["klarna.com"]);
+  });
+
+  test("the single-logo lookup keeps table order (merchant beats payment rail)", () => {
+    assert.equal(getCuratedDomain("PAYPAL *NETFLIX"), "netflix.com");
+  });
 });
 
 describe("debtLogoSearchText", () => {
@@ -124,11 +139,21 @@ describe("debtLogoSearchText", () => {
 });
 
 describe("getMerchantLogoUrl", () => {
-  test("builds a Hunter.io URL from the curated domain", () => {
-    assert.equal(getMerchantLogoUrl("Netflix"), "https://logos.hunter.io/netflix.com");
+  test("builds a logo URL from the curated domain", () => {
+    assert.equal(getMerchantLogoUrl("Netflix"), "https://www.google.com/s2/favicons?domain=netflix.com&sz=64");
   });
 
   test("returns null when nothing curated matches", () => {
     assert.equal(getMerchantLogoUrl("Cedar Creek Irrigation Debits Web"), null);
+  });
+});
+
+describe("curatedLogoUrl", () => {
+  test("defaults to the favicon (compact mark), not Hunter's wordmark", () => {
+    assert.equal(curatedLogoUrl("walmart.com"), "https://www.google.com/s2/favicons?domain=walmart.com&sz=64");
+  });
+
+  test("a domain with no Google favicon stays on Hunter", () => {
+    assert.equal(curatedLogoUrl("allstate.com"), "https://logos.hunter.io/allstate.com");
   });
 });

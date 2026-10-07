@@ -277,52 +277,106 @@ const MERCHANT_DOMAINS: [RegExp, string][] = [
   [/\blink\.com\b/, "link.com"],
 ];
 
-/** Curated exact-match lookup only — zero network cost, no guessing. */
-export function getCuratedDomain(merchant: string): string | null {
-  return getCuratedDomains(merchant, 1)[0] ?? null;
-}
-
-/**
- * Every distinct curated domain the merchant string matches, in table
- * order, capped at `max` — for a composite name like "Nike - Klarna" (a
- * BNPL debt's household-chosen retailer + provider label), this returns
- * both nike.com and klarna.com regardless of which word comes first
- * ("Klarna - Nike" matches the same two patterns) so the household doesn't
- * have to pick one ordering to get both logos (2026-09-13 household
- * request). Single-match merchants (the overwhelming common case) just get
- * a one-element array, same as getCuratedDomain always did.
- */
-export function getCuratedDomains(merchant: string, max = 2): string[] {
-  // Every possessive-brand pattern below (Sam's Club, Kohl's, McDonald's,
-  // Trader Joe's, ...) only ever tests for a *straight* apostrophe (' ,
-  // U+0027) — but a name a household typed themselves (an account
-  // displayName override, most notably) very often carries a *curly* one
-  // (' , U+2019) instead, since iOS auto-converts straight quotes to curly
-  // ones in text fields by default. Real report, 2026-09-14: "Sam's Club
-  // Card" (household-renamed account, curly apostrophe confirmed directly
-  // against the stored value) matched nothing. Normalizing both curly
-  // quote marks to the plain straight one before testing fixes every
-  // apostrophe-containing pattern at once, not just this one.
+// Normalizes curly apostrophes before matching. Every possessive-brand
+// pattern above (Sam's Club, Kohl's, McDonald's, Trader Joe's, ...) only ever
+// tests for a *straight* apostrophe (' , U+0027) — but a name a household
+// typed themselves (an account displayName override, most notably) very
+// often carries a *curly* one (' , U+2019) instead, since iOS auto-converts
+// straight quotes to curly ones in text fields by default. Real report,
+// 2026-09-14: "Sam's Club Card" (household-renamed account, curly apostrophe
+// confirmed directly against the stored value) matched nothing. Normalizing
+// both curly quote marks to the plain straight one before testing fixes
+// every apostrophe-containing pattern at once, not just this one.
+function matchCuratedDomains(merchant: string): string[] {
   const m = merchant.toLowerCase().replace(/[‘’]/g, "'");
   const domains: string[] = [];
   for (const [pattern, domain] of MERCHANT_DOMAINS) {
-    if (domain && pattern.test(m) && !domains.includes(domain)) {
-      domains.push(domain);
-      if (domains.length >= max) break;
-    }
+    if (domain && pattern.test(m) && !domains.includes(domain)) domains.push(domain);
   }
   return domains;
 }
 
+/** Curated exact-match lookup only — zero network cost, no guessing. */
+export function getCuratedDomain(merchant: string): string | null {
+  return matchCuratedDomains(merchant)[0] ?? null;
+}
+
+// The BNPL lenders a composite plan name pairs with a retailer ("Klarna -
+// Walmart"). Their logo always leads in getCuratedDomains regardless of
+// where the provider sits in the table or the name (household request,
+// 2026-10-07: "the provider should be first icon") — the table orders the
+// retailer sections ahead of Finance, so plain table order put Walmart's
+// logo before Klarna's.
+const BNPL_PROVIDER_DOMAINS = new Set(["klarna.com", "affirm.com", "afterpay.com", "sezzle.com", "paypal.com"]);
+
 /**
- * Given a merchant name string, returns the Hunter.io logo URL for it, or
- * null if no curated domain mapping is found. Curated-table-only — callers
- * that also want the DB-cached guessed-and-verified fallback should use
+ * Every distinct curated domain the merchant string matches, capped at
+ * `max` — for a composite name like "Nike - Klarna" (a BNPL debt's
+ * household-chosen retailer + provider label), this returns both
+ * klarna.com and nike.com regardless of which word comes first ("Klarna -
+ * Nike" matches the same two patterns) so the household doesn't have to
+ * pick one ordering to get both logos (2026-09-13 household request). A
+ * BNPL provider always comes first, then table order. Single-match
+ * merchants (the overwhelming common case) just get a one-element array.
+ *
+ * getCuratedDomain deliberately keeps plain table order instead: it also
+ * resolves bank descriptors like "PAYPAL *NETFLIX", where the merchant —
+ * not the payment rail — is the right single logo.
+ */
+export function getCuratedDomains(merchant: string, max = 2): string[] {
+  const domains = matchCuratedDomains(merchant);
+  const providers = domains.filter((d) => BNPL_PROVIDER_DOMAINS.has(d));
+  const rest = domains.filter((d) => !BNPL_PROVIDER_DOMAINS.has(d));
+  return [...providers, ...rest].slice(0, max);
+}
+
+// Where a curated domain's logo image comes from. Google's favicon service
+// is the default: a favicon is by nature the brand's compact square mark
+// (Walmart's spark, Amazon's smile, PayPal's "P"), which is what reads at
+// the 16-20px these render at. Hunter.io's logos are often the full
+// horizontal wordmark instead — "WALMART" squeezed into 16px is
+// unreadable — and a handful are outright page screenshots (GitHub,
+// Spotify, Steam, Affirm). Household request, 2026-10-07: logo or first-
+// letter mark only, never a wordmark. Every curated domain was eyeballed
+// side by side from both sources when this switched; the domains below are
+// the ones where Hunter's image is the better mark, or where Google has no
+// favicon at all (its 404 still carries a generic globe image, which an
+// <img> renders anyway, so those must never go to Google). A domain newly
+// added to the table should be checked against both before it ships.
+const HUNTER_LOGO_DOMAINS = new Set([
+  "allstate.com", // no Google favicon
+  "comcast.com", // no Google favicon
+  "kp.org", // no Google favicon
+  "quiktrip.com", // no Google favicon
+  "kfc.com", // favicon is a photo of a bucket of chicken
+  "disneyplus.com", // favicon is the "Disney+" wordmark; Hunter has the "D"
+  "crateandbarrel.com", // favicon is the "Crate" wordmark; Hunter has the "&"
+  "nationwide.com", // favicon is a blurry crop
+  "olivegarden.com", // favicon is a blurry crop
+  "in-n-out.com", // favicon is a photo of a burger
+  "lowes.com", // favicon is a cropped-off roofline
+]);
+
+/** Logo image URL for an already-resolved domain — guessed (verified) domains use hunterLogoUrl directly. */
+export function curatedLogoUrl(domain: string): string {
+  return HUNTER_LOGO_DOMAINS.has(domain)
+    ? hunterLogoUrl(domain)
+    : `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
+}
+
+export function hunterLogoUrl(domain: string): string {
+  return `https://logos.hunter.io/${domain}`;
+}
+
+/**
+ * Given a merchant name string, returns its logo URL, or null if no
+ * curated domain mapping is found. Curated-table-only — callers that also
+ * want the DB-cached guessed-and-verified fallback should use
  * MerchantLogo's `allowGuess` prop instead of calling this directly.
  */
 export function getMerchantLogoUrl(merchant: string): string | null {
   const domain = getCuratedDomain(merchant);
-  return domain ? `https://logos.hunter.io/${domain}` : null;
+  return domain ? curatedLogoUrl(domain) : null;
 }
 
 /**
