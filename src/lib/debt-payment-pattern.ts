@@ -104,8 +104,8 @@ export function debtNameMatchesMerchant(merchant: string, debtName: string): boo
 // → "Chase", "Synchrony Bank" → "Synchrony", "Wells Fargo Bank, N.A." →
 // "Wells Fargo". The ACH line carries the brand, not the legal entity: a
 // Chase card payment reads "CHASE CREDIT CRD EPAY", which never contains
-// "chasebank", so the Amazon Prime Visa's $108.33 payment (2026-10-05) sat in
-// "Needs a Bucket" with its offsetting card-side credit already synced. Only
+// "chasebank", so a Chase-issued card's payment (2026-10-05) sat in "Needs a
+// Bucket" with its offsetting card-side credit already synced. Only
 // trailing words are stripped, so "Bank of America" stays whole.
 const ORG_SUFFIX = /[\s,]+(bank|n\.?a\.?|usa|financial|card services?|inc\.?|corp\.?|corporation|co\.?)$/i;
 export function issuerCoreName(orgName: string): string {

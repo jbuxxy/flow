@@ -294,7 +294,7 @@ describe("debt-payment-pattern", () => {
     assert.equal(
       txnTextNamesDebt(
         { merchant: "Chase Credit Card", rawDescription: "AUTOMATIC WITHDRAWAL, CHASE CREDIT CRD EPAY WEB (S)" },
-        { name: "Amazon Prime Rewards Visa Signature (9302)", accountOrgName: "Chase Bank" },
+        { name: "Store Rewards Visa (1234)", accountOrgName: "Chase Bank" },
       ),
       true,
     );
