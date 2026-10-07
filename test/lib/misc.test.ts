@@ -144,11 +144,16 @@ describe("isCadenceStale", () => {
 });
 
 describe("classifyCadence (income)", () => {
-  test("distinguishes biweekly from semi-monthly by deviation", () => {
+  test("distinguishes biweekly from semi-monthly by how many gaps are a fixed 14 days", () => {
     assert.deepEqual(incomeClassifyCadence([14, 14, 14]), { cadence: "BIWEEKLY", periodDays: 14 });
-    // Tight ~14/~17 alternation still reads as biweekly (first, permissive check).
-    assert.deepEqual(incomeClassifyCadence([14, 17, 14, 17]), { cadence: "BIWEEKLY", periodDays: 14 });
-    // A wider swing (maxDev > 3) around a ~15-day mean is semi-monthly.
+    // A one-day holiday shift (Fri → Thu) is still biweekly.
+    assert.deepEqual(incomeClassifyCadence([14, 13, 15, 14, 14]), { cadence: "BIWEEKLY", periodDays: 14 });
+    // 1st & 15th (Jul 15 → Oct 1): the 14/17 alternation is semi-monthly, not
+    // biweekly — it used to read as biweekly because it deviates < 3 days
+    // from its own ~15.6-day mean.
+    assert.deepEqual(incomeClassifyCadence([17, 14, 17, 14, 16]), { cadence: "SEMI_MONTHLY", periodDays: 15 });
+    assert.deepEqual(incomeClassifyCadence([14, 17, 14, 17]), { cadence: "SEMI_MONTHLY", periodDays: 15 });
+    // A wider swing around a ~15-day mean is semi-monthly too.
     assert.deepEqual(incomeClassifyCadence([12, 19, 12, 19]), { cadence: "SEMI_MONTHLY", periodDays: 15 });
     assert.deepEqual(incomeClassifyCadence([30, 31]), { cadence: "MONTHLY", periodDays: 30 });
   });

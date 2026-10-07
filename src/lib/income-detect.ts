@@ -13,9 +13,14 @@ export type IncomeSuggestion = {
   transactionIds: string[];
 };
 
-// Distinguishing biweekly (steady ~14-day gaps) from semi-monthly (gaps
-// alternating ~14/~17 around the 1st & 15th) needs the deviation, not just
-// the average — both land near a 14-16 day mean. This is only ever a
+// Distinguishing biweekly from semi-monthly: both land near a 14-16 day
+// mean, and a 1st & 15th payer's gaps (14, 16-17, 14, 17…) deviate from
+// that mean by under 2 days — the old "maxDev <= 3 → biweekly" check read
+// every 1st/15th paycheck as biweekly (found via SimpleFIN's demo payroll,
+// 2026-10-07), complete with phantom 3rd-paycheck months. What actually
+// separates them: biweekly pay is a fixed 14 days apart, give or take a
+// one-day holiday shift, so nearly every gap is 13-15; semi-monthly only
+// hits that on the 1st→15th half (and February). This is only ever a
 // suggestion the user reviews before accepting, so it doesn't need to be
 // exact, just a reasonable first guess.
 //
@@ -24,9 +29,11 @@ export type IncomeSuggestion = {
 // silence) averaged out to ~13 days and were suggested as "twice a month".
 export function classifyCadence(gaps: number[]): { cadence: PaycheckCadence; periodDays: number } | null {
   const avg = gaps.reduce((s, g) => s + g, 0) / gaps.length;
-  const maxDev = Math.max(...gaps.map((g) => Math.abs(g - avg)));
   const allWithin = (lo: number, hi: number) => gaps.every((g) => g >= lo && g <= hi);
-  if (avg >= 12 && avg <= 16 && maxDev <= 3) return { cadence: "BIWEEKLY", periodDays: 14 };
+  const fixedFortnightShare = gaps.filter((g) => Math.abs(g - 14) <= 1).length / gaps.length;
+  if (avg >= 12 && avg <= 16 && allWithin(11, 17) && fixedFortnightShare >= 0.75) {
+    return { cadence: "BIWEEKLY", periodDays: 14 };
+  }
   if (avg >= 13 && avg <= 18 && allWithin(10, 21)) return { cadence: "SEMI_MONTHLY", periodDays: 15 };
   if (avg >= 25 && avg <= 35 && allWithin(24, 38)) return { cadence: "MONTHLY", periodDays: 30 };
   return null;

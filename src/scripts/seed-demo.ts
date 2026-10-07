@@ -39,6 +39,7 @@ import { DEFAULT_BILL_CATEGORY_NAMES } from "@/lib/bill-category";
 import { syncHousehold, categorizeUncategorizedTransactions } from "@/lib/simplefin-sync";
 import { ensureBucketIcons } from "@/lib/bucket-icons-sync";
 import { getNetWorth } from "@/lib/networth";
+import { detectRecurringIncome } from "@/lib/income-detect";
 
 const DEMO_EMAIL = "demo@example.invalid";
 const DEMO_NAME = "Alex Rivera";
@@ -275,24 +276,56 @@ async function seedCuratedExtras(householdId: string) {
     },
   });
 
-  // --- A tracked biweekly paycheck (SimpleFIN detects the demo deposits but
-  //     detection only produces a *suggestion*; without a real Income row the
-  //     whole app treats monthly income as $0). Link to the checking account. ---
+  // --- Track the demo bridge's real payroll deposits (payee "You", "Pay
+  //     day!", 1st & 15th) the way a household accepting the /income
+  //     suggestion would — same fields as acceptIncomeSuggestion. A
+  //     hand-written Income (it used to be a biweekly row on checking with no
+  //     merchant) matched none of them: the paycheck showed overdue, the
+  //     deposits kept being suggested as a new income called "You", and
+  //     each one counted as Extra Income. Without any Income row the whole
+  //     app treats monthly income as $0, hence the manual fallback. ---
   const checking = await db.account.findFirst({
     where: { householdId, accountType: "CHECKING" },
   });
-  await db.income.create({
-    data: {
-      householdId,
-      name: "Primary Paycheck",
-      amountCents: 2_564_48,
-      cadence: "BIWEEKLY",
-      nextPayDate: nextFriday(),
-      lastReceivedDate: daysAgo(3),
-      source: checking ? "SIMPLEFIN" : "MANUAL",
-      accountId: checking?.id ?? null,
-    },
-  });
+  const paycheck = (await detectRecurringIncome(householdId)).sort((a, b) => b.amountCents - a.amountCents)[0];
+  if (paycheck) {
+    const latest = await db.transaction.findFirst({
+      where: { id: { in: paycheck.transactionIds } },
+      orderBy: { occurredOn: "desc" },
+      select: { occurredOn: true },
+    });
+    const income = await db.income.create({
+      data: {
+        householdId,
+        name: "Primary Paycheck",
+        merchant: paycheck.merchant,
+        amountCents: paycheck.amountCents,
+        cadence: paycheck.cadence,
+        nextPayDate: paycheck.nextPayDate,
+        lastReceivedDate: latest?.occurredOn,
+        source: "SIMPLEFIN",
+        accountId: paycheck.accountId,
+      },
+    });
+    await db.transaction.updateMany({
+      where: { id: { in: paycheck.transactionIds } },
+      data: { incomeId: income.id },
+    });
+    await db.suggestionDismissal.create({ data: { householdId, kind: "INCOME", key: paycheck.key } });
+  } else {
+    await db.income.create({
+      data: {
+        householdId,
+        name: "Primary Paycheck",
+        amountCents: 2_564_48,
+        cadence: "BIWEEKLY",
+        nextPayDate: nextFriday(),
+        lastReceivedDate: daysAgo(3),
+        source: checking ? "SIMPLEFIN" : "MANUAL",
+        accountId: checking?.id ?? null,
+      },
+    });
+  }
 
   // --- Give every debt tracker a settled prior cycle so a freshly-seeded
   //     debt doesn't render as "overdue" (no synced payment history exists
