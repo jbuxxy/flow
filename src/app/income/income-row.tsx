@@ -3,7 +3,7 @@
 import { useActionState, useState, useTransition } from "react";
 import { CheckCircle2, Link2, Trash2 } from "lucide-react";
 import { formatCents } from "@/lib/money";
-import { monthlyEquivalentCents } from "@/lib/income-calc";
+import { formatSemiMonthlyDays, monthlyEquivalentCents, semiMonthlyDaysOrDefault } from "@/lib/income-calc";
 import { useKebabEditRow } from "@/lib/use-kebab-edit-row";
 import { deleteIncome, markIncomeReceived, updateIncome, type IncomeFormState } from "./actions";
 import type { Income } from "@prisma/client";
@@ -13,6 +13,7 @@ import { RowActions, type RowAction } from "@/components/row-actions";
 import { InlineSaveButton } from "@/components/inline-save-button";
 import { useActionToast } from "@/lib/use-action-toast";
 import { showToast } from "@/lib/toast";
+import { SemiMonthlyDaysFields } from "./semi-monthly-days-fields";
 
 const CADENCE_LABEL: Record<Income["cadence"], string> = {
   BIWEEKLY: "Biweekly",
@@ -43,6 +44,10 @@ export function IncomeRow({
   const updateIncomeWithId = updateIncome.bind(null, income.id);
   const [state, formAction, pending] = useActionState(updateIncomeWithId, initialState);
   const { justSaved } = useActionToast(pending, state, { success: "Income Saved" });
+  const semiMonthlyDays =
+    income.cadence === "SEMI_MONTHLY"
+      ? semiMonthlyDaysOrDefault(income.semiMonthlyDays, income.nextPayDate ?? income.createdAt)
+      : null;
 
   const actions: RowAction[] = [
     editAction,
@@ -70,7 +75,8 @@ export function IncomeRow({
           )}
         </p>
         <p className="text-sm text-gray-600 dark:text-neutral-400">
-          {formatCents(income.amountCents)} / {CADENCE_LABEL[income.cadence]} ·{" "}
+          {formatCents(income.amountCents)} / {CADENCE_LABEL[income.cadence]}
+          {semiMonthlyDays && ` (${formatSemiMonthlyDays(semiMonthlyDays)})`} ·{" "}
           {formatCents(monthlyEquivalentCents(income))}/mo avg
         </p>
         <div className="mt-1">
@@ -161,6 +167,7 @@ export function IncomeRow({
               />
             </label>
           </div>
+          {cadence === "SEMI_MONTHLY" && <SemiMonthlyDaysFields defaultDays={semiMonthlyDays ?? undefined} />}
           {state.error && <p className="text-xs text-red-600 dark:text-red-400">{state.error}</p>}
           <InlineSaveButton pending={pending} justSaved={justSaved} />
         </form>

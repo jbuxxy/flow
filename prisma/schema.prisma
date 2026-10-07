@@ -2598,6 +2598,13 @@ model Income {
   merchant    String?
   amountCents Int // amount per single paycheck (not a monthly total)
   cadence     PaycheckCadence @default(BIWEEKLY)
+  // SEMI_MONTHLY only: the two days of the month pay lands on, e.g. [1, 15]
+  // or [15, 31] — 31 (or any day past a short month's end) means "the last
+  // day of the month". addPaycheckCadence steps to the next of these
+  // instead of "+15 days", which projected a phantom 3rd paycheck (Oct 1,
+  // 16, 31) and drifted ~5 days earlier a year. Empty = derive a pair from
+  // the pay date itself (semiMonthlyDaysOrDefault, income-calc.ts).
+  semiMonthlyDays Int[] @default([])
   // The next *unreceived* paycheck's expected date — same "always points at
   // the next unpaid/unreceived occurrence" convention as
   // RecurringBill.nextDueDate, rolled forward by matchIncomePayments the

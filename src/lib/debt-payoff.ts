@@ -99,7 +99,12 @@ export function billCadenceToMonthlyCents(amountCents: number, cadence: BillCade
 // instead of re-sorting by APR/balance.
 export type PayoffOrder = "AVALANCHE" | "SNOWBALL" | "CUSTOM";
 
-export type IncomeSchedule = { nextPayDate: Date; cadence: PaycheckCadence };
+export type IncomeSchedule = {
+  nextPayDate: Date;
+  cadence: PaycheckCadence;
+  // SEMI_MONTHLY's two pay days (Income.semiMonthlyDays) — see addPaycheckCadence.
+  semiMonthlyDays?: readonly number[];
+};
 
 // Real paycheck dates, walked forward from a known occurrence via
 // addPaycheckCadence (income-calc.ts) — the single source of truth for
@@ -112,7 +117,7 @@ export function projectPaycheckDates(income: IncomeSchedule, count: number, from
   let d = new Date(from ?? income.nextPayDate);
   for (let i = 0; i < count; i++) {
     dates.push(new Date(d));
-    d = addPaycheckCadence(d, income.cadence);
+    d = addPaycheckCadence(d, income.cadence, income.semiMonthlyDays);
   }
   return dates;
 }
@@ -136,9 +141,9 @@ export function projectPaycheckDates(income: IncomeSchedule, count: number, from
 // to point at.
 export function mostRecentPaydayOnOrBefore(income: IncomeSchedule, onOrBefore: Date): Date {
   let d = new Date(income.nextPayDate);
-  while (d.getTime() > onOrBefore.getTime()) d = subtractPaycheckCadence(d, income.cadence);
-  while (addPaycheckCadence(d, income.cadence).getTime() <= onOrBefore.getTime()) {
-    d = addPaycheckCadence(d, income.cadence);
+  while (d.getTime() > onOrBefore.getTime()) d = subtractPaycheckCadence(d, income.cadence, income.semiMonthlyDays);
+  while (addPaycheckCadence(d, income.cadence, income.semiMonthlyDays).getTime() <= onOrBefore.getTime()) {
+    d = addPaycheckCadence(d, income.cadence, income.semiMonthlyDays);
   }
   return d;
 }

@@ -24,9 +24,11 @@ export async function getPrimaryIncomeSchedule(householdId: string): Promise<Inc
   const income = await db.income.findFirst({
     where: { householdId, nextPayDate: { not: null } },
     orderBy: { createdAt: "asc" },
-    select: { nextPayDate: true, cadence: true },
+    select: { nextPayDate: true, cadence: true, semiMonthlyDays: true },
   });
-  return income?.nextPayDate ? { nextPayDate: income.nextPayDate, cadence: income.cadence } : null;
+  return income?.nextPayDate
+    ? { nextPayDate: income.nextPayDate, cadence: income.cadence, semiMonthlyDays: income.semiMonthlyDays }
+    : null;
 }
 
 // The one household-wide "how much do we make a month" figure — feeds both
@@ -171,7 +173,7 @@ export async function getIncomeThisMonth(householdId: string): Promise<MonthlyIn
           expectedDate: cursor,
         });
       }
-      cursor = addPaycheckCadence(cursor, income.cadence);
+      cursor = addPaycheckCadence(cursor, income.cadence, income.semiMonthlyDays);
     }
   }
 
@@ -366,7 +368,7 @@ export async function matchIncomePayments(householdId: string): Promise<void> {
       : null;
     if (receivedThroughMs !== null && cyclePayDate.getTime() <= receivedThroughMs) {
       cyclePayDate = fastForwardCycleDate(cyclePayDate, receivedThroughMs, MAX_CATCHUP_CYCLES, (d) =>
-        addPaycheckCadence(d, income.cadence),
+        addPaycheckCadence(d, income.cadence, income.semiMonthlyDays),
       );
       await db.income.update({ where: { id: income.id }, data: { nextPayDate: cyclePayDate } });
     }
@@ -375,7 +377,7 @@ export async function matchIncomePayments(householdId: string): Promise<void> {
     // cycle in a single pass risks bulk-linking several separate real
     // paychecks to one cycle (matchBillPayments' 2026-08-14 incident).
     for (let i = 0; i < MAX_CATCHUP_CYCLES; i++) {
-      const nextCyclePayDate = addPaycheckCadence(cyclePayDate, income.cadence);
+      const nextCyclePayDate = addPaycheckCadence(cyclePayDate, income.cadence, income.semiMonthlyDays);
       // Widens this cycle's own end to "now" once it's overdue — same
       // widening matchBillPayments/matchPatternPayments already do (shared
       // via catchupCycleWindow, not hand-copied a third time — the earlier

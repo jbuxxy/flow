@@ -301,6 +301,7 @@ async function seedCuratedExtras(householdId: string) {
         merchant: paycheck.merchant,
         amountCents: paycheck.amountCents,
         cadence: paycheck.cadence,
+        semiMonthlyDays: paycheck.semiMonthlyDays,
         nextPayDate: paycheck.nextPayDate,
         lastReceivedDate: latest?.occurredOn,
         source: "SIMPLEFIN",
@@ -409,7 +410,9 @@ async function fullSeed() {
       goalPosture: "BALANCED",
       adultsCount: 2,
       kidsCount: 2,
-      incomeCalcMethod: "BIWEEKLY_CONSERVATIVE",
+      // The demo paycheck is semi-monthly (1st & 15th), so the biweekly
+      // "no 3rd check" method would only mislabel the /income total.
+      incomeCalcMethod: "MONTHLY_AVERAGE",
       // Show the payoff plan applied (dashboard extras, bucket budgets),
       // not /debts' "Projection Only" preview.
       payoffPlanEnabled: true,

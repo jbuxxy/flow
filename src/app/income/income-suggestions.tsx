@@ -6,6 +6,7 @@ import { formatCents } from "@/lib/money";
 import { acceptIncomeSuggestion, dismissIncomeSuggestion, markIncomeSuggestionOneOff } from "./actions";
 import { showToast } from "@/lib/toast";
 import { MerchantLogo } from "@/components/merchant-logo";
+import { formatSemiMonthlyDays } from "@/lib/income-calc";
 
 export type IncomeSuggestionData = {
   key: string;
@@ -14,6 +15,7 @@ export type IncomeSuggestionData = {
   accountName: string;
   amountCents: number;
   cadence: "BIWEEKLY" | "SEMI_MONTHLY" | "MONTHLY";
+  semiMonthlyDays: number[];
   nextPayDate: string; // ISO date
   occurrences: number;
   transactionIds: string[];
@@ -39,7 +41,10 @@ function Card({ suggestion }: { suggestion: IncomeSuggestionData }) {
           <span className="truncate">{suggestion.merchant}</span>
         </p>
         <p className="text-xs text-gray-500 dark:text-neutral-400">
-          {formatCents(suggestion.amountCents)} {CADENCE_LABEL[suggestion.cadence]} · {suggestion.accountName} ·{" "}
+          {formatCents(suggestion.amountCents)} {CADENCE_LABEL[suggestion.cadence]}
+          {suggestion.semiMonthlyDays.length === 2 &&
+            ` (${formatSemiMonthlyDays([suggestion.semiMonthlyDays[0], suggestion.semiMonthlyDays[1]])})`}{" "}
+          · {suggestion.accountName} ·{" "}
           seen {suggestion.occurrences}x
         </p>
       </div>
@@ -82,6 +87,7 @@ function Card({ suggestion }: { suggestion: IncomeSuggestionData }) {
                 suggestion.merchant,
                 suggestion.amountCents,
                 suggestion.cadence,
+                suggestion.semiMonthlyDays,
                 suggestion.nextPayDate,
                 suggestion.accountId,
                 suggestion.transactionIds,

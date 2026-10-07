@@ -38,6 +38,7 @@ export function DayOfMonthPicker({
   large = false,
   className = "",
   unconfirmed = false,
+  lastDayLabel = false,
 }: {
   value: string; // "1".."31", or "" for none picked
   onChange: (value: string) => void;
@@ -53,6 +54,9 @@ export function DayOfMonthPicker({
   /** Red-tints the trigger while the due date is still unconfirmed (a card
    *  showing the red "needs attention" dot) — clears once the form saves. */
   unconfirmed?: boolean;
+  /** Shows 31 as "Last Day" — for schedules where 31 means "the last day of
+   *  whatever month it is" (Income.semiMonthlyDays). */
+  lastDayLabel?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -92,7 +96,15 @@ export function DayOfMonthPicker({
             : "border-neutral-300 dark:border-neutral-700 focus:border-blue-900"
         }`}
       >
-        {value ? ordinal(Number(value)) : <span className="text-gray-400 dark:text-neutral-500">{placeholder}</span>}
+        {value ? (
+          lastDayLabel && value === "31" ? (
+            "Last Day"
+          ) : (
+            ordinal(Number(value))
+          )
+        ) : (
+          <span className="text-gray-400 dark:text-neutral-500">{placeholder}</span>
+        )}
         <CalendarDays
           size={small ? 12 : large ? 16 : 14}
           className={`pointer-events-none absolute top-1/2 -translate-y-1/2 text-neutral-400 ${large ? "right-3" : "right-2"}`}

@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import type { PaycheckCadence } from "@prisma/client";
+import { addPaycheckCadence, inferSemiMonthlyDays } from "@/lib/income-calc";
 
 export type IncomeSuggestion = {
   key: string;
@@ -8,6 +9,8 @@ export type IncomeSuggestion = {
   accountName: string;
   amountCents: number;
   cadence: PaycheckCadence;
+  // SEMI_MONTHLY only (else empty): the two pay days, inferred from history.
+  semiMonthlyDays: number[];
   nextPayDate: Date;
   occurrences: number;
   transactionIds: string[];
@@ -103,6 +106,8 @@ export async function detectRecurringIncome(householdId: string): Promise<Income
     // The latest deposit, not the mean — it's what the user recognizes and
     // what the next one most likely looks like (raises, changed withholding).
     const amountCents = Math.abs(last.amountCents);
+    const semiMonthlyDays =
+      classified.cadence === "SEMI_MONTHLY" ? inferSemiMonthlyDays(group.map((t) => t.occurredOn)) : [];
 
     suggestions.push({
       key,
@@ -111,7 +116,15 @@ export async function detectRecurringIncome(householdId: string): Promise<Income
       accountName: last.account?.name ?? "Account",
       amountCents,
       cadence: classified.cadence,
-      nextPayDate: new Date(last.occurredOn.getTime() + classified.periodDays * 86_400_000),
+      semiMonthlyDays,
+      // SEMI_MONTHLY steps from 3 days past the latest deposit: a payday
+      // shifted early for a weekend (the 15th paid on the 13th) would
+      // otherwise step to the 15th it already covered. The two pay days are
+      // always 10+ apart, so this never skips the real next one.
+      nextPayDate:
+        classified.cadence === "SEMI_MONTHLY"
+          ? addPaycheckCadence(new Date(last.occurredOn.getTime() + 3 * 86_400_000), "SEMI_MONTHLY", semiMonthlyDays)
+          : addPaycheckCadence(last.occurredOn, classified.cadence),
       occurrences: group.length,
       transactionIds: group.map((t) => t.id),
     });

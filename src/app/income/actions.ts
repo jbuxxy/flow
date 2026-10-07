@@ -5,7 +5,7 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { belongsToHousehold, requireFullAccess } from "@/lib/access";
 import { parseDollarsToCents } from "@/lib/money";
-import { addPaycheckCadence } from "@/lib/income-calc";
+import { addPaycheckCadence, semiMonthlyDaysOrDefault } from "@/lib/income-calc";
 import { dismissUnlabeledP2P } from "@/lib/p2p-transfers";
 import { todayAsUTCDate } from "@/lib/date";
 
@@ -17,6 +17,23 @@ const createIncomeSchema = z.object({
 });
 
 export type IncomeFormState = { error?: string };
+
+// The SEMI_MONTHLY pay-day pair from the form's two day pickers (empty for
+// other cadences). A picker left blank falls back to a pair guessed from
+// the pay date (see semiMonthlyDaysOrDefault) so every semi-monthly row
+// stores one.
+function semiMonthlyDaysFromForm(
+  formData: FormData,
+  cadence: string,
+  reference: Date,
+): { days: number[] } | { error: string } {
+  if (cadence !== "SEMI_MONTHLY") return { days: [] };
+  const picked = [formData.get("semiMonthlyDay1"), formData.get("semiMonthlyDay2")]
+    .filter((v) => typeof v === "string" && v !== "")
+    .map(Number);
+  if (picked.length === 2 && picked[0] === picked[1]) return { error: "Pick two different pay days." };
+  return { days: semiMonthlyDaysOrDefault(picked.length === 2 ? picked : null, reference) };
+}
 
 // The income counterpart to createBillFromTransaction (src/app/bills/actions.ts)
 // and createDebtPaymentFromTransaction (src/app/debts/actions.ts) — turns
@@ -56,6 +73,9 @@ export async function createIncomeFromTransaction(
     nextPayDate = d;
   }
 
+  const semiMonthly = semiMonthlyDaysFromForm(formData, parsed.data.cadence, nextPayDate ?? transaction.occurredOn);
+  if ("error" in semiMonthly) return { error: semiMonthly.error };
+
   const income = await db.income.create({
     data: {
       householdId: session.user.householdId,
@@ -67,6 +87,7 @@ export async function createIncomeFromTransaction(
       merchant: transaction.merchant,
       amountCents,
       cadence: parsed.data.cadence,
+      semiMonthlyDays: semiMonthly.days,
       nextPayDate,
       lastReceivedDate: transaction.occurredOn,
       // Always SIMPLEFIN — this Income is being created from a synced
@@ -134,9 +155,22 @@ export async function updateIncome(
     nextPayDate = d;
   }
 
+  const semiMonthly = semiMonthlyDaysFromForm(
+    formData,
+    parsed.data.cadence,
+    nextPayDate ?? income.nextPayDate ?? todayAsUTCDate(),
+  );
+  if ("error" in semiMonthly) return { error: semiMonthly.error };
+
   await db.income.update({
     where: { id: incomeId },
-    data: { name: parsed.data.name, amountCents, cadence: parsed.data.cadence, nextPayDate },
+    data: {
+      name: parsed.data.name,
+      amountCents,
+      cadence: parsed.data.cadence,
+      semiMonthlyDays: semiMonthly.days,
+      nextPayDate,
+    },
   });
 
   revalidatePath("/income");
@@ -159,7 +193,9 @@ export async function markIncomeReceived(incomeId: string) {
     where: { id: incomeId },
     data: {
       lastReceivedDate: todayAsUTCDate(), // @db.Date — local calendar day, not a raw UTC instant
-      nextPayDate: income.nextPayDate ? addPaycheckCadence(income.nextPayDate, income.cadence) : null,
+      nextPayDate: income.nextPayDate
+        ? addPaycheckCadence(income.nextPayDate, income.cadence, income.semiMonthlyDays)
+        : null,
     },
   });
   revalidatePath("/income");
@@ -182,6 +218,7 @@ export async function acceptIncomeSuggestion(
   name: string,
   amountCents: number,
   cadence: "BIWEEKLY" | "SEMI_MONTHLY" | "MONTHLY",
+  semiMonthlyDays: number[],
   nextPayDate: string,
   accountId: string,
   transactionIds: string[],
@@ -207,6 +244,7 @@ export async function acceptIncomeSuggestion(
       name,
       amountCents,
       cadence,
+      semiMonthlyDays: cadence === "SEMI_MONTHLY" ? semiMonthlyDaysOrDefault(semiMonthlyDays, new Date(nextPayDate)) : [],
       nextPayDate: new Date(nextPayDate),
       lastReceivedDate: history[0]?.occurredOn,
       source: "SIMPLEFIN",

@@ -11,6 +11,7 @@ import {
 } from "@/app/bills/actions";
 import { createDebtPaymentFromTransaction } from "@/app/debts/actions";
 import { createIncomeFromTransaction } from "@/app/income/actions";
+import { SemiMonthlyDaysFields } from "@/app/income/semi-monthly-days-fields";
 import { showToast } from "@/lib/toast";
 import { CategoryPicker, type CategoryOption } from "@/app/bills/category-picker";
 import { AddDebtModal } from "./add-debt-modal";
@@ -383,6 +384,7 @@ export function TrackAsBillForm({
           />
         </label>
       )}
+      {isIncomeMode && cadence === "SEMI_MONTHLY" && <SemiMonthlyDaysFields small />}
 
       {mode === "bill" && buckets && buckets.length > 0 && (
         <label className="flex flex-col gap-1 text-xs text-gray-500 dark:text-neutral-400">
