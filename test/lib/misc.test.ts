@@ -15,7 +15,7 @@ import { monthlyContributionToHitTarget, monthsUntilTargetDate } from "@/lib/sav
 import { bucketFloorCents, isEssentialBucket, monthlyToPerPaycheck, perPaycheckToMonthly, resolveSurplusDirection } from "@/lib/budget-plan";
 import { bnplAttributionToleranceCents } from "@/lib/bnpl-detect";
 import { debtNeedsSetup, debtSetupDismissKey, debtSetupReason, minPaymentDismissKey } from "@/lib/debt-payments";
-import { isCardPaymentDescriptor, isGenericCardPaymentDescriptor, debtNameMatchesMerchant, txnTextNamesDebt, scopeToNamedDebts } from "@/lib/debt-payment-pattern";
+import { isCardPaymentDescriptor, isGenericCardPaymentDescriptor, debtNameMatchesMerchant, txnTextNamesDebt, scopeToNamedDebts, issuerCoreName } from "@/lib/debt-payment-pattern";
 import { accessLevelFor } from "@/lib/member-access";
 import { defaultNotificationEnabled } from "@/lib/notification-preferences";
 import { pickableDebtWhere } from "@/lib/debt-reassign";
@@ -287,6 +287,20 @@ describe("debt-payment-pattern", () => {
       txnTextNamesDebt({ merchant: "Shell", rawDescription: "POS SHELL OIL" }, { name: "Amazon Store Card", accountOrgName: "Synchrony" }),
       false,
     );
+  });
+
+  test("txnTextNamesDebt matches the issuer brand when the org name carries a corporate suffix", () => {
+    // Regression 2026-10-05: "CHASE CREDIT CRD EPAY" never contained "chasebank".
+    assert.equal(
+      txnTextNamesDebt(
+        { merchant: "Chase Credit Card", rawDescription: "AUTOMATIC WITHDRAWAL, CHASE CREDIT CRD EPAY WEB (S)" },
+        { name: "Amazon Prime Rewards Visa Signature (9302)", accountOrgName: "Chase Bank" },
+      ),
+      true,
+    );
+    assert.equal(issuerCoreName("Wells Fargo Bank, N.A."), "Wells Fargo");
+    assert.equal(issuerCoreName("Bank of America"), "Bank of America");
+    assert.equal(issuerCoreName("Capital One"), "Capital One");
   });
 
   test("scopeToNamedDebts keeps a named issuer's payment off another issuer's same-minimum debt", () => {

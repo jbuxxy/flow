@@ -100,6 +100,23 @@ export function debtNameMatchesMerchant(merchant: string, debtName: string): boo
   return merchantNorm.length >= 4 && normalize(debtName).includes(merchantNorm);
 }
 
+// An institution's org name minus generic corporate suffixes — "Chase Bank"
+// → "Chase", "Synchrony Bank" → "Synchrony", "Wells Fargo Bank, N.A." →
+// "Wells Fargo". The ACH line carries the brand, not the legal entity: a
+// Chase card payment reads "CHASE CREDIT CRD EPAY", which never contains
+// "chasebank", so the Amazon Prime Visa's $108.33 payment (2026-10-05) sat in
+// "Needs a Bucket" with its offsetting card-side credit already synced. Only
+// trailing words are stripped, so "Bank of America" stays whole.
+const ORG_SUFFIX = /[\s,]+(bank|n\.?a\.?|usa|financial|card services?|inc\.?|corp\.?|corporation|co\.?)$/i;
+export function issuerCoreName(orgName: string): string {
+  let s = orgName.trim();
+  for (let prev = ""; prev !== s; ) {
+    prev = s;
+    s = s.replace(ORG_SUFFIX, "").trim();
+  }
+  return s || orgName;
+}
+
 // Does a transaction's text point at exactly this debt? The cleaned merchant
 // is checked against the debt name (a co-branded card's normalised payee is
 // the bare store name, a substring of the debt's full name); the raw bank
@@ -113,7 +130,7 @@ export function txnTextNamesDebt(
 ): boolean {
   if (debtNameMatchesMerchant(txn.merchant, debt.name)) return true;
   if (debt.accountOrgName) {
-    if (debtNameMatchesMerchant(debt.accountOrgName, txn.rawDescription ?? "")) return true;
+    if (debtNameMatchesMerchant(issuerCoreName(debt.accountOrgName), txn.rawDescription ?? "")) return true;
     if (debtNameMatchesMerchant(txn.merchant, debt.accountOrgName)) return true;
   }
   return false;
