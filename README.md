@@ -7,6 +7,24 @@ A self-hosted household finance app: bills, envelope-style budgeting,
 debt payoff planning, net worth tracking, and savings goals — built around
 automatic bank sync via [SimpleFIN](https://www.simplefin.org/).
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/dashboard-dark.png">
+  <img src="docs/screenshots/dashboard.png" alt="Flow dashboard: bucket pace, bills due this week, savings goals, net worth, payment calendar, and bucket spending">
+</picture>
+
+## Screenshots
+
+All screenshots are from Flow's built-in read-only example household
+(fictional data) — the same one any instance offers from its login page.
+
+| Buckets | Net Worth |
+| --- | --- |
+| ![Envelope-style buckets with monthly caps vs. income and the Extra Income pool](docs/screenshots/buckets.png) | ![Net worth trend chart with cash, asset, and debt breakdown](docs/screenshots/networth.png) |
+| **Debt Payoff Calendar** | **Payoff Projection** |
+| ![Payoff calendar with the avalanche attack order, scheduled extra payments, and a BNPL installment tracker](docs/screenshots/debts-calendar.png) | ![Projected payoff chart with debt-free date and interest saved](docs/screenshots/debts-projection.png) |
+| **Monthly Report** | **Mobile** |
+| ![Monthly report: spending by bucket against budget, income in vs. out, and extra income](docs/screenshots/reports.png) | <img src="docs/screenshots/mobile-dashboard.png" alt="Mobile dashboard" width="32%"> <img src="docs/screenshots/mobile-buckets.png" alt="Mobile buckets" width="32%"> <img src="docs/screenshots/mobile-networth.png" alt="Mobile net worth" width="32%"> |
+
 ## Features
 
 - **Bank sync** — [SimpleFIN](https://www.simplefin.org/) integration for
@@ -24,12 +42,28 @@ automatic bank sync via [SimpleFIN](https://www.simplefin.org/).
   and Buy-Now-Pay-Later installment plans (Affirm, Klarna, Afterpay, etc.),
   including BNPL's fixed-installment-count payoff (unlike a bill, it stops
   once paid off rather than recurring forever).
-- **Buckets** — envelope-style monthly budgeting, plus one-time-purchase
-  savings buckets that accumulate toward a target instead of resetting
-  every month.
+- **Buckets** — envelope-style monthly budgeting with per-bucket pace
+  tracking (flags a bucket that's spending faster than the month is
+  passing), plus one-time-purchase savings buckets that accumulate toward a
+  target instead of resetting every month.
+- **Monthly budget planning** — each month Flow drafts a budget from your
+  income, expected recurring charges (bills, debt minimums, scheduled P2P
+  payments, expected reimbursements), and past spending; adjust the
+  allocations with sliders and confirm, or (with AI assist on) have it
+  redraft from plain-language instructions.
+- **Income tracking** — detects recurring paychecks from synced deposits,
+  shows what's expected this month (including biweekly third-paycheck
+  months), and collects one-off and P2P money into an **Extra Income** pool
+  that can cover bucket overspending or roll into month-end surplus.
+- **Transactions** — every synced transaction in one searchable, filterable
+  list, with bucket/category assignment, merchant routing rules, pending-
+  vs-posted tracking, and linked receipts.
 - **Debt payoff planner** — a payment calendar plus a payoff projection
-  (debt-free date) across loans, cards, and BNPL, with a choice of
-  avalanche/snowball/custom attack order and minimum-payment tracking.
+  (debt-free date and interest saved vs. minimums only) across loans,
+  cards, and BNPL, with a choice of avalanche/snowball/custom attack order,
+  an extra-per-paycheck amount, rolling freed-up minimums into the next
+  debt, and minimum-payment tracking. Optionally feeds the plan's extra
+  payments into your budget, or keep it as a projection only.
 - **Net worth & savings goals** — track assets (including estimated
   vehicle/home/crypto values) and liabilities, and progress toward savings
   targets with baseline tracking so an internal transfer into a linked
@@ -51,8 +85,12 @@ automatic bank sync via [SimpleFIN](https://www.simplefin.org/).
     subscription services) on top of the built-in list, so a newly-seen
     lender is recognized automatically instead of needing a code change.
   - Parsing receipt/bill-notice emails into structured amounts/line items.
-  - AI-written monthly (and startup) financial narrative reports, with
-    PDF export and an archive of past months.
+  - AI-written narrative for the monthly (and startup) financial
+    reports — the report itself (in vs. out, spending by bucket against
+    budget, extra income) works without AI, with PDF export and an archive
+    of past months.
+  - Redrafting the monthly budget from instructions ("put more toward the
+    credit card, trim dining out"), with a per-bucket rationale.
   - Estimated vehicle/home value lookups for net worth, and suggested
     bucket icons/budget-plan allocations during onboarding.
 - **Notifications & calendar sync** — Web Push (VAPID) reminders with
@@ -60,7 +98,11 @@ automatic bank sync via [SimpleFIN](https://www.simplefin.org/).
   savings, budget cycle), plus a subscribable ICS/webcal feed of bills,
   debt minimums, and the active payoff plan for any calendar app.
 - **Multi-member households** — invite other members with owner/full/
-  limited access levels; passkey (WebAuthn) login alongside standard auth.
+  limited access levels; TOTP two-factor (required for owners) and passkey
+  (WebAuthn) login.
+- **Read-only example household** — an optional demo household reachable
+  from the login page so prospective users can look around; every write is
+  blocked server-side (`src/scripts/seed-demo.ts` seeds it).
 - **Installable PWA** — responsive desktop + mobile layout, installable to
   a home screen/dock.
 
