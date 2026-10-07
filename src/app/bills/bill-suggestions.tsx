@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { X } from "lucide-react";
+import { Check, X } from "lucide-react";
 import { formatCents } from "@/lib/money";
 import { formatISODate } from "@/lib/date";
 import { guessBillCategoryLabel } from "@/lib/bill-category";
@@ -91,9 +91,9 @@ function Card({
           disabled={pending}
           aria-label="Dismiss Suggestion"
           title="Dismiss"
-          className="shrink-0 text-neutral-400 dark:text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300 disabled:opacity-50"
+          className="-mr-1.5 -mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-neutral-400 dark:text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300 disabled:opacity-50"
         >
-          <X size={14} />
+          <X size={16} />
         </button>
       </div>
       <div className="flex flex-wrap items-center gap-2">
@@ -156,9 +156,11 @@ function Card({
             })
           }
           disabled={pending || (!suggestion.debtId && !bucketId)}
-          className="shrink-0 rounded-lg bg-emerald-700 dark:bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+          aria-label="Track As Bill"
+          title="Track As Bill"
+          className="ml-auto flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-700 dark:bg-emerald-600 text-white disabled:opacity-50"
         >
-          {pending ? "…" : "Track It"}
+          <Check size={16} />
         </button>
       </div>
     </li>
