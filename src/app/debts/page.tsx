@@ -116,6 +116,7 @@ export default async function DebtsPage() {
       cadence: true,
       nextDueDate: true,
       lastPaidDate: true,
+      cycleRestartDueDate: true,
       dueDateLocked: true,
       createdAt: true,
       payments: { select: { id: true, amountCents: true, occurredOn: true, pending: true } },
@@ -302,6 +303,7 @@ export default async function DebtsPage() {
               nextDueDate: payment.nextDueDate,
               lastPaidDate: payment.lastPaidDate,
               installmentsRemaining: d.installmentsRemaining,
+        cycleRestartDueDate: payment.cycleRestartDueDate,
             }),
           ), periodStart, periodEnd)
         : { slots: [], extraPayments: [] };

@@ -548,6 +548,7 @@ export default async function BucketDetailPage({
         nextDueDate: p.nextDueDate,
         lastPaidDate: p.lastPaidDate,
         installmentsRemaining: p.debt.installmentsRemaining,
+        cycleRestartDueDate: p.cycleRestartDueDate,
       }),
     );
     // Minimums an earlier, bigger payment already covered — still listed as

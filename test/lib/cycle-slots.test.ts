@@ -87,6 +87,20 @@ describe("slotBounds", () => {
     });
     assert.deepEqual(b.occurrenceStart, utc(2026, 10, 3));
   });
+
+  test("REVOLVING: a restarted cycle has no occurrence before its first due date", () => {
+    // Regression 2026-10-07: card paid to $0 Oct 1 ($141.49), new $209.35
+    // charge Oct 4, tracker rolled to Nov 4. Walking back from Nov 4 rebuilt
+    // an Oct 4 occurrence, and the payoff read as a "covered" $29 minimum.
+    const bounds = slotBounds(utc(2026, 10, 1), { debtType: "REVOLVING", cycleRestartDueDate: utc(2026, 11, 4) });
+    const payoff = { amountCents: 14149, occurredOn: utc(2026, 10, 1) };
+    const { slots, extraPayments } = buildCycleSlots(utc(2026, 11, 4), "MONTHLY", utc(2026, 10, 1), utc(2026, 11, 1), [payoff], bounds);
+    assert.equal(slots.length, 0);
+    assert.deepEqual(extraPayments, [payoff]);
+    // November onward is unaffected.
+    const nov = slotBounds(utc(2026, 11, 1), { debtType: "REVOLVING", cycleRestartDueDate: utc(2026, 11, 4) });
+    assert.equal(buildCycleSlots(utc(2026, 11, 4), "MONTHLY", utc(2026, 11, 1), utc(2026, 12, 1), [], nov).slots.length, 1);
+  });
 });
 
 describe("buildCycleSlots", () => {

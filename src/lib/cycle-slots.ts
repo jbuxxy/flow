@@ -105,6 +105,10 @@ export function slotBounds(
     nextDueDate?: Date | null;
     lastPaidDate?: Date | null;
     installmentsRemaining?: number | null;
+    // REVOLVING only — DebtPayment.cycleRestartDueDate: a paid-off card that
+    // regained a balance owes nothing before its restarted cycle's first due
+    // date, so no occurrence (open, paid or covered) is walked before it.
+    cycleRestartDueDate?: Date | null;
   },
 ): SlotBounds {
   if (opts.debtType === "INSTALLMENT") {
@@ -124,7 +128,8 @@ export function slotBounds(
     return { occurrenceStart, occurrenceEnd };
   }
   return {
-    occurrenceStart: monthStart,
+    occurrenceStart:
+      opts.cycleRestartDueDate && opts.cycleRestartDueDate > monthStart ? opts.cycleRestartDueDate : monthStart,
     hideUnpaidBefore:
       opts.trackerCreatedAt && opts.trackerCreatedAt > monthStart ? opts.trackerCreatedAt : undefined,
   };

@@ -174,33 +174,22 @@ export async function unhideDebtPaymentIfBalanceReturned(
   // The new charge belongs to the *next* statement, not the occurrence the
   // tracker is still parked on — see balanceReturnSkipsOpenOccurrence.
   //
-  // The passed-over occurrence is also recorded as a skipped minimum: the
-  // calendars rebuild it by walking back from the new nextDueDate, pair it
-  // with the payment that zeroed the balance, and — that payment being early
-  // and over the minimum — list it as a "covered" $X due (resolveMinimumLedger)
-  // until skipped. Nothing is owed on it, so skip it here (2026-10-07: Sam's
-  // Club Card's Oct 4 $29 stayed on the Payment Calendar after This Week's
-  // Bills dropped it).
+  // cycleRestartDueDate floors every view's occurrence walk (slotBounds) at
+  // the new due date. Without it /debts and the calendars rebuild the
+  // passed-over occurrence by walking back from nextDueDate, pair it with the
+  // payment that zeroed the balance, and — that payment being early and over
+  // the minimum — list it as a "covered" $X due (resolveMinimumLedger). It was
+  // never owed (2026-10-07: Sam's Club Card's Oct 4 $29 stayed on /debts and
+  // both calendars after This Week's Bills dropped it).
   const tracker = await db.debtPayment.findUnique({
     where: { debtId },
-    select: {
-      id: true,
-      cadence: true,
-      nextDueDate: true,
-      amountCents: true,
-      householdId: true,
-      debt: { select: { debtType: true } },
-    },
+    select: { id: true, cadence: true, nextDueDate: true, debt: { select: { debtType: true } } },
   });
   if (tracker && tracker.debt.debtType === "REVOLVING" && balanceReturnSkipsOpenOccurrence(tracker.nextDueDate, todayAsUTCDate())) {
+    const restartDueDate = nextBillDueDate(tracker.cadence, tracker.nextDueDate, []);
     await db.debtPayment.update({
       where: { id: tracker.id },
-      data: { nextDueDate: nextBillDueDate(tracker.cadence, tracker.nextDueDate, []), amountDueCents: 0 },
-    });
-    await db.debtMinimumSkip.upsert({
-      where: { debtId_dueDate: { debtId, dueDate: tracker.nextDueDate } },
-      create: { householdId: tracker.householdId, debtId, dueDate: tracker.nextDueDate, amountCents: tracker.amountCents },
-      update: {},
+      data: { nextDueDate: restartDueDate, amountDueCents: 0, cycleRestartDueDate: restartDueDate },
     });
   }
 
@@ -2769,6 +2758,7 @@ const projectHouseholdExtraAllocations = cache(async function projectHouseholdEx
       cadence: true,
       nextDueDate: true,
       lastPaidDate: true,
+      cycleRestartDueDate: true,
       createdAt: true,
       amountCents: true,
       payments: { select: { amountCents: true, occurredOn: true } },
@@ -3324,6 +3314,7 @@ function correctedDueDateByDebtId(
     cadence: BillCadence;
     createdAt: Date;
     lastPaidDate?: Date | null;
+    cycleRestartDueDate?: Date | null;
     // The tracker's own per-occurrence minimum — 0 for a no-minimum debt
     // (ignoreMinimumPayment). Needed to size a single slot's own overage
     // below; a no-minimum debt never reports one (see extraPaidCents).
@@ -3389,6 +3380,7 @@ function correctedDueDateByDebtId(
         nextDueDate: p.nextDueDate,
         lastPaidDate: p.lastPaidDate,
         installmentsRemaining: meta?.installmentsRemaining,
+        cycleRestartDueDate: p.cycleRestartDueDate,
       }),
     );
     // Same slot-based cycle status /debts derives for CycleMinimum
@@ -3520,6 +3512,7 @@ export async function getPaymentCalendarThisCycle(
       cadence: true,
       nextDueDate: true,
       lastPaidDate: true,
+      cycleRestartDueDate: true,
       createdAt: true,
       payments: { select: { amountCents: true, occurredOn: true } },
     },
@@ -4012,6 +4005,7 @@ export async function getPaymentCalendarIcsEvents(householdId: string): Promise<
       cadence: true,
       nextDueDate: true,
       lastPaidDate: true,
+      cycleRestartDueDate: true,
       createdAt: true,
       amountCents: true,
       // The tracked minimum owed on the current occurrence — used below to

@@ -1488,6 +1488,11 @@ model DebtPayment {
 
   nextDueDate   DateTime  @db.Date
   lastPaidDate  DateTime? @db.Date
+  // Set when a REVOLVING card at $0 regains a balance after its statement
+  // closed (unhideDebtPaymentIfBalanceReturned): the first due date of the
+  // restarted cycle. No minimum occurrence exists before it — the passed-over
+  // one was never owed — so slotBounds floors the occurrence walk here.
+  cycleRestartDueDate DateTime? @db.Date
   // Same meaning as RecurringBill.dueDateLocked — see that field's comment.
   dueDateLocked Boolean   @default(false)
 
