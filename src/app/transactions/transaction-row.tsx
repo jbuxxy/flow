@@ -462,8 +462,25 @@ export function TransactionRow({
   // credit).
   const isRefundCandidate =
     !isDebit && !isDebtTransfer && !tracked && !isReimbursed && !hasOffsets && !isP2P && !transaction.isIncome;
+  // A P2P credit defaults to isIncome:true the moment it syncs (see
+  // simplefin-sync.ts) — oneOff:false is the only thing distinguishing
+  // "still needs a household decision" from "confirmed" for one, since
+  // that's what actually drops it out of getUnlabeledP2PTransfers
+  // (src/lib/p2p-transfers.ts). The three things a household can decide it
+  // actually is: plain one-time income (Confirm, below — by far the most
+  // common), a reimbursement (one-off or recurring, via
+  // ReimbursementLinker/PatternPanel), or genuine recurring income
+  // (PatternPanel's countsAsIncome, via the CalendarClock button). Folds in
+  // tracked/isReimbursed the same way the rest of this component does:
+  // once any of those three has actually happened, nothing left to decide.
+  const needsP2PIncomeConfirm = isP2P && !isDebit && transaction.isIncome && !transaction.oneOff && !isReimbursed && !tracked;
   const classification = isReimbursed
     ? null
+    : needsP2PIncomeConfirm
+      ? // Amber, not the settled green "Income" a confirmed credit shows —
+        // the sync-time default read identically to a decided one, so
+        // nothing said "still needs you" (household report, 2026-10-07).
+        { text: "Unconfirmed Income", amber: true, icon: null as "debt" | "recurring" | null }
     : isRefundCandidate
       ? transaction.refundReviewDismissed
         ? // Dismissed stays visible in the collapsed subline too, not just
@@ -493,18 +510,6 @@ export function TransactionRow({
     selId !== transaction.bucketId &&
     !isP2P &&
     transaction.accountBudgetTracked;
-  // A P2P credit defaults to isIncome:true the moment it syncs (see
-  // simplefin-sync.ts) — oneOff:false is the only thing distinguishing
-  // "still needs a household decision" from "confirmed" for one, since
-  // that's what actually drops it out of getUnlabeledP2PTransfers
-  // (src/lib/p2p-transfers.ts). The three things a household can decide it
-  // actually is: plain one-time income (Confirm, below — by far the most
-  // common), a reimbursement (one-off or recurring, via
-  // ReimbursementLinker/PatternPanel), or genuine recurring income
-  // (PatternPanel's countsAsIncome, via the CalendarClock button). Folds in
-  // tracked/isReimbursed the same way the rest of this component does:
-  // once any of those three has actually happened, nothing left to decide.
-  const needsP2PIncomeConfirm = isP2P && !isDebit && transaction.isIncome && !transaction.oneOff && !isReimbursed && !tracked;
   // The debit counterpart to needsP2PIncomeConfirm above — a P2P debit's
   // merchant text carries no bucket/category signal, so
   // categorizeUncategorizedTransactions (simplefin-sync.ts) runs a
@@ -628,7 +633,10 @@ export function TransactionRow({
   );
 
   return (
-    <li ref={rowRef} className="relative rounded-lg border border-blue-100 dark:border-neutral-800 px-3 py-2 text-sm">
+    <li
+      ref={rowRef}
+      className={`relative rounded-lg border px-3 py-2 text-sm ${needsP2PIncomeConfirm ? "border-amber-300 dark:border-amber-800" : "border-blue-100 dark:border-neutral-800"}`}
+    >
       <div
         role="button"
         tabIndex={0}
@@ -786,6 +794,33 @@ export function TransactionRow({
           </RowActions>
         </p>
       </div>
+
+      {/* The one-tap answer for the common case, on the collapsed row itself
+          — "Confirm As Income" only ever lived in the kebab, so an
+          unconfirmed credit gave no hint it was waiting on anyone
+          (household report, 2026-10-07). Reimbursement/recurring stay in
+          the kebab alongside it. */}
+      {needsP2PIncomeConfirm && (
+        <div className="mt-2 flex items-center justify-end gap-2 border-t border-amber-200 dark:border-amber-900/60 pt-2">
+          <span className="min-w-0 flex-1 text-xs text-amber-700 dark:text-amber-400">
+            Is this income? Reimbursement and recurring options are in the ⋮ menu.
+          </span>
+          <button
+            type="button"
+            onClick={() =>
+              startMarkIncome(async () => {
+                await preservingScroll(() => reassignTransaction(transaction.id, { income: true }));
+                showToast("Confirmed As Income");
+              })
+            }
+            disabled={markIncomePending}
+            className="flex shrink-0 items-center gap-1 rounded-lg bg-emerald-700 dark:bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+          >
+            <Check size={13} />
+            {markIncomePending ? "…" : "Confirm Income"}
+          </button>
+        </div>
+      )}
 
       {expanded && (
         <div className="mt-2 flex flex-col gap-2 border-t border-blue-100 dark:border-neutral-800 pt-2">
