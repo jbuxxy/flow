@@ -40,6 +40,7 @@ import { syncHousehold, categorizeUncategorizedTransactions } from "@/lib/simple
 import { ensureBucketIcons } from "@/lib/bucket-icons-sync";
 import { getNetWorth } from "@/lib/networth";
 import { detectRecurringIncome } from "@/lib/income-detect";
+import { detectMerchantBillSuggestions } from "@/lib/bill-detect";
 
 const DEMO_EMAIL = "demo@example.invalid";
 const DEMO_NAME = "Alex Rivera";
@@ -327,6 +328,21 @@ async function seedCuratedExtras(householdId: string) {
       },
     });
   }
+
+  // --- Dismiss the bill suggestions SimpleFIN's synthetic spending
+  //     produces. Its generator prices each charge by day of month (the 1st
+  //     is always $6.65 at "John's Fishin Shack", the 2nd $13.31, …), so
+  //     every amount repeats on the same day every month and passes for a
+  //     fixed monthly bill — dozens of bogus "Grocery store $NN/mo"
+  //     suggestions. Real spending doesn't do that (detectMerchantBillSuggestions
+  //     already rejects a scattered amount band, see hasRegularCadenceAnchor),
+  //     and the seed's own bills/debt payments aren't merchant spend, so every
+  //     merchant suggestion here is synthetic noise a household would dismiss. ---
+  const syntheticBills = await detectMerchantBillSuggestions(householdId);
+  await db.suggestionDismissal.createMany({
+    data: syntheticBills.map((b) => ({ householdId, kind: "BILL", key: b.key })),
+    skipDuplicates: true,
+  });
 
   // --- Give every debt tracker a settled prior cycle so a freshly-seeded
   //     debt doesn't render as "overdue" (no synced payment history exists
