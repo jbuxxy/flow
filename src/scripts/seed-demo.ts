@@ -377,6 +377,9 @@ async function fullSeed() {
       adultsCount: 2,
       kidsCount: 2,
       incomeCalcMethod: "BIWEEKLY_CONSERVATIVE",
+      // Show the payoff plan applied (dashboard extras, bucket budgets),
+      // not /debts' "Projection Only" preview.
+      payoffPlanEnabled: true,
       onboardingStep: "PROFILE",
       onboardingCompletedAt: null,
     },
