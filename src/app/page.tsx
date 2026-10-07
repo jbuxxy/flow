@@ -763,7 +763,7 @@ export default async function Home() {
           household glancing at the dashboard sees more than one card before
           moving on. Only this carousel auto-plays — the warnings/review
           carousel above is action items, not something to passively browse. */}
-      <SwipeCarousel desktopGrid capCardWidth defaultKey="bills" autoPlayMs={10_000}>
+      <SwipeCarousel desktopGrid threeUp defaultKey="bills" autoPlayMs={10_000}>
         {canSeeFullFinancials && dueLastWeek.length > 0 && (
           <UpcomingBillsCard
             key="bills-last-week"

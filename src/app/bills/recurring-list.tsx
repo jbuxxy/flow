@@ -233,7 +233,7 @@ export function RecurringList({
 
       <div className="hidden lg:flex lg:flex-wrap lg:items-start lg:justify-center lg:gap-4">
         {groupCards.map((c) => (
-          // Capped like SwipeCarousel's own `capCardWidth` (2026-09-23) — an
+          // Capped at 420px (same idea the dashboard carousel used to use) — an
           // odd number of groups leaves one alone on its trailing row, and
           // uncapped `grow` would stretch it to the full row width, landing
           // right back on the wide "name … amount" gap this fix exists to

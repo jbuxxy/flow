@@ -56,9 +56,8 @@ type SlideKey = string | number;
 // bug). Flexbox's `flex-grow` resolves per *line*, not per grid, so both
 // cases just work: every row's items grow to fill exactly their own row's
 // width, at whatever count-per-row fits `basis-[280px]` — no hardcoded
-// `xl:`/`2xl:` breakpoints needed. `capCardWidth` (see its own doc below)
-// swaps that per-row fill for a 420px cap + `justify-center` instead, for
-// the one carousel whose cards can't just stretch to fill leftover width.
+// `xl:`/`2xl:` breakpoints needed. `threeUp` (see its own doc below) pins
+// that to exactly three cards per row instead.
 // Trade-off: `items-start` (not a true masonry) means a short card can
 // leave dead space below itself if its row-mate is taller, but that beats
 // stranding a third or more of a row empty. Implemented as two sibling
@@ -71,22 +70,23 @@ type SlideKey = string | number;
 export function SwipeCarousel({
   children,
   desktopGrid = false,
-  capCardWidth = false,
+  threeUp = false,
   defaultKey,
   autoPlayMs,
 }: {
   children: React.ReactNode;
   desktopGrid?: boolean;
-  // Caps each `desktopGrid` card at 420px and centers a row that doesn't
-  // fill (rather than growing cards to fill it) — see the `desktopGrid`
-  // comment above for why: fine for a fluid chart, visibly sparse for a
-  // fixed-pixel grid like BucketGrid. Only the dashboard's content carousel
-  // (bills/calendar/buckets/net worth/savings) has that kind of card, so
-  // this defaults off — every other `desktopGrid` carousel (warnings, Quick
-  // Confirm/Payday/Paid-Off) is plain text/pills with nothing that looks
-  // odd stretched, and a 2-card row centering with a wide gap instead of
-  // filling read as broken there (household report, 2026-09-23).
-  capCardWidth?: boolean;
+  // Exactly three `desktopGrid` cards per row: each basis is a third of the
+  // row (less its two gap-4 gutters), so a fourth never squeezes in, while
+  // `grow` still lets a short trailing row's one or two cards stretch to
+  // fill it. Replaced a 420px cap + `justify-center` (2026-09-23), which
+  // left a 4-up row of narrow cards and gutters of dead space either side
+  // (household request, 2026-10-06: "make these rows 3 column … make sure
+  // they still fill the space"). Only the dashboard's content carousel
+  // (bills/calendar/buckets/net worth/savings) uses it — every other
+  // `desktopGrid` carousel (warnings, Quick Confirm/Payday/Paid-Off) is
+  // plain text/pills that read fine at the 280px auto-fit count.
+  threeUp?: boolean;
   // Which slide opens active, by its React key — independent of DOM order.
   // Without this the carousel always opens on the first slide (household
   // request, 2026-09-06: a new "Last Week's Bills" retrospective card should
@@ -349,12 +349,12 @@ export function SwipeCarousel({
       <div
         // Hidden outright once every card wrapper is itself `empty:hidden` —
         // same "no empty shell eating a gap" reason as `allEmpty` above.
-        className={`hidden lg:flex lg:flex-wrap lg:items-start lg:gap-4 lg:[&:not(:has(>:not(:empty)))]:hidden ${capCardWidth ? "lg:justify-center" : ""}`}
+        className={`hidden lg:flex lg:flex-wrap lg:items-start lg:gap-4 lg:[&:not(:has(>:not(:empty)))]:hidden`}
       >
         {items.map((item, i) => (
           <div
             key={keys[i]}
-            className={`empty:hidden lg:grow lg:shrink lg:basis-[280px] ${capCardWidth ? "lg:max-w-[420px]" : ""}`}
+            className={`empty:hidden lg:grow lg:shrink ${threeUp ? "lg:basis-[calc((100%-2rem)/3)]" : "lg:basis-[280px]"}`}
           >
             {item}
           </div>
