@@ -173,14 +173,34 @@ export async function unhideDebtPaymentIfBalanceReturned(
 
   // The new charge belongs to the *next* statement, not the occurrence the
   // tracker is still parked on — see balanceReturnSkipsOpenOccurrence.
+  //
+  // The passed-over occurrence is also recorded as a skipped minimum: the
+  // calendars rebuild it by walking back from the new nextDueDate, pair it
+  // with the payment that zeroed the balance, and — that payment being early
+  // and over the minimum — list it as a "covered" $X due (resolveMinimumLedger)
+  // until skipped. Nothing is owed on it, so skip it here (2026-10-07: Sam's
+  // Club Card's Oct 4 $29 stayed on the Payment Calendar after This Week's
+  // Bills dropped it).
   const tracker = await db.debtPayment.findUnique({
     where: { debtId },
-    select: { id: true, cadence: true, nextDueDate: true, debt: { select: { debtType: true } } },
+    select: {
+      id: true,
+      cadence: true,
+      nextDueDate: true,
+      amountCents: true,
+      householdId: true,
+      debt: { select: { debtType: true } },
+    },
   });
   if (tracker && tracker.debt.debtType === "REVOLVING" && balanceReturnSkipsOpenOccurrence(tracker.nextDueDate, todayAsUTCDate())) {
     await db.debtPayment.update({
       where: { id: tracker.id },
       data: { nextDueDate: nextBillDueDate(tracker.cadence, tracker.nextDueDate, []), amountDueCents: 0 },
+    });
+    await db.debtMinimumSkip.upsert({
+      where: { debtId_dueDate: { debtId, dueDate: tracker.nextDueDate } },
+      create: { householdId: tracker.householdId, debtId, dueDate: tracker.nextDueDate, amountCents: tracker.amountCents },
+      update: {},
     });
   }
 
