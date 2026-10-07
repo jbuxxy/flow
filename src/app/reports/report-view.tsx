@@ -43,6 +43,8 @@ type NormMonth = {
   buckets: { name: string; capCents: number; spentCents: number; achieved: boolean }[];
   // Acknowledged, never totaled — see MonthReport.oneTimePurchases.
   oneTimePurchases: { name: string; capCents: number; spentCents: number }[];
+  // A breakdown of income already in totalIncomeCents — see MonthReport.extraIncome.
+  extraIncome: MonthReport["extraIncome"] | null;
 };
 
 function normalizeMonth(
@@ -60,6 +62,10 @@ function normalizeMonth(
       recurringIncomeCents: snap.recurringIncomeCents,
       buckets: snap.buckets.map((b) => ({ ...b, achieved: b.spentCents <= b.capCents })),
       oneTimePurchases: snap.oneTimePurchases ?? [],
+      // Snapshots frozen before this existed fall back to the live figure —
+      // safe for a closed month: its ad hoc credits and top-up rows don't
+      // move when next month's caps change.
+      extraIncome: snap.extraIncome ?? live.extraIncome,
     };
   }
   if (findings) {
@@ -74,6 +80,7 @@ function normalizeMonth(
       recurringIncomeCents: null,
       buckets: [],
       oneTimePurchases: [],
+      extraIncome: live.extraIncome,
     };
   }
   // No AI report — the live MonthReport is the only source.
@@ -90,6 +97,7 @@ function normalizeMonth(
       achieved: b.achieved,
     })),
     oneTimePurchases: live.oneTimePurchases,
+    extraIncome: live.extraIncome,
   };
 }
 
@@ -397,6 +405,42 @@ export function ReportView({
                 <span className="shrink-0 text-xs text-gray-500 dark:text-neutral-400">{formatCents(p.spentCents)}</span>
               </li>
             ))}
+          </ul>
+        </Section>
+      )}
+
+      {month.extraIncome && month.extraIncome.receivedCents > 0 && (
+        <Section title="Extra Income">
+          <p className="text-xs text-gray-500 dark:text-neutral-400">
+            One-off and P2P money that came in this month — already counted in the income total above.
+          </p>
+          <ul className="flex flex-col">
+            <li className="flex items-center justify-between gap-3 border-b border-blue-100 py-2 text-sm dark:border-neutral-800">
+              <span className="font-medium text-neutral-900 dark:text-neutral-100">Received</span>
+              <span className="shrink-0 text-xs text-gray-500 dark:text-neutral-400">
+                {formatCents(month.extraIncome.receivedCents)}
+              </span>
+            </li>
+            <li className="border-b border-blue-100 py-2 text-sm dark:border-neutral-800">
+              <div className="flex items-center justify-between gap-3">
+                <span className="font-medium text-neutral-900 dark:text-neutral-100">Covered Overspending</span>
+                <span className="shrink-0 text-xs text-gray-500 dark:text-neutral-400">
+                  {formatCents(month.extraIncome.appliedCents)}
+                </span>
+              </div>
+              {month.extraIncome.byBucket.map((b) => (
+                <div key={b.name} className="flex items-center justify-between gap-3 pl-3 text-xs text-gray-500 dark:text-neutral-400">
+                  <span className="truncate">{b.name}</span>
+                  <span className="shrink-0">{formatCents(b.amountCents)}</span>
+                </div>
+              ))}
+            </li>
+            <li className="flex items-center justify-between gap-3 py-2 text-sm">
+              <span className="font-medium text-emerald-700 dark:text-emerald-400">Added To Surplus</span>
+              <span className="shrink-0 text-xs font-medium text-emerald-700 dark:text-emerald-400">
+                {formatCents(month.extraIncome.unappliedCents)}
+              </span>
+            </li>
           </ul>
         </Section>
       )}

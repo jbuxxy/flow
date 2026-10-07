@@ -731,6 +731,9 @@ export type MonthSummary = {
   // payment) — NOT part of buckets/totalSpentCents/totalCapCents. See
   // MonthReport.oneTimePurchases.
   oneTimePurchases?: { name: string; capCents: number; spentCents: number }[];
+  // One-off/P2P income breakdown — see MonthReport.extraIncome. Already
+  // inside totalIncomeCents; never add it again.
+  extraIncome?: { receivedCents: number; appliedCents: number; unappliedCents: number; byBucket: { name: string; amountCents: number }[] };
   // Real debt figures (see getHouseholdSavingsCapacity, src/lib/savings.ts)
   // — only ever set for the recurring Monthly Report, not the onboarding
   // Startup Report, since no debt is typically tracked yet at that point.
@@ -886,6 +889,9 @@ export type ReportFindings = {
     // Listed, never totaled — see MonthReport.oneTimePurchases. Optional:
     // absent on snapshots frozen before 2026-10-02.
     oneTimePurchases?: { name: string; capCents: number; spentCents: number }[];
+    // See MonthReport.extraIncome. Optional: absent on snapshots frozen
+    // before 2026-10-07 (/reports falls back to the live figure).
+    extraIncome?: { receivedCents: number; appliedCents: number; unappliedCents: number; byBucket: { name: string; amountCents: number }[] };
   } | null;
   overspendingBuckets: { name: string; overspendCents: number }[];
   newBucketSuggestions: {
@@ -1658,6 +1664,10 @@ export async function generateMonthlyReportContent(
     `(savings, a windfall — e.g. a car down payment). They are already EXCLUDED from buckets, totalSpentCents and ` +
     `totalCapCents: never add them back, never count them toward breakeven, overspending, or any cut. Acknowledge each ` +
     `one in a short neutral clause in the narrative (e.g. "plus the $6,000 Tesla down payment, funded separately").\n\n` +
+    `extraIncome (when present, receivedCents > 0) breaks down this month's one-off/P2P income, which is ALREADY ` +
+    `INCLUDED in totalIncomeCents — never add it again. appliedCents was automatically used to cover buckets that went ` +
+    `over their cap (byBucket; already inside those buckets' capCents); unappliedCents was never needed and is part of ` +
+    `this month's surplus (it does not carry over). Mention it briefly in the narrative when it's meaningful.\n\n` +
     `Analyze this month's spending against budget caps (amounts in cents). Use the recent trend history (older -> ` +
     `newer, may be empty for a new household) to note whether an issue is a one-off or a repeating pattern rather ` +
     `than treating this month in isolation.\n\n` +

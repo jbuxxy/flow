@@ -3,6 +3,7 @@ import { periodBounds, utcPeriodBounds } from "@/lib/period";
 import { spendByBucketInRange, getBucketTopUpCentsByBucketId } from "@/lib/buckets";
 import { getIncomeSummary } from "@/lib/income";
 import { offsetSumByCreditId, countedIncomeCents } from "@/lib/reimbursements";
+import { getExtraIncomeSummary } from "@/lib/bucket-ad-hoc-topup";
 
 export type BucketMonthStat = {
   id: string;
@@ -34,7 +35,15 @@ export type MonthReport = {
   // so a $6K down payment doesn't read as a $6K overspend against a budget
   // that never included it (household rule, 2026-10-02).
   oneTimePurchases: { name: string; capCents: number; spentCents: number }[];
+  // This month's ad hoc/P2P income (getExtraIncomeSummary): how much landed,
+  // how much auto-apply drew into over-cap buckets (already inside those
+  // buckets' capCents), and how much was never needed. No carry-over — the
+  // unapplied part is simply part of this month's surplus. Breakdown only:
+  // every cent of it is already in totalIncomeCents.
+  extraIncome: ExtraIncomeReport;
 };
+
+export type ExtraIncomeReport = { receivedCents: number; appliedCents: number; unappliedCents: number; byBucket: { name: string; amountCents: number }[] };
 
 export function periodLabel(periodKey: string): string {
   const { start } = periodBounds(periodKey);
@@ -53,7 +62,7 @@ export async function getMonthReport(householdId: string, periodKey: string): Pr
   // same UTC-midnight @db.Date distinction as getIncomeThisMonth (income.ts).
   const { start: utcStart, end: utcEnd } = utcPeriodBounds(periodKey);
 
-  const [buckets, incomeTxns, spentByBucketId, incomeSummary, topUpCentsByBucketId] = await Promise.all([
+  const [buckets, incomeTxns, spentByBucketId, incomeSummary, topUpCentsByBucketId, extra] = await Promise.all([
     db.bucket.findMany({
       where: { householdId },
       orderBy: { sortOrder: "asc" },
@@ -76,6 +85,7 @@ export async function getMonthReport(householdId: string, periodKey: string): Pr
     // review: this report re-derived "stayed in budget" independently
     // instead of sharing computeProgress's definition).
     getBucketTopUpCentsByBucketId(householdId, periodKey),
+    getExtraIncomeSummary(householdId, periodKey),
   ]);
 
   // A split credit (see TransactionOffset) only counts as income for its
@@ -112,5 +122,11 @@ export async function getMonthReport(householdId: string, periodKey: string): Pr
     recurringIncomeCents: incomeSummary.totalMonthlyCents,
     buckets: bucketStats,
     oneTimePurchases,
+    extraIncome: {
+      receivedCents: extra.receivedCents,
+      appliedCents: extra.appliedCents,
+      unappliedCents: extra.unappliedCents,
+      byBucket: extra.byBucket,
+    },
   };
 }

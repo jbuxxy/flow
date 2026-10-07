@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { currentPeriodKey } from "@/lib/period";
 import { getBucketsWithProgress } from "@/lib/buckets";
-import { getAdHocIncomeThisMonth } from "@/lib/income";
+import { getAdHocIncomeThisMonth, getAdHocIncomeForPeriod } from "@/lib/income";
 import { countedIncomeCents, offsetSumByCreditId } from "@/lib/reimbursements";
 import { sendPushToBucketForType } from "@/lib/push";
 import { formatCents } from "@/lib/money";
@@ -78,6 +78,81 @@ export function trimTopUpsToCounted(
     }
   }
   return { deleteIds, updates };
+}
+
+export type ExtraIncomeSource = {
+  id: string;
+  name: string;
+  occurredOn: Date;
+  amountCents: number;
+  applied: { bucketName: string; amountCents: number }[];
+};
+
+export type ExtraIncomeSummary = {
+  receivedCents: number;
+  appliedCents: number;
+  // Received but never drawn into a bucket — no carry-over (household rule,
+  // 2026-10-07): once the month closes, this is simply part of its surplus.
+  unappliedCents: number;
+  sources: ExtraIncomeSource[];
+  byBucket: { name: string; amountCents: number }[];
+};
+
+// Pure — the "where did this month's extra income go" view shared by the
+// /buckets Extra Income card and the monthly report. A top-up whose source
+// isn't among `entries` (no longer counts as ad hoc income — awaiting
+// reconcileAdHocTopUps) is ignored, and a source's draws never count past
+// its own amount, so applied ≤ received always holds.
+export function summarizeExtraIncome(
+  entries: { id: string; name: string; occurredOn: Date; amountCents: number }[],
+  topUps: { sourceTransactionId: string; bucketId: string; amountCents: number }[],
+  bucketNameById: Map<string, string>,
+): ExtraIncomeSummary {
+  const bySourceBucket = new Map<string, Map<string, number>>();
+  for (const t of topUps) {
+    const m = bySourceBucket.get(t.sourceTransactionId) ?? new Map<string, number>();
+    m.set(t.bucketId, (m.get(t.bucketId) ?? 0) + t.amountCents);
+    bySourceBucket.set(t.sourceTransactionId, m);
+  }
+  const bucketTotals = new Map<string, number>();
+  const sources: ExtraIncomeSource[] = [...entries]
+    .sort((a, b) => a.occurredOn.getTime() - b.occurredOn.getTime())
+    .map((e) => {
+      let room = e.amountCents;
+      const applied: ExtraIncomeSource["applied"] = [];
+      for (const [bucketId, cents] of bySourceBucket.get(e.id) ?? []) {
+        const amountCents = Math.min(cents, room);
+        if (amountCents <= 0) continue;
+        room -= amountCents;
+        const bucketName = bucketNameById.get(bucketId) ?? "Unknown Bucket";
+        applied.push({ bucketName, amountCents });
+        bucketTotals.set(bucketName, (bucketTotals.get(bucketName) ?? 0) + amountCents);
+      }
+      return { ...e, applied };
+    });
+  const receivedCents = sources.reduce((s, e) => s + e.amountCents, 0);
+  const appliedCents = [...bucketTotals.values()].reduce((s, c) => s + c, 0);
+  return {
+    receivedCents,
+    appliedCents,
+    unappliedCents: receivedCents - appliedCents,
+    sources,
+    byBucket: [...bucketTotals]
+      .map(([name, amountCents]) => ({ name, amountCents }))
+      .sort((a, b) => b.amountCents - a.amountCents),
+  };
+}
+
+export async function getExtraIncomeSummary(householdId: string, periodKey: string): Promise<ExtraIncomeSummary> {
+  const [adHoc, topUps, buckets] = await Promise.all([
+    getAdHocIncomeForPeriod(householdId, periodKey),
+    db.bucketAdHocTopUp.findMany({
+      where: { householdId, periodKey },
+      select: { sourceTransactionId: true, bucketId: true, amountCents: true },
+    }),
+    db.bucket.findMany({ where: { householdId }, select: { id: true, name: true } }),
+  ]);
+  return summarizeExtraIncome(adHoc.entries, topUps, new Map(buckets.map((b) => [b.id, b.name])));
 }
 
 // A top-up is only ever funded by a credit that counts as ad hoc income

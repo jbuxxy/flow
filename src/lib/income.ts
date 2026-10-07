@@ -275,9 +275,19 @@ export async function getAdHocIncomeThisMonth(householdId: string): Promise<{
   entries: AdHocIncomeEntry[];
   totalCents: number;
 }> {
+  return getAdHocIncomeForPeriod(householdId, currentPeriodKey());
+}
+
+// Same as getAdHocIncomeThisMonth for any period — the monthly report's
+// Extra Income section (getExtraIncomeSummary, bucket-ad-hoc-topup.ts)
+// reads a closed month.
+export async function getAdHocIncomeForPeriod(householdId: string, periodKey: string): Promise<{
+  entries: AdHocIncomeEntry[];
+  totalCents: number;
+}> {
   // UTC bounds, not local periodBounds — occurredOn is a UTC-midnight
   // @db.Date (see getIncomeThisMonth's comment on this same distinction).
-  const { start, end } = utcPeriodBounds(currentPeriodKey());
+  const { start, end } = utcPeriodBounds(periodKey);
 
   const transactions = await db.transaction.findMany({
     where: { householdId, isIncome: true, incomeId: null, occurredOn: { gte: start, lt: end } },

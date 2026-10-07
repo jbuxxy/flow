@@ -46,7 +46,7 @@ export function BucketCard({ progress }: { progress: BucketProgress }) {
                 className="text-[11px] font-medium text-emerald-700 dark:text-emerald-400"
                 title="Auto-applied from this month's ad hoc/P2P income to cover this bucket going over its cap (Settings > Income)"
               >
-                +{formatDollars(progress.topUpCents)} from extra income
+                +{formatDollars(progress.topUpCents)} From Extra Income
               </p>
             )}
           </div>

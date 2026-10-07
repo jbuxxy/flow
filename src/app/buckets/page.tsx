@@ -13,9 +13,12 @@ import { defaultDebtPaymentBucketId } from "@/lib/debt-payments";
 import { pickableDebtWhere } from "@/lib/debt-reassign";
 import { getActiveUnlabeledP2PTransfers } from "@/lib/p2p-transfers";
 import { getIncomeSummary } from "@/lib/income";
+import { getExtraIncomeSummary } from "@/lib/bucket-ad-hoc-topup";
+import { currentPeriodKey, periodBounds } from "@/lib/period";
 import { AppShell } from "@/components/app-shell";
 import { BucketAllocationCard } from "@/components/bucket-allocation-card";
 import { BucketCard } from "@/components/bucket-card";
+import { ExtraIncomeCard } from "@/components/extra-income-card";
 import { CountWarning } from "@/components/count-warning";
 import { BnplSuggestions } from "@/app/debts/bnpl-suggestions";
 import { BillSuggestions } from "@/app/bills/bill-suggestions";
@@ -31,7 +34,7 @@ export default async function BucketsPage() {
   // before reading progress — a fast no-op once every bucket is resolved.
   await ensureBucketIcons(session.user.householdId);
 
-  const [buckets, uncategorized, debts, categories, existingBills, bnplSuggestions, merchantSuggestions, defaultBucketId, unlabeledP2PDebits, incomeSummary] = await Promise.all([
+  const [buckets, uncategorized, debts, categories, existingBills, bnplSuggestions, merchantSuggestions, defaultBucketId, unlabeledP2PDebits, incomeSummary, extraIncome, household] = await Promise.all([
     getBucketsWithProgress(session.user.householdId),
     db.transaction.findMany({
       where: uncategorizedTransactionWhere(session.user.householdId),
@@ -75,6 +78,11 @@ export default async function BucketsPage() {
     defaultDebtPaymentBucketId(session.user.householdId),
     hasFullAccess(session.user) ? getActiveUnlabeledP2PTransfers(session.user.householdId, "DEBIT") : [],
     hasFullAccess(session.user) ? getIncomeSummary(session.user.householdId) : null,
+    hasFullAccess(session.user) ? getExtraIncomeSummary(session.user.householdId, currentPeriodKey()) : null,
+    db.household.findUnique({
+      where: { id: session.user.householdId },
+      select: { autoApplyAdHocIncomeToBuckets: true },
+    }),
   ]);
   // Was prefixed with the synced account's institution to disambiguate
   // generic-sounding lender names — dropped per feedback (2026-08-18): just
@@ -85,6 +93,11 @@ export default async function BucketsPage() {
     session.user.householdId,
     uncategorized.map((t) => t.merchant),
   );
+  // Last day of the month — when whatever extra income is still waiting
+  // becomes that month's surplus (ExtraIncomeCard).
+  const { end: nextMonthStart } = periodBounds(currentPeriodKey());
+  const monthEnd = new Date(nextMonthStart.getFullYear(), nextMonthStart.getMonth(), 0);
+  const monthEndLabel = monthEnd.toLocaleDateString("en-US", { month: "short", day: "numeric" });
   return (
     <AppShell
       title="Buckets"
@@ -198,6 +211,17 @@ export default async function BucketsPage() {
             }))}
           incomeCents={incomeSummary.totalMonthlyCents}
           isEstimated={incomeSummary.isEstimated}
+        />
+      )}
+
+      {extraIncome && (
+        <ExtraIncomeCard
+          receivedCents={extraIncome.receivedCents}
+          appliedCents={extraIncome.appliedCents}
+          unappliedCents={extraIncome.unappliedCents}
+          sources={extraIncome.sources.map((src) => ({ ...src, occurredOn: src.occurredOn.toISOString().slice(0, 10) }))}
+          autoApply={household?.autoApplyAdHocIncomeToBuckets ?? false}
+          monthEndLabel={monthEndLabel}
         />
       )}
       </div>

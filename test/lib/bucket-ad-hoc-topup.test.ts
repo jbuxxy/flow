@@ -1,6 +1,6 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { allocateAdHocSurplus, trimTopUpsToCounted } from "@/lib/bucket-ad-hoc-topup";
+import { allocateAdHocSurplus, trimTopUpsToCounted, summarizeExtraIncome } from "@/lib/bucket-ad-hoc-topup";
 
 describe("allocateAdHocSurplus", () => {
   test("covers a single bucket's overage from a single source entry", () => {
@@ -104,5 +104,71 @@ describe("trimTopUpsToCounted", () => {
     const rows = [row("a", "s1", 1_000, 0), row("b", "s2", 4_000, 0)];
     const out = trimTopUpsToCounted(rows, new Map([["s1", 1_000], ["s2", 1_000]]));
     assert.deepEqual(out, { deleteIds: [], updates: [{ id: "b", amountCents: 1_000 }] });
+  });
+});
+
+describe("summarizeExtraIncome", () => {
+  const names = new Map([["b1", "Dining"], ["b2", "Fuel"]]);
+  const d = (day: number) => new Date(Date.UTC(2026, 9, day));
+
+  test("nothing applied — all of it is unapplied (month-end surplus)", () => {
+    const s = summarizeExtraIncome(
+      [{ id: "s1", name: "Side Gig", occurredOn: d(5), amountCents: 6000 }],
+      [],
+      names,
+    );
+    assert.equal(s.receivedCents, 6000);
+    assert.equal(s.appliedCents, 0);
+    assert.equal(s.unappliedCents, 6000);
+    assert.deepEqual(s.sources[0].applied, []);
+    assert.deepEqual(s.byBucket, []);
+  });
+
+  test("one source funding two buckets, a draw capped at its source, sources oldest first", () => {
+    const s = summarizeExtraIncome(
+      [
+        { id: "s2", name: "P2P Transfer", occurredOn: d(6), amountCents: 2500 },
+        { id: "s1", name: "Side Gig", occurredOn: d(5), amountCents: 6000 },
+      ],
+      [
+        { sourceTransactionId: "s1", bucketId: "b1", amountCents: 2000 },
+        { sourceTransactionId: "s1", bucketId: "b2", amountCents: 1000 },
+        { sourceTransactionId: "s1", bucketId: "b1", amountCents: 500 },
+        { sourceTransactionId: "s2", bucketId: "b2", amountCents: 3000 },
+      ],
+      names,
+    );
+    assert.deepEqual(s.sources.map((e) => e.id), ["s1", "s2"]);
+    assert.deepEqual(s.sources[0].applied, [
+      { bucketName: "Dining", amountCents: 2500 },
+      { bucketName: "Fuel", amountCents: 1000 },
+    ]);
+    assert.deepEqual(s.sources[1].applied, [{ bucketName: "Fuel", amountCents: 2500 }]);
+    assert.equal(s.appliedCents, 6000);
+    assert.equal(s.unappliedCents, 2500);
+    assert.deepEqual(s.byBucket, [
+      { name: "Fuel", amountCents: 3500 },
+      { name: "Dining", amountCents: 2500 },
+    ]);
+  });
+
+  test("a top-up whose source no longer counts as income is ignored", () => {
+    const s = summarizeExtraIncome(
+      [{ id: "s1", name: "Side Gig", occurredOn: d(5), amountCents: 6000 }],
+      [{ sourceTransactionId: "gone", bucketId: "b1", amountCents: 2000 }],
+      names,
+    );
+    assert.equal(s.appliedCents, 0);
+    assert.equal(s.unappliedCents, 6000);
+  });
+
+  test("draws never count past their source's amount", () => {
+    const s = summarizeExtraIncome(
+      [{ id: "s1", name: "Side Gig", occurredOn: d(5), amountCents: 1000 }],
+      [{ sourceTransactionId: "s1", bucketId: "b1", amountCents: 1500 }],
+      names,
+    );
+    assert.equal(s.appliedCents, 1000);
+    assert.equal(s.unappliedCents, 0);
   });
 });

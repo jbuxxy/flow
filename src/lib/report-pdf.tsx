@@ -152,6 +152,36 @@ export async function renderReportPdf(report: Report): Promise<Buffer> {
           </View>
         )}
 
+        {(findings.monthSnapshot?.extraIncome?.receivedCents ?? 0) > 0 &&
+          (() => {
+            const x = findings.monthSnapshot!.extraIncome!;
+            return (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Extra Income</Text>
+                <Text style={[styles.rationale, { marginBottom: 4 }]}>
+                  One-off and P2P money — already counted in the income total above.
+                </Text>
+                <View style={styles.row}>
+                  <Text>Received</Text>
+                  <Text>{formatCents(x.receivedCents)}</Text>
+                </View>
+                <View style={styles.row}>
+                  <Text>
+                    Covered Overspending
+                    {x.byBucket.length > 0
+                      ? ` (${x.byBucket.map((b) => `${b.name} ${formatCents(b.amountCents)}`).join(", ")})`
+                      : ""}
+                  </Text>
+                  <Text>{formatCents(x.appliedCents)}</Text>
+                </View>
+                <View style={styles.rowLast}>
+                  <Text>Added To Surplus</Text>
+                  <Text>{formatCents(x.unappliedCents)}</Text>
+                </View>
+              </View>
+            );
+          })()}
+
         {showCorrection && (
           <View style={styles.section}>
             <Text style={[styles.sectionTitle, styles.sectionTitleBad]}>Getting Back to Breakeven</Text>

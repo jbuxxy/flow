@@ -186,6 +186,7 @@ async function buildMonthlyReportContent(householdId: string, current: MonthRepo
       recurringIncomeCents: current.recurringIncomeCents,
       buckets: current.buckets.map((b) => ({ name: b.name, capCents: b.capCents, spentCents: b.spentCents })),
       oneTimePurchases: current.oneTimePurchases,
+      extraIncome: current.extraIncome,
       debt: {
         totalBalanceCents: debtAgg._sum.balanceCents ?? 0,
         totalMinimumsCents: debtAgg._sum.minPaymentCents ?? 0,
@@ -247,6 +248,7 @@ function snapshotFromMonthReport(m: MonthReport): NonNullable<ReportFindings["mo
     recurringIncomeCents: m.recurringIncomeCents,
     buckets: m.buckets.map((b) => ({ name: b.name, capCents: b.capCents, spentCents: b.spentCents })),
     oneTimePurchases: m.oneTimePurchases,
+    extraIncome: m.extraIncome,
   };
 }
 
