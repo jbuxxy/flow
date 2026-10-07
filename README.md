@@ -19,11 +19,11 @@ All screenshots are from Flow's built-in read-only example household
 
 | Buckets | Net Worth |
 | --- | --- |
-| ![Envelope-style buckets with monthly caps vs. income and the Extra Income pool](docs/screenshots/buckets.png) | ![Net worth trend chart with cash, asset, and debt breakdown](docs/screenshots/networth.png) |
+| ![Envelope-style buckets with monthly caps vs. income and pace tracking](docs/screenshots/buckets.png) | ![Net worth trend chart with cash, asset, and debt breakdown](docs/screenshots/networth.png) |
 | **Debt Payoff Calendar** | **Payoff Projection** |
 | ![Payoff calendar with the avalanche attack order, scheduled extra payments, and a BNPL installment tracker](docs/screenshots/debts-calendar.png) | ![Projected payoff chart with debt-free date and interest saved](docs/screenshots/debts-projection.png) |
 | **Monthly Report** | **Mobile** |
-| ![Monthly report: spending by bucket against budget, income in vs. out, and extra income](docs/screenshots/reports.png) | <img src="docs/screenshots/mobile-dashboard.png" alt="Mobile dashboard" width="32%"> <img src="docs/screenshots/mobile-buckets.png" alt="Mobile buckets" width="32%"> <img src="docs/screenshots/mobile-networth.png" alt="Mobile net worth" width="32%"> |
+| ![Monthly report: spending by bucket against budget and income in vs. out](docs/screenshots/reports.png) | <img src="docs/screenshots/mobile-dashboard.png" alt="Mobile dashboard" width="32%"> <img src="docs/screenshots/mobile-buckets.png" alt="Mobile buckets" width="32%"> <img src="docs/screenshots/mobile-networth.png" alt="Mobile net worth" width="32%"> |
 
 ## Features
 
