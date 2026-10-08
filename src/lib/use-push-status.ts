@@ -1,33 +1,46 @@
 "use client";
 
-import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useSyncExternalStore, type Dispatch, type SetStateAction } from "react";
 import { ensurePushSubscription } from "@/lib/push-client";
 
 export type PushStatus = "checking" | "off" | "on" | "denied" | "unsupported";
 
-// Shared detection logic — was inline in NotificationToggle, factored out
-// (2026-08-22) so NotificationPushWarning (the dashboard warning-carousel
-// card for the unsupported/denied cases) can read the same status without
-// duplicating the browser-feature-detection branching. Returns a setter too
-// since NotificationToggle still needs to update it optimistically after a
-// subscribe/unsubscribe action completes.
-export function usePushStatus(): [PushStatus, Dispatch<SetStateAction<PushStatus>>] {
-  const [status, setStatus] = useState<PushStatus>("checking");
+// One status for the whole page, not one per hook instance. Every reader —
+// NotificationToggle, the Settings card's tint + dot, ProfileMenu's avatar
+// badge, the dashboard's warning carousel — sees a flip the moment the
+// toggle makes it. Per-instance useState (the 2026-08-22 version) left the
+// badges red after turning notifications on, and a component mounted later
+// still read the stale "off" from ensurePushSubscription's cached first
+// result (household report, 2026-10-08).
+let current: PushStatus = "checking";
+const listeners = new Set<() => void>();
 
-  // setStatus only ever runs inside the .then()/.catch() callbacks below,
-  // never synchronously in the effect body — even the plain browser-support
-  // checks are deferred into the callback for this, since a bare setState
-  // call in an effect's own synchronous run is exactly the
-  // react-hooks/set-state-in-effect trap this repo's lint config catches
-  // (see WORKING_ON.md's Theme section — cost real iteration time before).
+function setShared(next: SetStateAction<PushStatus>): void {
+  const value = typeof next === "function" ? next(current) : next;
+  if (value === current) return;
+  current = value;
+  listeners.forEach((l) => l());
+}
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+// Returns a setter too since NotificationToggle updates it optimistically
+// after a subscribe/unsubscribe action completes.
+export function usePushStatus(): [PushStatus, Dispatch<SetStateAction<PushStatus>>] {
+  const status = useSyncExternalStore(subscribe, () => current, () => "checking" as const);
+
   useEffect(() => {
     // Not just a read: repairs a subscription the OS silently dropped (see
     // ensurePushSubscription). Shared across every mounted instance, so the
-    // repair runs at most once per page load.
+    // repair runs at most once per page load — and only seeds the store
+    // while it's still unresolved, so it never overwrites a newer toggle.
     ensurePushSubscription()
-      .then((result) => setStatus(result === "repaired" ? "on" : result))
-      .catch(() => setStatus("unsupported"));
+      .then((result) => setShared((s) => (s === "checking" ? (result === "repaired" ? "on" : result) : s)))
+      .catch(() => setShared((s) => (s === "checking" ? "unsupported" : s)));
   }, []);
 
-  return [status, setStatus];
+  return [status, setShared];
 }

@@ -79,8 +79,18 @@ export function useInstallStatus(): { status: InstallStatus; install: () => Prom
       setDeferredPrompt(e as BeforeInstallPromptEvent);
       setFeatureStatus("prompt-available");
     };
+    // Fires on every listening instance, so the avatar badge clears the
+    // moment the install lands — not just the card whose button was tapped.
+    const onAppInstalled = () => {
+      setDeferredPrompt(null);
+      setFeatureStatus("installed");
+    };
     window.addEventListener("beforeinstallprompt", onBeforeInstallPrompt);
-    return () => window.removeEventListener("beforeinstallprompt", onBeforeInstallPrompt);
+    window.addEventListener("appinstalled", onAppInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", onBeforeInstallPrompt);
+      window.removeEventListener("appinstalled", onAppInstalled);
+    };
   }, []);
 
   async function install() {
