@@ -49,6 +49,28 @@ describe("getCuratedDomain", () => {
   });
 });
 
+describe("getCuratedDomain — brands only the raw bank text names", () => {
+  test("Tesla Supercharger, from either the merchant or the raw text", () => {
+    assert.equal(getCuratedDomain("Supercharger"), "tesla.com");
+    assert.equal(getCuratedDomain("10/02 TESLA SUPERCHARGER US 877-7983752 CA 001301"), "tesla.com");
+  });
+
+  test("Holiday Stationstores by store number — not Holiday Inn, Holiday Oil, or a bare 'Holiday'", () => {
+    assert.equal(getCuratedDomain("10/01 HOLIDAY 72 ANYTOWN UT 001104"), "circlek.com");
+    assert.equal(getCuratedDomain("Holiday Stationstores"), "circlek.com");
+    assert.equal(getCuratedDomain("Holiday"), null);
+    assert.equal(getCuratedDomain("09/24 HOLIDAY OIL COMPANY ANYTOWN UT 024040"), null);
+    assert.equal(getCuratedDomain("Holiday Inn Express"), null);
+  });
+
+  test("Sinclair and Habit Burger", () => {
+    assert.equal(getCuratedDomain("POINT OF SALE PURCHASE USA UT ANYTOWN, ANYTOWN SINCLAIR 100 MAIN ST"), "sinclairoil.com");
+    assert.equal(getCuratedDomain("Habit"), "habitburger.com");
+    assert.equal(getCuratedDomain("The Habit Burger Grill"), "habitburger.com");
+    assert.equal(getCuratedDomain("Habitat for Humanity"), null);
+  });
+});
+
 describe("getCuratedDomains", () => {
   test("a composite retailer+provider name returns both domains", () => {
     const domains = getCuratedDomains("Nike - Klarna");

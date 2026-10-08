@@ -43,6 +43,7 @@ export default async function BucketsPage() {
       select: {
         id: true,
         merchant: true,
+        rawDescription: true,
         amountCents: true,
         occurredOn: true,
         pending: true,

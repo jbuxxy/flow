@@ -652,7 +652,13 @@ export function TransactionRow({
       >
         <p className="flex items-center justify-between gap-2">
           <span className="flex min-w-0 flex-1 items-center gap-1.5 font-medium text-neutral-900 dark:text-neutral-100">
-            <MerchantLogo merchant={logoMerchant} size={16} allowGuess={!p2pApp} />
+            <MerchantLogo
+              merchant={logoMerchant}
+              size={16}
+              allowGuess={!p2pApp}
+              // Not for a P2P transfer: its raw text carries a person's name.
+              description={p2pApp ? null : transaction.rawDescription}
+            />
             <span className="shrink-0">{displayMerchant}</span>
             {transaction.pending && <PendingIcon />}
             {transaction.hasReceipt && (

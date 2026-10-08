@@ -62,6 +62,9 @@ const MERCHANT_DOMAINS: [RegExp, string][] = [
   [/\bburger king\b/, "burgerking.com"],
   [/\bin-?n-?out\b/, "in-n-out.com"],
   [/\bfive guys\b/, "fiveguys.com"],
+  // Bare "Habit" only as the whole merchant name (the bank's own "HABIT
+  // ANYTOWN #70" cleans up to that) — never as a word inside something else.
+  [/^habit$|\bhabit burger\b|\bthe habit\b/, "habitburger.com"],
   [/\bshake shack\b/, "shakeshack.com"],
   [/\bwhataburger\b/, "whataburger.com"],
   [/\bjack in the box\b/, "jackinthebox.com"],
@@ -98,6 +101,14 @@ const MERCHANT_DOMAINS: [RegExp, string][] = [
   [/\bvalero\b/, "valero.com"],
   [/\bmarathon\b(?! health| mara)/, "marathonbrand.com"],
   [/\bcircle k\b/, "circlek.com"],
+  // Holiday Stationstores is Circle K's now (its own site serves Circle K's
+  // mark). Bank text reads "HOLIDAY 72 ANYTOWN UT" — the store number is what
+  // keeps this off "Holiday Inn" and the unrelated "Holiday Oil" chain.
+  [/\bholiday (?:stationstores?|\d+)\b/, "circlek.com"],
+  [/\bsinclair\b/, "sinclairoil.com"],
+  // "TESLA SUPERCHARGER" in the bank text, often just "Supercharger" as
+  // the merchant name.
+  [/\btesla\b|\bsupercharger\b/, "tesla.com"],
   [/\b7-?eleven\b/, "7-eleven.com"],
   [/\bwawa\b/, "wawa.com"],
   [/\bquick ?trip\b/, "quiktrip.com"],

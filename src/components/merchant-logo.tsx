@@ -76,6 +76,15 @@ interface MerchantLogoProps {
    * worse outcome than just showing nothing.
    */
   allowGuess?: boolean;
+  /**
+   * The transaction's raw bank text (Transaction.rawDescription), checked
+   * against the curated table when `merchant` alone matches nothing — the
+   * cleaned-up merchant name often drops the brand ("Supercharger" from
+   * "TESLA SUPERCHARGER") or keeps only an ambiguous word ("Holiday" from
+   * "HOLIDAY 72 ANYTOWN UT", which guessed holiday.com, an unrelated site).
+   * Curated-only: the raw text is never guessed from.
+   */
+  description?: string | null;
 }
 
 /**
@@ -83,8 +92,14 @@ interface MerchantLogoProps {
  * Hunter.io Logo API. Silently renders nothing when no logo is available or
  * the image fails to load — never throws or shows broken-image placeholders.
  */
-export function MerchantLogo({ merchant, size = 20, className = "", allowGuess = false }: MerchantLogoProps) {
-  const curatedUrl = getMerchantLogoUrl(merchant);
+export function MerchantLogo({
+  merchant,
+  size = 20,
+  className = "",
+  allowGuess = false,
+  description,
+}: MerchantLogoProps) {
+  const curatedUrl = getMerchantLogoUrl(merchant) ?? (description ? getMerchantLogoUrl(description) : null);
   const [guessedDomain, setGuessedDomain] = useState<string | null>(null);
 
   useEffect(() => {

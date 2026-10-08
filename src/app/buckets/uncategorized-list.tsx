@@ -16,6 +16,7 @@ import { CategoryPicker, type CategoryOption } from "@/app/bills/category-picker
 type UncategorizedTxn = {
   id: string;
   merchant: string;
+  rawDescription: string | null;
   amountCents: number;
   occurredOn: Date;
   pending: boolean;
@@ -199,7 +200,7 @@ function Row({
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <p className="flex items-center gap-1.5 truncate font-medium text-neutral-900 dark:text-neutral-100">
-            <MerchantLogo merchant={txn.merchant} size={16} allowGuess />
+            <MerchantLogo merchant={txn.merchant} description={txn.rawDescription} size={16} allowGuess />
             <span className="truncate">{txn.merchant}</span>
             {txn.pending && <PendingIcon />}
           </p>
