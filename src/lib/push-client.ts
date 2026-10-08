@@ -37,12 +37,59 @@ function isExpectedOn(): boolean {
   }
 }
 
+// The endpoint this device last registered — per device, like
+// EXPECTED_ON_KEY. iOS can answer pushManager.getSubscription() with null on
+// a later load while that same subscription is still live and still
+// delivering (household report, 2026-10-07: a member's switch and badge
+// always read "off", re-enabling made a fresh subscription each time — three
+// live endpoints on one phone — and a notification still arrived). Knowing
+// the endpoint lets the app ask the server instead (subscriptionIsLive), and
+// lets a new subscription replace this device's old row instead of piling up.
+const ENDPOINT_KEY = "flow-push-endpoint";
+
+function storedEndpoint(): string | null {
+  try {
+    return localStorage.getItem(ENDPOINT_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function setStoredEndpoint(endpoint: string | null): void {
+  try {
+    if (endpoint) localStorage.setItem(ENDPOINT_KEY, endpoint);
+    else localStorage.removeItem(ENDPOINT_KEY);
+  } catch {
+    // storage unavailable — falls back to the browser's own answer only
+  }
+}
+
 async function registerWithServer(subscription: PushSubscription): Promise<void> {
+  const previous = storedEndpoint();
   await fetch("/api/push/subscribe", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(subscription.toJSON()),
+    body: JSON.stringify({
+      ...subscription.toJSON(),
+      // This device's previous endpoint, retired server-side so a re-enable
+      // doesn't leave a duplicate subscription delivering twice.
+      replaces: previous && previous !== subscription.endpoint ? previous : undefined,
+    }),
   });
+  setStoredEndpoint(subscription.endpoint);
+}
+
+// Whether the server still holds this user's subscription for `endpoint` —
+// it deletes one the moment the push service reports it gone (push.ts), so
+// a row still there is a subscription still delivering.
+async function subscriptionIsLive(endpoint: string): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/push/subscribe?endpoint=${encodeURIComponent(endpoint)}`);
+    if (!res.ok) return false;
+    return ((await res.json()) as { active?: boolean }).active === true;
+  } catch {
+    return false;
+  }
 }
 
 export async function subscribeToPush(): Promise<"subscribed" | "denied" | "unsupported"> {
@@ -95,6 +142,13 @@ export function ensurePushSubscription(): Promise<EnsureResult> {
       registerWithServer(existing).catch(() => {});
       return "on";
     }
+    // iOS sometimes reports no subscription for one that's still live — trust
+    // the server's record of this device's endpoint over that.
+    const remembered = storedEndpoint();
+    if (Notification.permission === "granted" && remembered && (await subscriptionIsLive(remembered))) {
+      setExpectedOn(true);
+      return "on";
+    }
     if (Notification.permission !== "granted" || !isExpectedOn()) return "off";
 
     const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
@@ -123,17 +177,21 @@ export async function currentPushSubscription(): Promise<PushSubscription | null
 
 export async function unsubscribeFromPush(): Promise<void> {
   const subscription = await currentPushSubscription();
-  if (!subscription) return;
+  // The remembered endpoint covers a device iOS claims has no subscription
+  // while the server still delivers to it (see ENDPOINT_KEY).
+  const endpoint = subscription?.endpoint ?? storedEndpoint();
+  if (!endpoint) return;
 
   const res = await fetch("/api/push/subscribe", {
     method: "DELETE",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ endpoint: subscription.endpoint }),
+    body: JSON.stringify({ endpoint }),
   });
   // Refused (an owner locked notifications on) — keep the browser's own
   // subscription too, so the device keeps receiving.
   if (!res.ok) throw new Error("unsubscribe refused");
 
-  await subscription.unsubscribe();
+  await subscription?.unsubscribe();
+  setStoredEndpoint(null);
   setExpectedOn(false);
 }
