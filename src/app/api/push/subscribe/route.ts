@@ -14,6 +14,8 @@ const subscribeSchema = z.object({
   replaces: z.string().url().optional(),
   // Explicit "turn notifications on here" — see POST.
   exclusive: z.boolean().optional(),
+  // This browser/home-screen app's own ID (PushSubscription.deviceId).
+  deviceId: z.string().min(1).max(100).optional(),
 });
 
 export async function POST(request: Request) {
@@ -28,25 +30,35 @@ export async function POST(request: Request) {
   }
 
   const userId = session.user.id;
-  const { endpoint, keys, replaces, exclusive } = parsed.data;
+  const { endpoint, keys, replaces, exclusive, deviceId } = parsed.data;
 
-  // "Turn notifications on here": this device becomes the person's only
-  // subscription — one active at a time (household request, 2026-10-08).
+  // "Turn notifications on here": this device's subscription replaces any
+  // older one for the same device — by device ID, or by the endpoint the
+  // device remembers registering — so one phone can't stack up live
+  // endpoints, while the person's other devices stay subscribed (household
+  // request, 2026-10-08).
   if (exclusive) {
+    const sameDevice = [
+      ...(deviceId ? [{ deviceId }] : []),
+      ...(replaces && replaces !== endpoint ? [{ endpoint: replaces }] : []),
+    ];
     await db.$transaction([
       db.pushSubscription.upsert({
         where: { endpoint },
-        create: { userId, endpoint, p256dh: keys.p256dh, auth: keys.auth },
-        update: { userId, p256dh: keys.p256dh, auth: keys.auth },
+        create: { userId, endpoint, p256dh: keys.p256dh, auth: keys.auth, deviceId },
+        update: { userId, p256dh: keys.p256dh, auth: keys.auth, deviceId },
       }),
-      db.pushSubscription.deleteMany({ where: { userId, endpoint: { not: endpoint } } }),
+      ...(sameDevice.length > 0
+        ? [db.pushSubscription.deleteMany({ where: { userId, endpoint: { not: endpoint }, OR: sameDevice } })]
+        : []),
     ]);
     return NextResponse.json({ ok: true, active: true });
   }
 
   // The quiet re-send (page load / silent repair): refresh this device's row
-  // if it's still the active one — by its own endpoint, or the one it's
-  // replacing — but never create a row, so a stale browser can't take over.
+  // if the server still holds it — by its own endpoint, or the one it's
+  // replacing — but never create a row, so a stale browser can't
+  // resubscribe itself just by being opened.
   const own = await db.pushSubscription.findFirst({ where: { endpoint, userId }, select: { id: true } });
   const prior =
     own ??
@@ -57,7 +69,8 @@ export async function POST(request: Request) {
   try {
     await db.pushSubscription.update({
       where: { id: prior.id },
-      data: { endpoint, p256dh: keys.p256dh, auth: keys.auth },
+      // Also tags a row from before deviceId existed with its device.
+      data: { endpoint, p256dh: keys.p256dh, auth: keys.auth, ...(deviceId ? { deviceId } : {}) },
     });
   } catch {
     // The new endpoint is already another account's (one device, two

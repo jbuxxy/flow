@@ -1891,10 +1891,19 @@ model PushSubscription {
   endpoint String @unique
   p256dh   String
   auth     String
+  // Random per-browser/per-home-screen-app ID (push-client.ts, localStorage)
+  // — a person keeps one subscription per device. Turning notifications on
+  // replaces only that device's previous row, so a phone and a laptop both
+  // stay subscribed, but one phone can't pile up several live endpoints
+  // (household report, 2026-10-07: three on one iPhone, each notification
+  // risking a duplicate). Null on rows from before this existed until that
+  // device next opens Flow.
+  deviceId String?
 
   createdAt DateTime @default(now())
 
   @@index([userId])
+  @@index([userId, deviceId])
 }
 
 // Shared by Debt and SavingsGoal: today everything is MANUAL. SIMPLEFIN is

@@ -64,14 +64,31 @@ function setStoredEndpoint(endpoint: string | null): void {
   }
 }
 
-// One active subscription per person (household request, 2026-10-08:
-// "make it so only one is active always" — a member had three live ones on
-// one phone, the owner six across old browsers). `exclusive` is the explicit
-// "turn notifications on here" — this device becomes the person's only
-// subscription. Without it (the quiet re-send on every page load, or a
-// silent repair) the server only refreshes a row it already holds, never
-// creates one, so a stale browser can't take over just by being opened.
-// Resolves whether this device is the active one.
+// This browser/home-screen app's own random ID — the server keeps one
+// subscription per device (PushSubscription.deviceId), so a phone and a
+// laptop can both be on while one phone can't pile up several live
+// endpoints (household request, 2026-10-08). Created once, kept forever.
+const DEVICE_ID_KEY = "flow-push-device-id";
+
+function deviceId(): string | undefined {
+  try {
+    let id = localStorage.getItem(DEVICE_ID_KEY);
+    if (!id) {
+      id = crypto.randomUUID();
+      localStorage.setItem(DEVICE_ID_KEY, id);
+    }
+    return id;
+  } catch {
+    return undefined; // storage unavailable — the row just carries no device
+  }
+}
+
+// `exclusive` is the explicit "turn notifications on here": this device's
+// subscription replaces any other the server holds for the same device.
+// Without it (the quiet re-send on every page load, or a silent repair) the
+// server only refreshes a row it already holds, never creates one, so a
+// stale browser can't resubscribe itself just by being opened. Resolves
+// whether this device is subscribed server-side.
 async function registerWithServer(subscription: PushSubscription, exclusive: boolean): Promise<boolean> {
   const previous = storedEndpoint();
   const res = await fetch("/api/push/subscribe", {
@@ -80,6 +97,7 @@ async function registerWithServer(subscription: PushSubscription, exclusive: boo
     body: JSON.stringify({
       ...subscription.toJSON(),
       exclusive,
+      deviceId: deviceId(),
       // This device's previous endpoint — a silent repair (a new endpoint
       // for the same device) takes over its row.
       replaces: previous && previous !== subscription.endpoint ? previous : undefined,
@@ -150,8 +168,8 @@ export function ensurePushSubscription(): Promise<EnsureResult> {
     const existing = await currentPushSubscription();
     if (existing) {
       setExpectedOn(true);
-      // Not the person's active device (another one turned notifications on
-      // since) — reads as off here, and the switch moves them back.
+      // The server no longer holds this device's subscription (turned off,
+      // or replaced) — reads as off here, and the switch turns it back on.
       const active = await registerWithServer(existing, false).catch(() => false);
       return active ? "on" : "off";
     }
