@@ -64,19 +64,30 @@ function setStoredEndpoint(endpoint: string | null): void {
   }
 }
 
-async function registerWithServer(subscription: PushSubscription): Promise<void> {
+// One active subscription per person (household request, 2026-10-08:
+// "make it so only one is active always" — a member had three live ones on
+// one phone, the owner six across old browsers). `exclusive` is the explicit
+// "turn notifications on here" — this device becomes the person's only
+// subscription. Without it (the quiet re-send on every page load, or a
+// silent repair) the server only refreshes a row it already holds, never
+// creates one, so a stale browser can't take over just by being opened.
+// Resolves whether this device is the active one.
+async function registerWithServer(subscription: PushSubscription, exclusive: boolean): Promise<boolean> {
   const previous = storedEndpoint();
-  await fetch("/api/push/subscribe", {
+  const res = await fetch("/api/push/subscribe", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       ...subscription.toJSON(),
-      // This device's previous endpoint, retired server-side so a re-enable
-      // doesn't leave a duplicate subscription delivering twice.
+      exclusive,
+      // This device's previous endpoint — a silent repair (a new endpoint
+      // for the same device) takes over its row.
       replaces: previous && previous !== subscription.endpoint ? previous : undefined,
     }),
   });
-  setStoredEndpoint(subscription.endpoint);
+  const active = res.ok && ((await res.json()) as { active?: boolean }).active === true;
+  setStoredEndpoint(active ? subscription.endpoint : null);
+  return active;
 }
 
 // Whether the server still holds this user's subscription for `endpoint` —
@@ -109,7 +120,7 @@ export async function subscribeToPush(): Promise<"subscribed" | "denied" | "unsu
     applicationServerKey: urlBase64ToUint8Array(publicKey),
   });
 
-  await registerWithServer(subscription);
+  await registerWithServer(subscription, true);
   setExpectedOn(true);
 
   return "subscribed";
@@ -139,8 +150,10 @@ export function ensurePushSubscription(): Promise<EnsureResult> {
     const existing = await currentPushSubscription();
     if (existing) {
       setExpectedOn(true);
-      registerWithServer(existing).catch(() => {});
-      return "on";
+      // Not the person's active device (another one turned notifications on
+      // since) — reads as off here, and the switch moves them back.
+      const active = await registerWithServer(existing, false).catch(() => false);
+      return active ? "on" : "off";
     }
     // iOS sometimes reports no subscription for one that's still live — trust
     // the server's record of this device's endpoint over that.
@@ -159,7 +172,10 @@ export function ensurePushSubscription(): Promise<EnsureResult> {
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(publicKey),
       });
-      await registerWithServer(subscription);
+      if (!(await registerWithServer(subscription, false))) {
+        await subscription.unsubscribe().catch(() => {});
+        return "off";
+      }
       showToast("Notifications Reconnected");
       return "repaired";
     } catch {

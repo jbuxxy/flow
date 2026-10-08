@@ -10,8 +10,10 @@ const subscribeSchema = z.object({
     auth: z.string().min(1),
   }),
   // This device's previous endpoint (push-client.ts's registerWithServer) —
-  // retired so a re-enable replaces the old row rather than duplicating it.
+  // a silent repair's new endpoint takes over that row.
   replaces: z.string().url().optional(),
+  // Explicit "turn notifications on here" — see POST.
+  exclusive: z.boolean().optional(),
 });
 
 export async function POST(request: Request) {
@@ -25,28 +27,44 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid subscription" }, { status: 400 });
   }
 
-  await db.pushSubscription.upsert({
-    where: { endpoint: parsed.data.endpoint },
-    create: {
-      userId: session.user.id,
-      endpoint: parsed.data.endpoint,
-      p256dh: parsed.data.keys.p256dh,
-      auth: parsed.data.keys.auth,
-    },
-    update: {
-      userId: session.user.id,
-      p256dh: parsed.data.keys.p256dh,
-      auth: parsed.data.keys.auth,
-    },
-  });
+  const userId = session.user.id;
+  const { endpoint, keys, replaces, exclusive } = parsed.data;
 
-  if (parsed.data.replaces && parsed.data.replaces !== parsed.data.endpoint) {
-    await db.pushSubscription
-      .deleteMany({ where: { endpoint: parsed.data.replaces, userId: session.user.id } })
-      .catch(() => {});
+  // "Turn notifications on here": this device becomes the person's only
+  // subscription — one active at a time (household request, 2026-10-08).
+  if (exclusive) {
+    await db.$transaction([
+      db.pushSubscription.upsert({
+        where: { endpoint },
+        create: { userId, endpoint, p256dh: keys.p256dh, auth: keys.auth },
+        update: { userId, p256dh: keys.p256dh, auth: keys.auth },
+      }),
+      db.pushSubscription.deleteMany({ where: { userId, endpoint: { not: endpoint } } }),
+    ]);
+    return NextResponse.json({ ok: true, active: true });
   }
 
-  return NextResponse.json({ ok: true });
+  // The quiet re-send (page load / silent repair): refresh this device's row
+  // if it's still the active one — by its own endpoint, or the one it's
+  // replacing — but never create a row, so a stale browser can't take over.
+  const own = await db.pushSubscription.findFirst({ where: { endpoint, userId }, select: { id: true } });
+  const prior =
+    own ??
+    (replaces && replaces !== endpoint
+      ? await db.pushSubscription.findFirst({ where: { endpoint: replaces, userId }, select: { id: true } })
+      : null);
+  if (!prior) return NextResponse.json({ ok: true, active: false });
+  try {
+    await db.pushSubscription.update({
+      where: { id: prior.id },
+      data: { endpoint, p256dh: keys.p256dh, auth: keys.auth },
+    });
+  } catch {
+    // The new endpoint is already another account's (one device, two
+    // logins) — that's the explicit-enable path's call to make, not this one.
+    return NextResponse.json({ ok: true, active: false });
+  }
+  return NextResponse.json({ ok: true, active: true });
 }
 
 // Whether this user still has a subscription row for `endpoint` — the
