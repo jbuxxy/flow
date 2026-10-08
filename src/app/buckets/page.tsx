@@ -127,11 +127,12 @@ export default async function BucketsPage() {
         </div>
       }
     >
-      {/* Attention / nudge band — a single centered column even on a wide
-          screen (same treatment as the dashboard alert stack and /debts);
-          UncategorizedList has inline-expanding rows so it can't be a rail or
-          a grid cell. The bucket grid below is the page's real wide canvas. */}
-      <div className="flex flex-col gap-6 empty:hidden lg:mx-auto lg:max-w-3xl">
+      {/* Attention / nudge band — a single full-width column above the
+          bucket grid. UncategorizedList has inline-expanding rows so it can't
+          be a rail or a grid cell; it was capped to a centered max-w-3xl
+          until the household asked for it to span the grid's full width
+          (2026-10-08) — a narrow strip over a 3-col grid looked orphaned. */}
+      <div className="flex flex-col gap-6 empty:hidden">
       {hasFullAccess(session.user) && bnplSuggestions.length > 0 && (
         <BnplSuggestions
           suggestions={bnplSuggestions.map((s) => ({
