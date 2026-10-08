@@ -1886,10 +1886,17 @@ export async function syncHousehold(householdId: string): Promise<SyncResult> {
 
   const accessUrl = decrypt(connection.accessUrlEncrypted);
 
-  // 3-day overlap on repeat syncs so a pending transaction that later posts
-  // (and can change ID/amount) is never missed; 90 days back on first sync.
+  // Overlap on repeat syncs so a pending transaction that later posts (and
+  // can change ID/amount) is never missed; 90 days back on first sync.
+  // SimpleFIN's start-date filters on the *posted* date, and some issuers
+  // add a transaction to the feed days after the date they post it under —
+  // real report, 2026-10-08: Synchrony (Sam's Club Card) surfaced a 10/4
+  // return and three September payments only after they'd aged out of the
+  // old 3-day window, so they never imported while the balance (which
+  // counted them) did. 14 days covers that lag; re-upserting rows already
+  // on file is idempotent.
   const startDate = connection.lastSyncedAt
-    ? new Date(connection.lastSyncedAt.getTime() - 3 * 24 * 60 * 60 * 1000)
+    ? new Date(connection.lastSyncedAt.getTime() - 14 * 24 * 60 * 60 * 1000)
     : new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
 
   let accountsSynced = 0;
@@ -1908,7 +1915,7 @@ export async function syncHousehold(householdId: string): Promise<SyncResult> {
     // (SimpleFIN re-issuing a fresh simpleFinAccountId for an existing real
     // card/bank — real report, 2026-09-14: Sam's Club Card switching to
     // route through Synchrony) would otherwise only ever get the same
-    // narrow 3-day rolling window as every other account, silently missing
+    // narrow 14-day rolling window as every other account, silently missing
     // whatever posted between the reissue and this sync. Detected by
     // comparing against what's already on file, then backfilled with its
     // own 90-day fetch scoped to just those ids — transaction upserts are
