@@ -14,6 +14,7 @@ import { unlabeledP2PWhere } from "@/lib/p2p-transfers";
 import { getUnmatchedRefunds } from "@/lib/refund-match";
 import { sendPushToHouseholdForType, sendPushToBucketForType } from "@/lib/push";
 import { formatCents } from "@/lib/money";
+import { whenSyncsIdle } from "@/lib/sync-in-flight";
 
 // The only scheduling mechanism in this app — see src/instrumentation.ts,
 // which calls this on a timer the same way it already polls SimpleFIN.
@@ -21,6 +22,9 @@ import { formatCents } from "@/lib/money";
 export async function runScheduledNotificationChecks(): Promise<void> {
   await checkMonthRolloverForAllHouseholds();
   await checkWeeklyBucketDigests();
+  // The nudges read queues a sync is mid-way through filling (a refund
+  // imported but not yet linked by its receipt) — wait for it to finish.
+  await whenSyncsIdle();
   await checkNudgeAlerts();
 }
 

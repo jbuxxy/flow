@@ -9,6 +9,7 @@ import { autoApplyAdHocIncomeToBuckets } from "@/lib/bucket-ad-hoc-topup";
 import { checkAndSendBucketAlerts } from "@/lib/buckets";
 import { suggestBucketsForMerchants, suggestCategoriesForMerchants, suggestP2PClassifications } from "@/lib/ai";
 import { pollHouseholdEmails, matchReceipts, purgeStaleReceipts } from "@/lib/receipt-sync";
+import { trackSync } from "@/lib/sync-in-flight";
 import { matchBillNoticeAmounts, purgeStaleBillNotices } from "@/lib/bill-notice-sync";
 import { reclassifyFromReceipts } from "@/lib/receipt-reclassify";
 import { upsertMerchantRule, pickMerchantRule } from "@/lib/merchant-rules";
@@ -1876,7 +1877,12 @@ async function runP2PAiSuggestions(
 
 export type SyncResult = { accountsSynced: number; transactionsSynced: number };
 
-export async function syncHousehold(householdId: string): Promise<SyncResult> {
+export function syncHousehold(householdId: string): Promise<SyncResult> {
+  // Tracked so the scheduled nudge checks wait for it (see sync-in-flight.ts).
+  return trackSync(runHouseholdSync(householdId));
+}
+
+async function runHouseholdSync(householdId: string): Promise<SyncResult> {
   // The demo household's SimpleFIN demo-server connection is frozen after the
   // one-time seed — never re-pull (would drift the curated example, and with
   // no AI key every new transaction piles up as "Needs a Bucket").
