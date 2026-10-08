@@ -23,7 +23,7 @@ import { DebtRow, type CycleMinimum, type CycleExtra } from "./debt-row";
 import { coveredMinimumDates, ledgerMinimumCents } from "@/lib/minimum-ledger";
 import { PayoffCycleCard } from "./payoff-cycle-card";
 import { CycleCalendarView, type CalendarDayEvent } from "./cycle-calendar-view";
-import { PayoffProjectionChart } from "@/components/payoff-projection-chart";
+import { PayoffProjectionChart, PayoffProjectionSparkline } from "@/components/payoff-projection-chart";
 import { useCollapsedState } from "@/components/collapsible-warning-card";
 import { SelectField } from "@/components/select-field";
 import { Switch } from "@/components/switch";
@@ -1446,8 +1446,15 @@ export function PayoffPlanner({
             {projectedPayoffCollapsed ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
           </button>
 
+          {/* Collapsed on desktop: stats stack in one column on the left and
+              a Total-only sparkline fills the rest of the full-width card
+              (clicking it expands the card). The sparkline stays mounted
+              while expanded (just `hidden`) so its rise animation plays once
+              per page load, not on every collapse. Mobile is unchanged. */}
+          <div className={projectedPayoffCollapsed ? "lg:flex lg:items-center lg:gap-8" : undefined}>
+          <div className={projectedPayoffCollapsed ? "lg:w-64 lg:shrink-0" : undefined}>
           {result.debtFreeDate ? (
-            <div className="grid grid-cols-2 gap-3 text-sm">
+            <div className={`grid grid-cols-2 gap-3 text-sm ${projectedPayoffCollapsed ? "lg:grid-cols-1" : ""}`}>
               <div>
                 <p className="text-gray-500 dark:text-neutral-400">Debt-Free</p>
                 <p className="font-medium">
@@ -1460,7 +1467,7 @@ export function PayoffPlanner({
                 <p className="font-medium">{formatCents(result.totalInterestPaidCents)}</p>
               </div>
               {interestSavedCents > 0 && (
-                <div className="col-span-2">
+                <div className={`col-span-2 ${projectedPayoffCollapsed ? "lg:col-span-1" : ""}`}>
                   <p className="text-gray-500 dark:text-neutral-400">Interest Saved vs. Minimums Only</p>
                   <p className="font-medium text-emerald-700 dark:text-emerald-400">{formatCents(interestSavedCents)}</p>
                 </div>
@@ -1469,6 +1476,17 @@ export function PayoffPlanner({
           ) : (
             <p className="text-sm text-red-600 dark:text-red-400">Not projected to pay off within 50 years at this rate.</p>
           )}
+          </div>
+          <button
+            type="button"
+            onClick={() => setProjectedPayoffCollapsed(false)}
+            aria-label="Show Projected Payoff Chart"
+            title="Show Projected Payoff Chart"
+            className={projectedPayoffCollapsed ? "hidden lg:block lg:min-w-0 lg:flex-1" : "hidden"}
+          >
+            <PayoffProjectionSparkline timeline={result.timeline} startDate={thisMonthDate} />
+          </button>
+          </div>
 
           {!projectedPayoffCollapsed && (
             <>

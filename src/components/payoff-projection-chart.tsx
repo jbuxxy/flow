@@ -37,6 +37,87 @@ function niceTicks(min: number, max: number, count = 4): number[] {
 
 const TOTAL_ID = "__total";
 
+// Sample down to at most ~60 points — a 50-year monthly timeline is
+// hundreds of entries, far more resolution than an SVG this size can
+// usefully render, and a debt that pays off in year 2 doesn't need every
+// one of the remaining 48 flat-zero years plotted.
+function samplePoints(timeline: PayoffResult["timeline"]) {
+  const lastMonthWithBalance = timeline.reduce(
+    (last, p, i) => (p.totalRemainingCents > 0 ? i : last),
+    0,
+  );
+  const trimmed = timeline.slice(0, Math.min(timeline.length, lastMonthWithBalance + 2));
+  const stride = Math.max(1, Math.ceil(trimmed.length / 60));
+  return trimmed.filter((_, i) => i % stride === 0 || i === trimmed.length - 1);
+}
+
+// `timeline[i].month` is 1-indexed from simulatePayoff's tick loop, where
+// tick 1 represents startDate's own calendar month (not one month later —
+// see the matching `month - 1` in simulatePayoff's own date math), so the
+// mapping back to a real date needs the same -1.
+function timelineMonthDate(startDate: Date, month: number) {
+  // Snap to the 1st (UTC) before shifting — a late-in-month startDate
+  // (day 29–31) otherwise overflows a shorter target month and mislabels
+  // the axis by a month. Only month/year is read off this.
+  return new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth() + month - 1, 1));
+}
+
+const SPARK_W = 400;
+const SPARK_H = 80;
+
+// The collapsed Projected Payoff card's desktop preview: just the dashed
+// Total line (plus a faint fill) falling to $0, no axes — 13 per-debt lines
+// at this size are a tangle, and the one line answers "what's the path to
+// debt-free" at a glance. Start/end labelled underneath in HTML (the SVG is
+// preserveAspectRatio="none" so it stretches to the card, which would
+// distort SVG text). Same sampling + month mapping as the full chart.
+export function PayoffProjectionSparkline({
+  timeline,
+  startDate,
+}: {
+  timeline: PayoffResult["timeline"];
+  startDate: Date;
+}) {
+  const points = samplePoints(timeline);
+  if (points.length < 2) return null;
+
+  const yMax = Math.max(...points.map((p) => p.totalRemainingCents), 1);
+  const pad = 3; // keep the stroke off the top/bottom edge
+  const x = (i: number) => (i / (points.length - 1)) * SPARK_W;
+  const y = (cents: number) => pad + (SPARK_H - 2 * pad) * (1 - cents / yMax);
+  const line = points.map((p, i) => `${i === 0 ? "M" : "L"}${x(i)},${y(p.totalRemainingCents)}`).join(" ");
+  const area = `${line} L${SPARK_W},${SPARK_H} L0,${SPARK_H} Z`;
+
+  const first = points[0];
+  const last = points[points.length - 1];
+  const label = (p: (typeof points)[number]) =>
+    `${formatCompact(p.totalRemainingCents)} · ${formatDate(timelineMonthDate(startDate, p.month), { month: "short", year: "2-digit" })}`;
+
+  return (
+    <div className="flex flex-col gap-1">
+      <svg viewBox={`0 0 ${SPARK_W} ${SPARK_H}`} preserveAspectRatio="none" className="block h-20 w-full">
+        <ChartRiseReveal width={SPARK_W} height={SPARK_H}>
+          <path d={area} className="fill-neutral-900/5 dark:fill-neutral-100/10" />
+          <path
+            d={line}
+            fill="none"
+            className={TOTAL_COLOR.stroke}
+            strokeWidth={2}
+            strokeDasharray="5 3"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            vectorEffect="non-scaling-stroke"
+          />
+        </ChartRiseReveal>
+      </svg>
+      <div className="flex justify-between text-[11px] text-gray-500 dark:text-neutral-400">
+        <span>{label(first)}</span>
+        <span>{label(last)}</span>
+      </div>
+    </div>
+  );
+}
+
 // Projected per-debt remaining balance over the life of the plan, plus a
 // combined total line — the household's own multi-year "what does this look
 // like" view, built from simulatePayoff's timeline (see debt-payoff.ts).
@@ -55,29 +136,8 @@ export function PayoffProjectionChart({
   timeline: PayoffResult["timeline"];
   startDate: Date;
 }) {
-  // Sample down to at most ~60 points — a 50-year monthly timeline is
-  // hundreds of entries, far more resolution than an SVG this size can
-  // usefully render, and a debt that pays off in year 2 doesn't need every
-  // one of the remaining 48 flat-zero years plotted.
-  const lastMonthWithBalance = timeline.reduce(
-    (last, p, i) => (p.totalRemainingCents > 0 ? i : last),
-    0,
-  );
-  const trimmed = timeline.slice(0, Math.min(timeline.length, lastMonthWithBalance + 2));
-  const stride = Math.max(1, Math.ceil(trimmed.length / 60));
-  const points = trimmed.filter((_, i) => i % stride === 0 || i === trimmed.length - 1);
-
-  // `timeline[i].month` is 1-indexed from simulatePayoff's tick loop, where
-  // tick 1 represents startDate's own calendar month (not one month later —
-  // see the matching `month - 1` in simulatePayoff's own date math), so the
-  // mapping back to a real date needs the same -1.
-  const monthDate = (month: number) => {
-    // Snap to the 1st (UTC) before shifting — a late-in-month startDate
-    // (day 29–31) otherwise overflows a shorter target month and mislabels
-    // the axis by a month. Only month/year is read off this.
-    const d = new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth() + month - 1, 1));
-    return d;
-  };
+  const points = samplePoints(timeline);
+  const monthDate = (month: number) => timelineMonthDate(startDate, month);
 
   const xMax = Math.max(points.length - 1, 1);
   const allValues = points.flatMap((p) => [p.totalRemainingCents, ...debts.map((d) => p.perDebtRemainingCents[d.id] ?? 0)]);
