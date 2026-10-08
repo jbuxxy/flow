@@ -133,7 +133,7 @@ export function PayoffProjectionChart({
         <svg
           ref={svgRef}
           viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-          className="w-full touch-none select-none"
+          className="block w-full touch-none select-none"
           {...pointerHandlers}
         >
           {ticks.map((t) => (
@@ -234,9 +234,14 @@ export function PayoffProjectionChart({
         )}
       </div>
 
-      <div key="table" className="flex flex-col gap-1">
-        <p className="px-1 text-[11px] text-gray-500 dark:text-neutral-400">Remaining balance by month</p>
-        <div className="max-h-48 overflow-y-auto overflow-x-auto rounded-lg border border-blue-100 dark:border-neutral-800">
+      {/* Locked to the chart's own aspect ratio so both slides are exactly
+          the same height at every width — SwipeCarousel sizes its viewport to
+          the active slide, and a fixed max-h table made the card jump on
+          every swipe (household request, 2026-10-08). The table scrolls
+          inside whatever height that leaves. */}
+      <div key="table" className="flex flex-col gap-1" style={{ aspectRatio: `${WIDTH} / ${HEIGHT}` }}>
+        <p className="px-1 text-[11px] text-gray-500 dark:text-neutral-400">Remaining Balance By Month</p>
+        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-auto rounded-lg border border-blue-100 dark:border-neutral-800">
           <table className="w-full text-xs">
             <thead className="sticky top-0 z-10 bg-white dark:bg-neutral-900">
               <tr className="border-b border-blue-100 dark:border-neutral-800">
