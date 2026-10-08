@@ -46,7 +46,7 @@ export function ExtraIncomeCard({
         aria-expanded={expanded}
         className="flex w-full items-start justify-between gap-3 text-left"
       >
-        <div>
+        <div className="shrink-0">
           <h2 className="text-base font-semibold text-emerald-700 dark:text-emerald-400">Extra Income This Month</h2>
           <p className="mt-1 text-2xl font-semibold text-blue-900 dark:text-blue-300">
             {formatCents(receivedCents)}{" "}
@@ -58,6 +58,21 @@ export function ExtraIncomeCard({
             <span className="font-medium text-blue-800 dark:text-blue-300">{formatCents(unappliedCents)} Waiting</span>
           </p>
         </div>
+        {/* Desktop-only collapsed split bar — Applied vs. Waiting out of
+            what was received, filling the row's empty right side instead of
+            leaving the headline alone against the chevron. */}
+        {!expanded && (
+          <div className="hidden lg:ml-auto lg:block lg:max-w-md lg:flex-1 lg:self-center">
+            <div className="flex h-2 w-full overflow-hidden rounded-full bg-blue-50 dark:bg-neutral-800">
+              <div className="h-full bg-emerald-500" style={{ width: `${(appliedCents / receivedCents) * 100}%` }} />
+              <div className="h-full bg-blue-500" style={{ width: `${(unappliedCents / receivedCents) * 100}%` }} />
+            </div>
+            <div className="mt-1.5 flex justify-between text-[11px]">
+              <span className="text-emerald-700 dark:text-emerald-400">{formatCents(appliedCents)} Applied</span>
+              <span className="text-blue-800 dark:text-blue-300">{formatCents(unappliedCents)} Waiting</span>
+            </div>
+          </div>
+        )}
         <ChevronDown
           size={18}
           className={`mt-1 shrink-0 text-neutral-400 dark:text-neutral-500 transition-transform ${
@@ -81,7 +96,7 @@ export function ExtraIncomeCard({
       </p>
 
       {expanded && (
-        <ul className="mt-3 flex flex-col gap-2 border-t border-blue-100 dark:border-neutral-800 pt-3">
+        <ul className="mt-3 flex flex-col gap-2 border-t lg:grid lg:grid-cols-2 lg:gap-x-8 xl:grid-cols-3 border-blue-100 dark:border-neutral-800 pt-3">
           {sources.map((s) => (
             <li key={s.id} className="text-sm">
               <div className="flex items-center justify-between gap-2">

@@ -70,7 +70,7 @@ export function CollapsibleWarningCard({
         };
 
   return (
-    <div className={`rounded-xl border ${palette.border} ${palette.bg} p-4`}>
+    <div className={`@container rounded-xl border ${palette.border} ${palette.bg} p-4`}>
       <button
         type="button"
         onClick={toggle}

@@ -1454,7 +1454,7 @@ export function PayoffPlanner({
           <div className={projectedPayoffCollapsed ? "lg:flex lg:items-center lg:gap-8" : undefined}>
           <div className={projectedPayoffCollapsed ? "lg:w-64 lg:shrink-0" : undefined}>
           {result.debtFreeDate ? (
-            <div className={`grid grid-cols-2 gap-3 text-sm ${projectedPayoffCollapsed ? "lg:grid-cols-1" : ""}`}>
+            <div className={`grid grid-cols-2 gap-3 text-sm ${projectedPayoffCollapsed ? "lg:grid-cols-1" : "lg:grid-cols-3"}`}>
               <div>
                 <p className="text-gray-500 dark:text-neutral-400">Debt-Free</p>
                 <p className="font-medium">
@@ -1467,7 +1467,7 @@ export function PayoffPlanner({
                 <p className="font-medium">{formatCents(result.totalInterestPaidCents)}</p>
               </div>
               {interestSavedCents > 0 && (
-                <div className={`col-span-2 ${projectedPayoffCollapsed ? "lg:col-span-1" : ""}`}>
+                <div className="col-span-2 lg:col-span-1">
                   <p className="text-gray-500 dark:text-neutral-400">Interest Saved vs. Minimums Only</p>
                   <p className="font-medium text-emerald-700 dark:text-emerald-400">{formatCents(interestSavedCents)}</p>
                 </div>

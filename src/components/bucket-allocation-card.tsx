@@ -47,11 +47,12 @@ export function BucketAllocationCard({
 }) {
   const [expanded, setExpanded] = useStoredBoolean(STORAGE_KEY, false);
   const [grown, setGrown] = useState(false);
+  // Grow on mount, not on first expand — the collapsed desktop mini bar
+  // uses the same widths, so it needs them while collapsed too.
   useEffect(() => {
-    if (!expanded) return;
     const raf = requestAnimationFrame(() => setGrown(true));
     return () => cancelAnimationFrame(raf);
-  }, [expanded]);
+  }, []);
 
   const totalAllocatedCents = buckets.reduce((sum, b) => sum + b.monthlyCapCents, 0);
   const remainingCents = incomeCents - totalAllocatedCents;
@@ -87,7 +88,7 @@ export function BucketAllocationCard({
         aria-expanded={expanded}
         className={`flex w-full items-start justify-between gap-3 text-left ${!expanded ? "lg:items-center" : ""}`}
       >
-        <div className={!expanded ? "lg:flex lg:flex-wrap lg:items-baseline lg:gap-x-2.5" : ""}>
+        <div className={!expanded ? "lg:flex lg:shrink-0 lg:flex-wrap lg:items-baseline lg:gap-x-2.5" : ""}>
           <h2
             className={`text-base font-semibold text-emerald-700 dark:text-emerald-400 ${
               !expanded ? "lg:text-sm" : ""
@@ -120,6 +121,28 @@ export function BucketAllocationCard({
             </p>
           )}
         </div>
+
+        {/* Desktop-only collapsed mini bar — the same per-bucket segments as
+            the expanded stacked bar, no legend, filling the gap between the
+            headline and the summary (same "small picture of the expanded
+            view" idea as /debts' Projected Payoff sparkline). */}
+        {!expanded && (
+          <div className="hidden lg:block lg:min-w-0 lg:flex-1 lg:px-2">
+            <div className="flex h-2 w-full overflow-hidden rounded-full bg-blue-50 dark:bg-neutral-800">
+              {segments.map((s, i) => (
+                <div
+                  key={s.id}
+                  title={`${s.name}: ${formatDollars(s.monthlyCapCents)}`}
+                  className={`${s.color} h-full`}
+                  style={{
+                    width: grown ? `${s.widthPct}%` : "0%",
+                    transition: `width 600ms ease-out ${i * 40}ms`,
+                  }}
+                />
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Desktop-only collapsed summary — spreads the headline numbers
             across the row instead of leaving a gap before the chevron
@@ -198,7 +221,10 @@ export function BucketAllocationCard({
             </div>
           </div>
 
-          {/* Headline stats */}
+          {/* Headline stats + allocation by type — stacked on mobile, side
+              by side on desktop instead of each stretched across the full
+              card width. */}
+          <div className="flex flex-col gap-4 lg:grid lg:grid-cols-2 lg:items-center lg:gap-6">
           <div className="grid grid-cols-3 gap-2">
             <Stat value={`${pctOfIncomeAllocated}%`} label="Of Income Allocated" />
             <Stat value={String(buckets.length)} label={buckets.length === 1 ? "Bucket" : "Buckets"} />
@@ -226,6 +252,7 @@ export function BucketAllocationCard({
                 Flexible Spend {formatDollars(flexibleCents)}
               </span>
             </div>
+          </div>
           </div>
         </div>
       )}

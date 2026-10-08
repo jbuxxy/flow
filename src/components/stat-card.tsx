@@ -20,6 +20,7 @@ export function StatCard({
   value,
   valueClassName = "text-blue-900 dark:text-blue-300",
   caption,
+  aside,
   children,
 }: {
   label: ReactNode;
@@ -28,16 +29,33 @@ export function StatCard({
   value: ReactNode;
   valueClassName?: string;
   caption?: ReactNode;
+  // Optional right-hand side of the label/value/caption block — e.g.
+  // /networth's Cash/Assets/Debts trio on desktop, so the headline row isn't
+  // a big number alone on a full-width card. Omitted = the original markup.
+  aside?: ReactNode;
   children?: ReactNode;
 }) {
-  return (
-    <div className="rounded-2xl border border-blue-100 dark:border-neutral-800 p-4">
+  const headline = (
+    <>
       <h2 className={`flex items-center gap-1.5 text-sm font-semibold ${labelClassName}`}>
         {label}
         {labelExtra}
       </h2>
       <p className={`mt-1 text-2xl font-semibold ${valueClassName}`}>{value}</p>
       {caption}
+    </>
+  );
+
+  return (
+    <div className="rounded-2xl border border-blue-100 dark:border-neutral-800 p-4">
+      {aside ? (
+        <div className="flex items-start justify-between gap-6">
+          <div className="min-w-0">{headline}</div>
+          {aside}
+        </div>
+      ) : (
+        headline
+      )}
       {children}
     </div>
   );

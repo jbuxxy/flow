@@ -48,8 +48,13 @@ export function CountWarning({
 
   return (
     <CollapsibleWarningCard storageKey={storageKey} color="yellow" title={title} collapsed={collapsed} onToggle={onToggle}>
+      {/* Subtitle and actions share one row once the card is wide (a
+          full-width /buckets instance) — stacked, the actions sat alone on a
+          second row under one short line. A container query, not `lg:`, so
+          the narrow 3-up dashboard grid cells keep the stacked layout. */}
+      <div className="@xl:flex @xl:items-center @xl:justify-between @xl:gap-6">
       <p className="mt-1 text-xs text-neutral-900 dark:text-white">{subtitle}</p>
-      <div className="mt-3 flex items-center justify-end gap-4">
+      <div className="mt-3 flex shrink-0 items-center justify-end gap-4 @xl:mt-1">
         <Link href={href} className="text-xs font-medium text-yellow-800 dark:text-yellow-300 underline underline-offset-2">
           {linkLabel}
         </Link>
@@ -72,6 +77,7 @@ export function CountWarning({
         >
           <X size={14} />
         </button>
+      </div>
       </div>
     </CollapsibleWarningCard>
   );

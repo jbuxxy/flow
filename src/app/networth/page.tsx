@@ -186,6 +186,25 @@ export default async function NetWorthPage({
         labelClassName="text-emerald-700 dark:text-emerald-400"
         value={formatCents(netWorthCents)}
         valueClassName={netWorthCents < 0 ? "text-red-600 dark:text-red-400" : "text-blue-900 dark:text-blue-300"}
+        aside={
+          // Desktop: the trio sits up in the headline row (right side of the
+          // big number) instead of a small centered strip under the chart;
+          // the under-chart copy below is lg:hidden.
+          <div className="hidden lg:grid lg:shrink-0 lg:grid-cols-3 lg:gap-8 lg:text-right lg:text-sm">
+            <div>
+              <p className="text-gray-500 dark:text-neutral-400">Cash</p>
+              <p className="font-medium text-blue-900 dark:text-blue-300">{formatCents(liquidCashCents)}</p>
+            </div>
+            <div>
+              <p className="text-gray-500 dark:text-neutral-400">Assets</p>
+              <p className="font-medium text-emerald-700 dark:text-emerald-400">{formatCents(totalAssetsCents)}</p>
+            </div>
+            <div>
+              <p className="text-gray-500 dark:text-neutral-400">Debts</p>
+              <p className="font-medium text-red-600 dark:text-red-400">{formatCents(totalDebtsCents)}</p>
+            </div>
+          </div>
+        }
         caption={
           trend && (
             <p
@@ -222,7 +241,7 @@ export default async function NetWorthPage({
             StatCard's own comment), Debts red (subtracts from net worth,
             same red every other negative/over-budget figure in the app
             uses, e.g. CollapsibleGroup's totalCents < 0 case). */}
-        <div className="mx-auto mt-3 grid max-w-md grid-cols-3 gap-3 text-center text-sm">
+        <div className="mx-auto mt-3 grid max-w-md grid-cols-3 gap-3 text-center text-sm lg:hidden">
           <div>
             <p className="text-gray-500 dark:text-neutral-400">Cash</p>
             <p className="font-medium text-blue-900 dark:text-blue-300">{formatCents(liquidCashCents)}</p>
