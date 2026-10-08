@@ -5,6 +5,7 @@ import {
   amountToleranceCents,
   extraChargeToleranceCents,
   isBillCycleSkipActive,
+  skipShownOnBillRow,
   nextBillDueDate,
   subtractCadence,
 } from "@/lib/recurring-bills";
@@ -96,4 +97,17 @@ describe("isBillCycleSkipActive", () => {
 
 test("MATCH_WINDOW_DAYS stays well under half a week", () => {
   assert.ok(MATCH_WINDOW_DAYS < 3.5);
+});
+
+describe("skipShownOnBillRow", () => {
+  test("last month's skip stops standing in for this month's due line", () => {
+    // Lakeside Gas: skipped Sep 9 (still active — nextDueDate is Oct 9), but in
+    // October the row has to show the Oct 9 bill, not "Skipped Sep 09".
+    assert.equal(skipShownOnBillRow(utc(2026, 9, 9), utc(2026, 10, 1)), null);
+    // Same skip, still September: shown.
+    assert.deepEqual(skipShownOnBillRow(utc(2026, 9, 9), utc(2026, 9, 1)), utc(2026, 9, 9));
+    // A cycle skipped early (October's, skipped in late September) shows.
+    assert.deepEqual(skipShownOnBillRow(utc(2026, 10, 2), utc(2026, 9, 1)), utc(2026, 10, 2));
+    assert.equal(skipShownOnBillRow(undefined, utc(2026, 10, 1)), null);
+  });
 });

@@ -3,7 +3,7 @@ import { PAYMENT_RECEIPT_SELECT, paymentReceiptOf } from "@/lib/payment-receipt"
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getBucketsWithProgress } from "@/lib/buckets";
-import { currentPeriodBillWhere, getActiveBillCycleSkips } from "@/lib/recurring-bills";
+import { currentPeriodBillWhere, getActiveBillCycleSkips, skipShownOnBillRow } from "@/lib/recurring-bills";
 import {
   spendEntriesFrom,
   spendMerchantKey,
@@ -452,7 +452,7 @@ export default async function BucketDetailPage({
       payments: paymentsAbs.map(toDisplay),
       cyclePaid,
       currentCyclePayments: currentCyclePayments.map(toDisplay),
-      skippedCycleDueDate: activeBillSkips.get(b.id)?.toISOString().slice(0, 10) ?? null,
+      skippedCycleDueDate: skipShownOnBillRow(activeBillSkips.get(b.id), start)?.toISOString().slice(0, 10) ?? null,
       reimbursementPatterns: b.reimbursementPatterns.map((p) => ({
         id: p.id,
         label: p.label,

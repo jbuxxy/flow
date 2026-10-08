@@ -17,7 +17,12 @@ import { ACCOUNTED_FOR_SELECT, accountedForCents, accountedForDisplayList } from
 import { confirmProjectedExtras } from "@/lib/debt-payoff";
 import { currentPeriodKey, utcPeriodBounds } from "@/lib/period";
 import { splitPlanExtraPayments, buildCycleSlots, slotBounds, cyclePaymentStatus } from "@/lib/cycle-slots";
-import { currentPeriodBillWhere, getActiveBillCycleSkips, getPendingBillAmountReviews } from "@/lib/recurring-bills";
+import {
+  currentPeriodBillWhere,
+  getActiveBillCycleSkips,
+  getPendingBillAmountReviews,
+  skipShownOnBillRow,
+} from "@/lib/recurring-bills";
 import { pickableDebtWhere } from "@/lib/debt-reassign";
 import { ensureBucketIcons } from "@/lib/bucket-icons-sync";
 import { AppShell } from "@/components/app-shell";
@@ -230,7 +235,8 @@ export default async function RecurringPage() {
       payments: paymentsAbs.map(toDisplay),
       cyclePaid,
       currentCyclePayments: currentCyclePayments.map(toDisplay),
-      skippedCycleDueDate: activeBillSkips.get(b.id)?.toISOString().slice(0, 10) ?? null,
+      skippedCycleDueDate:
+        skipShownOnBillRow(activeBillSkips.get(b.id), utcMonthStart)?.toISOString().slice(0, 10) ?? null,
       reimbursementPatterns: b.reimbursementPatterns.map((p) => ({
         id: p.id,
         label: p.label,

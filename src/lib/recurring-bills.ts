@@ -116,6 +116,19 @@ export function isBillCycleSkipActive(cadence: BillCadence, skippedCycleDueDate:
   return nextBillDueDate(cadence, skippedCycleDueDate, []).getTime() === currentNextDueDate.getTime();
 }
 
+// A bill row (/bills, a bucket's recurring list) covers the current month,
+// so its "Skipped {date}, Undo" line — which stands in for the due line —
+// only applies while the skipped cycle is this month's (or a later one,
+// skipped early). An active skip from last month would otherwise hide this
+// month's expected payment until it's paid (real report, 2026-10-07:
+// Lakeside Gas, skipped Sep 9, kept showing "Skipped Sep 09" all October with
+// its Oct 9 bill nowhere on the row). Deliberately not folded into
+// isBillCycleSkipActive: the week cards and the payment calendar still need
+// a last-month skip to mark its own past date as skipped, not due.
+export function skipShownOnBillRow(activeSkip: Date | undefined, monthStart: Date): Date | null {
+  return activeSkip && activeSkip.getTime() >= monthStart.getTime() ? activeSkip : null;
+}
+
 // Which bills currently have a skip (BillCycleSkip) still worth showing as
 // "Skipped {date}, Undo" on their row — see isBillCycleSkipActive above for
 // the actual decision. Only the most recent skip per bill is ever relevant,
