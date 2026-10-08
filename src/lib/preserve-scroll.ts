@@ -12,11 +12,19 @@ export async function preservingScroll<T>(action: () => Promise<T>): Promise<T> 
   if (typeof window === "undefined") return action();
   const y = window.scrollY;
   const result = await action();
+  restoreScrollIfJumped(y);
+  return result;
+}
+
+// Puts the window back at `y` if something throws it more than 200px away
+// over the next few frames — the shared tail of preservingScroll, also used
+// on its own by SelectField after a pick (iOS Safari jumped to the top of
+// /transactions when picking a Move bucket, household report 2026-10-07).
+export function restoreScrollIfJumped(y: number) {
   const restore = () => {
     if (Math.abs(window.scrollY - y) > 200) window.scrollTo({ top: y, behavior: "instant" as ScrollBehavior });
   };
   requestAnimationFrame(() => requestAnimationFrame(restore));
   setTimeout(restore, 150);
   setTimeout(restore, 400);
-  return result;
 }

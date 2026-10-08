@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
+import { restoreScrollIfJumped } from "@/lib/preserve-scroll";
 
 export type SelectOption = { value: string; label: string; group?: string };
 
@@ -90,9 +91,21 @@ export function SelectField({
     ? options.filter((o) => o.label.toLowerCase().includes(filterText.trim().toLowerCase()))
     : options;
 
-  function choose(option: SelectOption) {
+  // Blurs the trigger once a pick is made: it's a text input (readonly for
+  // a non-searchable field), and iOS Safari threw the page back to the top
+  // when the row around a still-focused one grew on the pick (household
+  // report, 2026-10-07: Move on /transactions — picking the bucket jumped
+  // to the top as the Category picker and routing toggle appeared; the
+  // Category picker, a plain button, never did). Reopening already works
+  // from a plain click (see onClick below), so nothing needs the focus. The
+  // scroll restore is the backstop if the page jumps anyway. A keyboard
+  // pick (Enter) keeps focus, so tabbing on from the field still works.
+  function choose(option: SelectOption, { keepFocus = false }: { keepFocus?: boolean } = {}) {
+    const y = window.scrollY;
     onChange(option.value);
     setOpen(false);
+    if (!keepFocus) inputRef.current?.blur();
+    restoreScrollIfJumped(y);
   }
 
   function openField() {
@@ -120,7 +133,7 @@ export function SelectField({
     } else if (e.key === "Enter") {
       if (open && filtered[highlight]) {
         e.preventDefault();
-        choose(filtered[highlight]);
+        choose(filtered[highlight], { keepFocus: true });
       }
     } else if (e.key === "Escape") {
       setOpen(false);
@@ -164,10 +177,9 @@ export function SelectField({
             if (!open) setOpen(true);
           }}
           onFocus={openField}
-          // Choosing an option doesn't blur the trigger (its mousedown is
-          // preventDefault'd so the input stays focused), so a second pick
-          // gets no focus event to reopen on — only `onFocus` handled that.
-          // Re-derive it from a plain click too.
+          // A keyboard pick (Enter) leaves the trigger focused, so a second
+          // pick gets no focus event to reopen on — only `onFocus` handled
+          // that. Re-derive it from a plain click too.
           onClick={() => {
             if (!open) openField();
           }}
