@@ -11,7 +11,7 @@ import { needsAiAttention } from "@/lib/ai-provider";
 import { emailConnectionHasError } from "@/lib/email-provider";
 import { AppShell } from "@/components/app-shell";
 import { NotificationToggle } from "@/components/notification-toggle";
-import { NotificationBadgeDot } from "@/components/notification-badge-dot";
+import { NotificationSettingsCard } from "@/components/notification-settings-card";
 import { GOAL_POSTURE_LABEL } from "@/lib/goal-posture";
 import { DangerZone } from "./danger-zone";
 import { InstallAppCard } from "./install-app-card";
@@ -56,15 +56,14 @@ export default async function SettingsPage() {
 
   return (
     <AppShell title="Settings" user={session.user}>
-      <div className="rounded-2xl border border-blue-100 dark:border-neutral-800 p-4">
-        <h2 className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">Notifications</h2>
+      <NotificationSettingsCard>
         <div className="mt-3">
           <NotificationToggle
             showUnavailableWarning
             lockedOn={!!notifState?.notificationsLocked && !!notifState.notificationsEnabled}
           />
         </div>
-      </div>
+      </NotificationSettingsCard>
 
       <InstallAppCard />
 
@@ -84,7 +83,6 @@ export default async function SettingsPage() {
               </p>
             </span>
           </span>
-          <NotificationBadgeDot />
           <ChevronRight size={18} className="text-gray-400 dark:text-neutral-500" />
         </Link>
 
