@@ -1431,7 +1431,11 @@ export function PayoffPlanner({
       )}
 
       {!allDebtsPaidOff && result && result.timeline.length > 1 && projectionDebtInputs.length > 0 && (
-        <div className="rounded-xl border border-blue-100 dark:border-neutral-800 p-4 lg:mx-auto lg:max-w-3xl">
+        // Full main width on desktop, not capped like the alerts: its
+        // projection chart scales with the card (same reasoning as
+        // /networth's headline card), and a 768px strip under the
+        // full-width calendar card looked orphaned (2026-10-08).
+        <div className="rounded-xl border border-blue-100 dark:border-neutral-800 p-4">
           <button
             type="button"
             onClick={() => setProjectedPayoffCollapsed(!projectedPayoffCollapsed)}
