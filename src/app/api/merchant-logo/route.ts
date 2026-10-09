@@ -13,6 +13,6 @@ export async function GET(request: Request) {
     return NextResponse.json({ domain: null });
   }
 
-  const domain = await resolveMerchantLogoDomain(merchant);
+  const domain = await resolveMerchantLogoDomain(merchant, { readOnly: session.user.isDemo === true });
   return NextResponse.json({ domain });
 }

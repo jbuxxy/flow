@@ -11,6 +11,7 @@
 // 2026-09-11 "a plain helper stuck in a use client file"). Only a type-only
 // import from @prisma/client is safe here (erased at build time).
 import type { BillCadence } from "@prisma/client";
+import { stepCadence } from "@/lib/cadence-step";
 
 export const CADENCE_LABEL: Record<BillCadence, string> = {
   WEEKLY: "Weekly",
@@ -27,17 +28,12 @@ export const CADENCE_OPTIONS: { value: BillCadence; label: string }[] = (
   ["WEEKLY", "BIWEEKLY", "MONTHLY", "ANNUAL"] as const
 ).map((value) => ({ value, label: CADENCE_LABEL[value] }));
 
-// One cadence period after an ISO "YYYY-MM-DD" date, as the same ISO string —
-// the client-safe twin of recurring-bills.ts's addCadence (same UTC-setter
-// month/year rollover), for BillRow's edit form: switching a bill's cadence
+// `steps` cadence periods after an ISO "YYYY-MM-DD" date, as the same ISO
+// string — the shared, month-end-clamped step (cadence-step.ts), for
+// BillRow's edit form and the BNPL schedule: switching a bill's cadence
 // re-projects the due date from its last payment, so Monthly -> Yearly on a
 // just-paid subscription lands a year out instead of keeping the stale
 // one-month-out date (household report 2026-09-30).
-export function addCadenceISO(iso: string, cadence: BillCadence): string {
-  const d = new Date(`${iso.slice(0, 10)}T00:00:00Z`);
-  if (cadence === "MONTHLY") d.setUTCMonth(d.getUTCMonth() + 1);
-  else if (cadence === "ANNUAL") d.setUTCFullYear(d.getUTCFullYear() + 1);
-  else if (cadence === "BIWEEKLY") d.setUTCDate(d.getUTCDate() + 14);
-  else d.setUTCDate(d.getUTCDate() + 7);
-  return d.toISOString().slice(0, 10);
+export function addCadenceISO(iso: string, cadence: BillCadence, steps = 1): string {
+  return stepCadence(new Date(`${iso.slice(0, 10)}T00:00:00Z`), cadence, steps).toISOString().slice(0, 10);
 }

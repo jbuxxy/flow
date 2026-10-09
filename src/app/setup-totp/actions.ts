@@ -5,7 +5,7 @@ import { db } from "@/lib/db";
 import { verifySetupToken } from "@/lib/setup-token";
 import { decrypt } from "@/lib/crypto";
 import { hashPassword } from "@/lib/password";
-import { verifyTotpCode } from "@/lib/totp";
+import { claimTotpCode } from "@/lib/totp";
 import { totpVerifySchema, accountDetailsSchema } from "@/lib/validation";
 
 export type AccountDetailsState = { error?: string };
@@ -112,7 +112,9 @@ export async function verifyTotpEnrollment(
 
   if (!user.totpEnabled) {
     const secret = decrypt(user.totpSecretEncrypted);
-    if (!(await verifyTotpCode(secret, parsed.data.code))) {
+    // Claimed, not just checked — the enrollment code can't then be
+    // replayed as a login code within its own window.
+    if (!(await claimTotpCode(user, secret, parsed.data.code))) {
       return {
         error:
           "That code didn't match. Check the time on your authenticator app and try again.",

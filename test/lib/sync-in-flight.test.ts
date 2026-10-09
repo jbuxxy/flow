@@ -1,6 +1,6 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { trackSync, whenSyncsIdle } from "@/lib/sync-in-flight";
+import { singleFlight, trackSync, whenSyncsIdle } from "@/lib/sync-in-flight";
 
 function deferred() {
   let resolve!: () => void;
@@ -40,5 +40,45 @@ describe("whenSyncsIdle", () => {
     const waiting = whenSyncsIdle();
     failing.reject(new Error("bank down"));
     await waiting;
+  });
+});
+
+describe("singleFlight", () => {
+  test("a second call for the same key while one runs joins it instead of starting another", async () => {
+    // Regression (2026-10-08 review): the poller and Sync Now ran the same
+    // household's sync concurrently and both advanced its trackers.
+    const d = deferred();
+    let starts = 0;
+    const run = () => {
+      starts++;
+      return d.promise;
+    };
+    const a = singleFlight("h1", run);
+    const b = singleFlight("h1", run);
+    assert.equal(a, b);
+    assert.equal(starts, 1);
+    d.resolve();
+    await a;
+  });
+
+  test("different keys run independently, and a finished run frees its key", async () => {
+    let starts = 0;
+    const run = async () => {
+      starts++;
+    };
+    await Promise.all([singleFlight("h2", run), singleFlight("h3", run)]);
+    assert.equal(starts, 2);
+    await singleFlight("h2", run);
+    assert.equal(starts, 3);
+  });
+
+  test("a failed run also frees its key", async () => {
+    const failing = () => Promise.reject(new Error("boom"));
+    await assert.rejects(singleFlight("h4", failing));
+    let ran = false;
+    await singleFlight("h4", async () => {
+      ran = true;
+    });
+    assert.equal(ran, true);
   });
 });

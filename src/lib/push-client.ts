@@ -138,7 +138,13 @@ export async function subscribeToPush(): Promise<"subscribed" | "denied" | "unsu
     applicationServerKey: urlBase64ToUint8Array(publicKey),
   });
 
-  await registerWithServer(subscription, true);
+  // The browser subscribed, but that's only half of it — if the server
+  // didn't store it (network error, 5xx, the demo household's 403), nothing
+  // will ever be delivered. Throw so the toggle shows the failure instead of
+  // flipping on (it used to report "subscribed" regardless; 2026-10-08 review).
+  if (!(await registerWithServer(subscription, true))) {
+    throw new Error("The server didn't accept this device's push subscription.");
+  }
   setExpectedOn(true);
 
   return "subscribed";

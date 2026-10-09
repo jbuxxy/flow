@@ -19,23 +19,43 @@ export type IcsEvent = {
   description?: string;
 };
 
+// A bare \r (or \r\n) is normalized to \n first — left raw, a strict
+// parser reads it as the start of a new content line.
 function escapeIcsText(text: string): string {
-  return text.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\n/g, "\\n");
+  return text
+    .replace(/\r\n?/g, "\n")
+    .replace(/\\/g, "\\\\")
+    .replace(/;/g, "\\;")
+    .replace(/,/g, "\\,")
+    .replace(/\n/g, "\\n");
 }
 
 // RFC 5545 caps a content line at 75 octets, continued by a line starting
 // with a single space — SUMMARY/DESCRIPTION here are normally short, but
 // this keeps the feed spec-compliant if a debt name or pool breakdown ever
-// runs long.
-function foldLine(line: string): string {
-  if (line.length <= 75) return line;
-  let result = line.slice(0, 75);
-  let rest = line.slice(75);
-  while (rest.length > 0) {
-    result += "\r\n " + rest.slice(0, 74);
-    rest = rest.slice(74);
+// runs long. Counts UTF-8 octets and never splits a character: slicing by
+// UTF-16 units used to cut an emoji's surrogate pair in half (garbled
+// titles in the subscribed calendar) and let multibyte lines run past 75
+// octets (2026-10-08 review). Exported for its unit test.
+export function foldLine(line: string): string {
+  const encoder = new TextEncoder();
+  const lines: string[] = [];
+  let current = "";
+  let currentOctets = 0;
+  let limit = 75; // continuation lines get 74 + the leading space
+  for (const ch of line) {
+    const octets = encoder.encode(ch).length;
+    if (currentOctets + octets > limit) {
+      lines.push(current);
+      current = "";
+      currentOctets = 0;
+      limit = 74;
+    }
+    current += ch;
+    currentOctets += octets;
   }
-  return result;
+  lines.push(current);
+  return lines.join("\r\n ");
 }
 
 function ymd(date: Date): string {

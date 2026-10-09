@@ -98,8 +98,8 @@ export type PurgeFinancialDataState = { error?: string };
 const purgeSchema = z.object({ confirmText: z.string() });
 
 // "Wipe financial data, keep login" — deletes every financial record but
-// keeps the Household row, every User (login/2FA untouched), and AI
-// provider config, then resets onboarding so the household can optionally
+// keeps the Household row, every User (login/2FA untouched), AI provider
+// config and connected mailboxes, then resets onboarding so the household can optionally
 // re-run the setup wizard against a clean slate. Distinct from
 // deleteHousehold (danger-zone.tsx), which removes the household and its
 // members entirely.
@@ -137,6 +137,39 @@ export async function purgeFinancialData(
     db.report.deleteMany({ where: { householdId } }),
     db.suggestionDismissal.deleteMany({ where: { householdId } }),
     db.billsInsight.deleteMany({ where: { householdId } }),
+    // Everything else derived from the wiped data — these used to survive a
+    // purge (2026-10-08 review): matched receipts kept matchState MATCHED
+    // with no transaction (matchReceipts only ever looks at UNMATCHED/
+    // AMBIGUOUS, so they could never relink), and this month's BudgetPlan
+    // pointed at deleted buckets while blocking a fresh one. Most of the
+    // rest already cascade from a parent deleted above; listing them keeps
+    // the purge complete regardless of which ones do.
+    db.receipt.deleteMany({ where: { householdId } }),
+    db.receiptMerchantAlias.deleteMany({ where: { householdId } }),
+    db.billNoticeEmail.deleteMany({ where: { householdId } }),
+    db.budgetPlan.deleteMany({ where: { householdId } }),
+    db.bucketAdHocTopUp.deleteMany({ where: { householdId } }),
+    db.transactionOffset.deleteMany({ where: { householdId } }),
+    db.learnedKeyword.deleteMany({ where: { householdId } }),
+    db.merchantKeywordCheck.deleteMany({ where: { householdId } }),
+    db.nudgeAlert.deleteMany({ where: { householdId } }),
+    db.cycleAlert.deleteMany({ where: { householdId } }),
+    db.billAmountReview.deleteMany({ where: { householdId } }),
+    db.billCycleSkip.deleteMany({ where: { householdId } }),
+    db.billExtraChargeRule.deleteMany({ where: { householdId } }),
+    db.debtAmountReview.deleteMany({ where: { householdId } }),
+    db.debtBalanceReview.deleteMany({ where: { householdId } }),
+    db.debtMinimumSkip.deleteMany({ where: { householdId } }),
+    db.patternPaymentReview.deleteMany({ where: { householdId } }),
+    db.payoffExtraConfirmation.deleteMany({ where: { householdId } }),
+    db.payoffExtraSkip.deleteMany({ where: { householdId } }),
+    db.payoffExtraSnapshot.deleteMany({ where: { householdId } }),
+    // Mail connections are kept (credentials, like the AI settings), but
+    // their scan cursors restart so receipts re-import against fresh data.
+    db.emailConnection.updateMany({
+      where: { householdId },
+      data: { lastSeenUid: null, oldestPolledUid: null, lastPolledAt: null },
+    }),
     db.household.update({
       where: { id: householdId },
       data: { onboardingCompletedAt: null, onboardingStep: "PROFILE" },

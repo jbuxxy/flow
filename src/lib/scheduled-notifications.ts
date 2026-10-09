@@ -1,4 +1,5 @@
 import type { NotificationType, Prisma } from "@prisma/client";
+import { runOnce } from "@/lib/run-once";
 import { db } from "@/lib/db";
 import { currentPeriodKey, currentWeekBounds, currentWeekKey } from "@/lib/period";
 import { getMonthReport, periodLabel, monthsAgoPeriodKey } from "@/lib/monthly-report";
@@ -54,25 +55,34 @@ async function checkMonthRolloverForAllHouseholds(): Promise<void> {
   }
 }
 
+// Two separate once-per-month claims (run-once.ts), so a failure in one
+// retries just that part next hour: the NEW_CYCLE push (CycleAlert keyed on
+// the month itself), and the report + budget plan (keyed "<month>:report").
+// One claim used to cover both, written before either ran — an AI timeout
+// generating the report then skipped that month's report and budget-plan
+// pushes for good (2026-10-08 review).
 async function checkMonthRolloverForHousehold(householdId: string, periodKey: string): Promise<void> {
-  // skipDuplicates (ON CONFLICT DO NOTHING) instead of create-and-catch, so
-  // the once-per-month dedup no longer logs a unique-violation ERROR in
-  // Postgres on every scheduled run after the month's first.
-  let claimed: number;
-  try {
-    ({ count: claimed } = await db.cycleAlert.createMany({ data: [{ householdId, periodKey }], skipDuplicates: true }));
-  } catch (err) {
-    console.error(`[scheduled-notifications] cycle-alert claim failed for household ${householdId}:`, err);
-    return;
-  }
-  if (claimed === 0) return; // already handled this household's rollover into this month
-
-  await sendPushToHouseholdForType(householdId, "NEW_CYCLE", {
-    title: "New Budget Period Started",
-    body: `${periodLabel(periodKey)} has begun.`,
-    url: "/",
+  const claimFor = (key: string) => ({
+    claim: () => db.cycleAlert.createMany({ data: [{ householdId, periodKey: key }], skipDuplicates: true }),
+    release: () => db.cycleAlert.deleteMany({ where: { householdId, periodKey: key } }),
   });
 
+  const cycle = claimFor(periodKey);
+  await runOnce(`new cycle ${householdId} ${periodKey}`, cycle.claim, cycle.release, () =>
+    sendPushToHouseholdForType(householdId, "NEW_CYCLE", {
+      title: "New Budget Period Started",
+      body: `${periodLabel(periodKey)} has begun.`,
+      url: "/",
+    }),
+  );
+
+  const report = claimFor(`${periodKey}:report`);
+  await runOnce(`monthly report ${householdId} ${periodKey}`, report.claim, report.release, () =>
+    sendMonthlyReportAndPlan(householdId, periodKey),
+  );
+}
+
+async function sendMonthlyReportAndPlan(householdId: string, periodKey: string): Promise<void> {
   // The report always covers the most recently *completed* month, same as
   // /reports' own getMonthReport(householdId, monthsAgoPeriodKey(1)) call —
   // periodKey above is only the CycleAlert dedup key (today's in-progress
@@ -100,18 +110,15 @@ async function checkMonthRolloverForHousehold(householdId: string, periodKey: st
 
   // The forward "Set the Month" budget plan for the NEW month (periodKey here,
   // not reportPeriodKey). Rides on the OPEN report's findings.budgetPlan (just
-  // refreshed above). Row existence is its own push dedup, like Report/NEW_REPORT.
-  try {
-    const { plan, created } = await createOrRefreshBudgetPlan(householdId, periodKey);
-    if (plan && created) {
-      await sendPushToHouseholdForType(householdId, "BUDGET_PLAN_READY", {
-        title: "Your Budget Plan Is Ready",
-        body: `Review and confirm your ${periodLabel(periodKey)} budget.`,
-        url: "/budget",
-      });
-    }
-  } catch (err) {
-    console.error(`[scheduled-notifications] budget-plan failed for household ${householdId}:`, err);
+  // refreshed above). Row existence is its own push dedup, like Report/NEW_REPORT,
+  // so a retry after a later failure never re-sends it.
+  const { plan, created } = await createOrRefreshBudgetPlan(householdId, periodKey);
+  if (plan && created) {
+    await sendPushToHouseholdForType(householdId, "BUDGET_PLAN_READY", {
+      title: "Your Budget Plan Is Ready",
+      body: `Review and confirm your ${periodLabel(periodKey)} budget.`,
+      url: "/budget",
+    });
   }
 
   if (!staleOpen) return;
@@ -158,33 +165,34 @@ async function checkWeeklyBucketDigestsForHousehold(
   const progressById = new Map(progress.map((p) => [p.id, p]));
 
   for (const bucket of flagged.filter((b) => b.householdId === householdId)) {
-    // skipDuplicates rather than create-and-catch: same once-per-week dedup
-    // without a Postgres unique-violation ERROR for every repeat run.
-    let claimed: number;
-    try {
-      ({ count: claimed } = await db.bucketDigest.createMany({ data: [{ bucketId: bucket.id, weekKey }], skipDuplicates: true }));
-    } catch (err) {
-      console.error(`[scheduled-notifications] digest claim failed for bucket ${bucket.id}:`, err);
-      continue;
-    }
-    if (claimed === 0) continue; // already sent this week
-
+    // Checked before claiming, so a bucket with no progress row doesn't use
+    // up its week's digest for nothing.
     const p = progressById.get(bucket.id);
     if (!p) continue;
 
     const paceNote = p.onPaceToOvershoot ? "Spending faster than planned this month." : "On pace for the month.";
-    await sendPushToBucketForType(bucket.id, householdId, "WEEKLY_BUCKET_REPORT", {
-      title: `${bucket.name}: Weekly Update`,
-      body:
-        `${formatCents(weekSpend.get(bucket.id) ?? 0)} spent this week. ` +
-        `${formatCents(Math.max(p.remainingCents, 0))} left this month. ${paceNote}`,
-      url: `/buckets/${bucket.id}`,
-    });
+    const row = { bucketId: bucket.id, weekKey };
+    await runOnce(
+      `weekly digest ${bucket.id} ${weekKey}`,
+      () => db.bucketDigest.createMany({ data: [row], skipDuplicates: true }),
+      () => db.bucketDigest.deleteMany({ where: row }),
+      () =>
+        sendPushToBucketForType(bucket.id, householdId, "WEEKLY_BUCKET_REPORT", {
+          title: `${bucket.name}: Weekly Update`,
+          body:
+            `${formatCents(weekSpend.get(bucket.id) ?? 0)} spent this week. ` +
+            `${formatCents(Math.max(p.remainingCents, 0))} left this month. ${paceNote}`,
+          url: `/buckets/${bucket.id}`,
+        }),
+    );
   }
 }
 
 // A push only fires once per household/kind until something newer than the
-// last push's anchor shows up — see NudgeAlert's own comment for why this
+// last push's anchor shows up. Anchors are import times (createdAt /
+// receivedAt), never posted dates: the sync re-imports 14 days back, and a
+// late-surfacing charge dated before the last anchor used to never nudge
+// (2026-10-08 review) — see NudgeAlert's own comment for why this
 // is deliberately separate from SuggestionDismissal (the dashboard card's
 // per-user "I've seen this batch," not a push suppression).
 async function sendNudgeIfNewer(
@@ -240,10 +248,10 @@ async function checkNeedsBucketNudge(householdId: string): Promise<void> {
   };
   const [count, newest] = await Promise.all([
     db.transaction.count({ where }),
-    db.transaction.findFirst({ where, orderBy: { occurredOn: "desc" }, select: { occurredOn: true, merchant: true } }),
+    db.transaction.findFirst({ where, orderBy: { createdAt: "desc" }, select: { createdAt: true, merchant: true } }),
   ]);
   if (count === 0 || !newest) return;
-  await sendNudgeIfNewer(householdId, "NEEDS_BUCKET", newest.occurredOn, {
+  await sendNudgeIfNewer(householdId, "NEEDS_BUCKET", newest.createdAt, {
     title: count === 1 ? "1 Transaction Needs A Bucket" : `${count} Transactions Need A Bucket`,
     body:
       count === 1
@@ -278,7 +286,7 @@ async function checkP2PLabelNudge(householdId: string): Promise<void> {
   const where = unlabeledP2PWhere(householdId);
   const [count, newest] = await Promise.all([
     db.transaction.count({ where }),
-    db.transaction.findFirst({ where, orderBy: { occurredOn: "desc" }, select: { occurredOn: true, merchant: true } }),
+    db.transaction.findFirst({ where, orderBy: { createdAt: "desc" }, select: { createdAt: true, merchant: true } }),
   ]);
   if (count === 0 || !newest) return;
   // Same "bucket/debt/recurring pattern, or a call on income vs.
@@ -286,7 +294,7 @@ async function checkP2PLabelNudge(householdId: string): Promise<void> {
   // card (src/app/page.tsx) — this queue spans both directions (a debit
   // needs a bucket/debt/pattern, a credit needs an income-vs-reimbursement
   // call), so the copy has to cover both rather than picking one.
-  await sendNudgeIfNewer(householdId, "NEEDS_LABEL_P2P", newest.occurredOn, {
+  await sendNudgeIfNewer(householdId, "NEEDS_LABEL_P2P", newest.createdAt, {
     title: count === 1 ? "1 P2P Transfer Needs A Label" : `${count} P2P Transfers Need A Label`,
     body:
       count === 1
@@ -299,8 +307,9 @@ async function checkP2PLabelNudge(householdId: string): Promise<void> {
 async function checkRefundMatchReviewNudge(householdId: string): Promise<void> {
   const refunds = await getUnmatchedRefunds(householdId);
   if (refunds.length === 0) return;
-  const newest = refunds[0]; // getUnmatchedRefunds orders newest-first
-  await sendNudgeIfNewer(householdId, "NEEDS_REFUND_MATCH_REVIEW", newest.occurredOn, {
+  // Newest by import time (the anchor); getUnmatchedRefunds orders by posted date.
+  const newest = refunds.reduce((a, b) => (b.createdAt > a.createdAt ? b : a));
+  await sendNudgeIfNewer(householdId, "NEEDS_REFUND_MATCH_REVIEW", newest.createdAt, {
     title: refunds.length === 1 ? "1 Refund Needs Review" : `${refunds.length} Refunds Need Review`,
     body:
       refunds.length === 1

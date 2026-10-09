@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { suggestBucketsFromReceipts } from "@/lib/ai";
-import { checkAndSendBucketAlerts } from "@/lib/buckets";
+import { checkAndSendBucketAlertsFor } from "@/lib/buckets";
 import { todayAsUTCDate } from "@/lib/date";
 import { nameSimilarity } from "@/lib/fuzzy-match";
 
@@ -185,5 +185,5 @@ export async function reclassifyFromReceipts(householdId: string): Promise<void>
     }
   }
   // Spend totals moved between buckets — re-check both sides' alerts.
-  for (const id of touchedBuckets) await checkAndSendBucketAlerts(id);
+  await checkAndSendBucketAlertsFor(touchedBuckets);
 }

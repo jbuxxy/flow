@@ -1,5 +1,6 @@
 import type { BillCadence } from "@prisma/client";
-import { addCadence, subtractCadence } from "@/lib/recurring-bills";
+import { subtractCadence } from "@/lib/recurring-bills";
+import { stepCadence } from "@/lib/cadence-step";
 import { MATCH_WINDOW_DAYS } from "@/lib/bill-match-window";
 
 const DAY_MS = 86_400_000;
@@ -27,16 +28,20 @@ export function occurrencesInPeriod(nextDueDate: Date, cadence: BillCadence, per
   // Safety net, not expected to trigger in practice — nextDueDate is kept
   // fresh by matchBillPayments/matchDebtPayments — but caps the walk for a
   // long-neglected WEEKLY item rather than looping unbounded.
+  // Every date is i steps from nextDueDate, not a chain of single steps, so
+  // a month-end clamp (Jan 31 -> Feb 28) doesn't stick at the 28th.
   const MAX_STEPS = 60;
   let d = nextDueDate;
-  for (let i = 0; i < MAX_STEPS && d >= periodStart; i++) {
+  for (let i = 1; i <= MAX_STEPS && d >= periodStart; i++) {
     if (d < periodEnd) dates.unshift(d);
-    d = subtractCadence(d, cadence);
+    d = stepCadence(nextDueDate, cadence, -i);
   }
-  d = addCadence(nextDueDate, cadence);
-  for (let i = 0; i < MAX_STEPS && d < periodEnd; i++) {
-    dates.push(d);
-    d = addCadence(d, cadence);
+  d = stepCadence(nextDueDate, cadence, 1);
+  for (let i = 2; i <= MAX_STEPS + 1 && d < periodEnd; i++) {
+    // A stale nextDueDate before the period walks forward through dates
+    // that are still before periodStart — those aren't in the period.
+    if (d >= periodStart) dates.push(d);
+    d = stepCadence(nextDueDate, cadence, i);
   }
   return dates;
 }
@@ -121,9 +126,7 @@ export function slotBounds(
     if (opts.nextDueDate && opts.cadence && opts.installmentsRemaining != null) {
       // Walk from the cycle *before* nextDueDate so `installmentsRemaining: 1`
       // lands exactly on nextDueDate and `0` lands before it (nothing left).
-      let end = subtractCadence(opts.nextDueDate, opts.cadence);
-      for (let i = 0; i < Math.max(0, opts.installmentsRemaining); i++) end = addCadence(end, opts.cadence);
-      occurrenceEnd = end;
+      occurrenceEnd = stepCadence(opts.nextDueDate, opts.cadence, Math.max(0, opts.installmentsRemaining) - 1);
     }
     return { occurrenceStart, occurrenceEnd };
   }

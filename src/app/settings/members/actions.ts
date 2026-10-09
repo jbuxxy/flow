@@ -77,7 +77,10 @@ export async function inviteHouseholdMember(
   };
 }
 
-export type UpdateMemberResult = { error?: string };
+// setupUrl: set when this save moved a member who has no authenticator yet
+// into a role that requires one (CHILD → Partner/Owner) — see
+// issueTwoFactorSetupLink below.
+export type UpdateMemberResult = { error?: string; setupUrl?: string };
 
 const updateMemberSchema = z.object({
   name: z.string().trim().min(1).max(80),
@@ -166,6 +169,16 @@ export async function updateMember(
     },
   });
 
+  // Promoting a Basic member (CHILD, no TOTP) to a role that requires it
+  // used to lock them out: authorize() rejects every password login for a
+  // non-CHILD without totpEnabled, and their invite code was already spent
+  // (2026-10-08 review). Hand back a fresh link straight to /setup-totp's
+  // enrollment step. A still-pending invitee keeps their existing link.
+  const setupUrl =
+    role !== "CHILD" && !target.totpEnabled && target.passwordHash
+      ? await issueTwoFactorSetupLink(userId)
+      : undefined;
+
   await db.auditLog.create({
     data: {
       userId: session.user.id,
@@ -183,7 +196,31 @@ export async function updateMember(
   });
 
   revalidatePath("/settings/members");
-  return {};
+  return { setupUrl };
+}
+
+async function issueTwoFactorSetupLink(userId: string): Promise<string> {
+  const inviteCode = generateInviteCode();
+  await db.user.update({
+    where: { id: userId },
+    data: { inviteCode, inviteCodeExpiresAt: new Date(Date.now() + INVITE_CODE_TTL_MS) },
+  });
+  return `${await resolveAppOrigin()}/invite/${inviteCode}`;
+}
+
+// A fresh 2FA setup link for a member showing "2FA Pending" — password set,
+// role requires TOTP, never enrolled. Owner-only, like every member edit.
+export async function createTwoFactorSetupLink(userId: string): Promise<UpdateMemberResult> {
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+  if (session.user.role !== "OWNER") return { error: "Not authorized." };
+
+  const target = await db.user.findUnique({ where: { id: userId } });
+  if (!belongsToHousehold(target, session.user.householdId)) return { error: "Not found." };
+  if (target.role === "CHILD" || target.totpEnabled || !target.passwordHash) {
+    return { error: "This member doesn't need two-factor setup." };
+  }
+  return { setupUrl: await issueTwoFactorSetupLink(userId) };
 }
 
 export type DeleteMemberResult = { error?: string };

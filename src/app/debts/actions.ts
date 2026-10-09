@@ -1,5 +1,6 @@
 "use server";
 
+import { CLEARED_CLASSIFICATION } from "@/lib/classification-reset";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
@@ -446,6 +447,19 @@ export async function createDebt(
       return { error: "Enter valid balance, APR, and minimum payment." };
     }
 
+    // Validated before the Debt row exists — an invalid date used to return
+    // its error after creating it, leaving an orphan that a corrected
+    // resubmit then duplicated (2026-10-08 review).
+    let firstDueDate: Date | null = null;
+    if (parsed.data.dueDate) {
+      firstDueDate = parseFirstDueDate(parsed.data.dueDate);
+      if (firstDueDate === null) return { error: "Enter a valid first due date." };
+    } else if (parsed.data.dueDay) {
+      const day = parseDueDay(parsed.data.dueDay);
+      if (day === null) return { error: "Enter a valid due date." };
+      firstDueDate = nextOccurrenceOfDay(day);
+    }
+
     const debt = await db.debt.create({
       data: {
         householdId: session.user.householdId,
@@ -458,15 +472,6 @@ export async function createDebt(
         sortOrder,
       },
     });
-    let firstDueDate: Date | null = null;
-    if (parsed.data.dueDate) {
-      firstDueDate = parseFirstDueDate(parsed.data.dueDate);
-      if (firstDueDate === null) return { error: "Enter a valid first due date." };
-    } else if (parsed.data.dueDay) {
-      const day = parseDueDay(parsed.data.dueDay);
-      if (day === null) return { error: "Enter a valid due date." };
-      firstDueDate = nextOccurrenceOfDay(day);
-    }
     if (firstDueDate) {
       await upsertDebtPayment(session.user.householdId, debt.id, {
         amountCents: minPaymentCents,
@@ -1351,11 +1356,9 @@ export async function createDebtPaymentFromTransaction(
   await db.transaction.update({
     where: { id: transactionId },
     data: {
+      ...CLEARED_CLASSIFICATION,
       debtId,
       isTransfer: true,
-      bucketId: null,
-      isIncome: false,
-      aiSuggestedBucketId: null,
     },
   });
 

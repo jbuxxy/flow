@@ -1,5 +1,6 @@
 "use server";
 
+import { CLEARED_CLASSIFICATION } from "@/lib/classification-reset";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/lib/db";
@@ -357,11 +358,10 @@ export async function createBillFromTransaction(
   await db.transaction.update({
     where: { id: transactionId },
     data: {
+      ...CLEARED_CLASSIFICATION,
       billId: bill.id,
       bucketId: targetBucketId,
       categoryId: resolvedCategoryId,
-      aiSuggestedBucketId: null,
-      aiSuggestedCategoryId: null,
     },
   });
 

@@ -13,6 +13,22 @@ import { utc } from "../helpers.ts";
 const pay = (iso: string, amountCents = 0) => ({ occurredOn: new Date(iso), amountCents });
 
 describe("occurrencesInPeriod", () => {
+  test("a bill due the 31st still has a February occurrence", () => {
+    // Regression: the chained raw setUTCMonth walk went Jan 31 -> Mar 3, so
+    // February had none (2026-10-08 review).
+    assert.deepEqual(occurrencesInPeriod(utc(2027, 1, 31), "MONTHLY", utc(2027, 2, 1), utc(2027, 3, 1)), [
+      utc(2027, 2, 28),
+    ]);
+    // Walking several months doesn't stick at the clamped 28th.
+    assert.deepEqual(occurrencesInPeriod(utc(2027, 1, 31), "MONTHLY", utc(2027, 3, 1), utc(2027, 4, 1)), [
+      utc(2027, 3, 31),
+    ]);
+    // ...nor walking backward from a later 31st.
+    assert.deepEqual(occurrencesInPeriod(utc(2027, 3, 31), "MONTHLY", utc(2027, 1, 1), utc(2027, 2, 1)), [
+      utc(2027, 1, 31),
+    ]);
+  });
+
   test("MONTHLY yields the one occurrence in the period", () => {
     const dates = occurrencesInPeriod(utc(2026, 3, 15), "MONTHLY", utc(2026, 3, 1), utc(2026, 4, 1));
     assert.deepEqual(dates, [utc(2026, 3, 15)]);

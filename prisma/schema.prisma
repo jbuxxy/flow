@@ -265,6 +265,10 @@ model User {
   totpSecretEncrypted String?
   totpEnabled         Boolean   @default(false)
   totpVerifiedAt      DateTime?
+  // The 30-second TOTP time step of the last code accepted — a code at or
+  // before it is rejected, so a code can't be replayed within its own
+  // validity window (src/lib/totp.ts claimTotpCode, 2026-10-08 review).
+  totpLastTimeStep    Int?
 
   failedLoginCount Int       @default(0)
   lockedUntil      DateTime?

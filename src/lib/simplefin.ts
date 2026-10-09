@@ -8,7 +8,7 @@
 //      every linked account plus its transactions since `start-date`.
 // No OAuth dance, no per-bank SDK — this whole file is the integration.
 
-import { assertPublicUrl } from "@/lib/ssrf-guard";
+import { fetchPublic } from "@/lib/ssrf-guard";
 
 export async function claimSetupToken(setupToken: string): Promise<string> {
   let claimUrl: string;
@@ -22,9 +22,7 @@ export async function claimSetupToken(setupToken: string): Promise<string> {
   }
   // The claim URL is whatever a pasted-in "setup token" decodes to — never
   // trust it's really simplefin.org without checking (see ssrf-guard.ts).
-  await assertPublicUrl(claimUrl);
-
-  const res = await fetch(claimUrl, { method: "POST" });
+  const res = await fetchPublic(claimUrl, { method: "POST" });
   if (!res.ok) {
     throw new Error(`SimpleFIN rejected the setup token (${res.status}). It may already be claimed.`);
   }
@@ -87,12 +85,10 @@ export async function fetchSimpleFinData(
   for (const id of opts.accountIds ?? []) {
     endpoint.searchParams.append("account", id);
   }
-  // Re-checked on every sync, not just at connect time — accessUrl was
+  // Re-checked on every sync (and every redirect hop), not just at connect time — accessUrl was
   // itself the response body of a request we didn't fully control (see
   // claimSetupToken), and DNS can change between syncs.
-  await assertPublicUrl(endpoint.toString());
-
-  const res = await fetch(endpoint.toString(), { headers });
+  const res = await fetchPublic(endpoint.toString(), { headers });
   if (!res.ok) {
     throw new Error(`SimpleFIN request failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
   }

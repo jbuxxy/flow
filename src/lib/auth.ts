@@ -4,7 +4,7 @@ import authConfig from "@/lib/auth.config";
 import { db } from "@/lib/db";
 import { verifyPassword } from "@/lib/password";
 import { decrypt } from "@/lib/crypto";
-import { verifyTotpCode } from "@/lib/totp";
+import { claimTotpCode } from "@/lib/totp";
 import { decodeLoginVerifiedToken } from "@/lib/webauthn-token";
 import { applyLiveClaims } from "@/lib/session-claims";
 import {
@@ -162,7 +162,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             return null;
           }
           const secret = decrypt(user.totpSecretEncrypted);
-          if (!(await verifyTotpCode(secret, totpCode))) {
+          if (!(await claimTotpCode(user, secret, totpCode))) {
             await recordFailedLogin(user.id);
             return null;
           }

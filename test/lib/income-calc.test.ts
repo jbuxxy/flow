@@ -71,10 +71,14 @@ describe("addPaycheckCadence / subtractPaycheckCadence", () => {
     assert.deepEqual(subtractPaycheckCadence(utc(2026, 3, 15), "MONTHLY"), utc(2026, 2, 15));
   });
 
-  test("MONTHLY overshoots at a long-to-short month edge (documented, not a perfect inverse)", () => {
-    // Jan 31 minus one month via setUTCMonth lands on a normalized March 3.
+  test("MONTHLY clamps to the target month's last day at a long-to-short edge", () => {
+    // Was Mar 31 - 1 month = Mar 3 and Jan 31 + 1 month = Mar 3 (raw
+    // setUTCMonth overflow), so a paycheck on the 31st never hit February.
     assert.deepEqual(subtractPaycheckCadence(utc(2026, 1, 31), "MONTHLY"), utc(2025, 12, 31));
-    assert.deepEqual(subtractPaycheckCadence(utc(2026, 3, 31), "MONTHLY"), utc(2026, 3, 3));
+    assert.deepEqual(subtractPaycheckCadence(utc(2026, 3, 31), "MONTHLY"), utc(2026, 2, 28));
+    assert.deepEqual(addPaycheckCadence(utc(2026, 1, 31), "MONTHLY"), utc(2026, 2, 28));
+    // anchorDay carries a walk back to the 31st after the February clamp.
+    assert.deepEqual(addPaycheckCadence(utc(2026, 2, 28), "MONTHLY", null, 31), utc(2026, 3, 31));
   });
 });
 

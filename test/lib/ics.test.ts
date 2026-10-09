@@ -1,6 +1,6 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { buildIcsCalendar } from "@/lib/ics";
+import { buildIcsCalendar, foldLine } from "@/lib/ics";
 import { utc } from "../helpers.ts";
 
 describe("buildIcsCalendar", () => {
@@ -47,5 +47,33 @@ describe("buildIcsCalendar", () => {
     const a = buildIcsCalendar("X", [{ uid: "d1-x-20260101", date: utc(2026, 1, 1), summary: "s" }]);
     const b = buildIcsCalendar("X", [{ uid: "d1-x-20260101", date: utc(2026, 1, 1), summary: "s" }]);
     assert.equal(a.match(/UID:[^\r]+/)![0], b.match(/UID:[^\r]+/)![0]);
+  });
+});
+
+describe("foldLine", () => {
+  const octets = (s: string) => new TextEncoder().encode(s).length;
+
+  test("never splits an emoji, and every physical line stays within 75 octets", () => {
+    // Regression (2026-10-08 review): folding by UTF-16 units cut the
+    // surrogate pair at position 75 in half.
+    const line = "SUMMARY:" + "a".repeat(66) + "🏠" + "b".repeat(80) + "é".repeat(40);
+    const folded = foldLine(line);
+    assert.ok(!folded.includes("�"));
+    const physical = folded.split("\r\n");
+    for (const p of physical) assert.ok(octets(p) <= 75, `${octets(p)} octets`);
+    // Unfolding (drop CRLF + one space) restores the original exactly.
+    assert.equal(folded.replace(/\r\n /g, ""), line);
+  });
+
+  test("a short line is untouched", () => {
+    assert.equal(foldLine("SUMMARY:Visa"), "SUMMARY:Visa");
+  });
+});
+
+describe("text escaping", () => {
+  test("a bare CR can't start a new content line", () => {
+    const cal = buildIcsCalendar("Flow", [{ uid: "x", date: utc(2026, 3, 15), summary: "Gas\rDTSTART:19700101" }]);
+    assert.match(cal, /SUMMARY:Gas\\nDTSTART:19700101/);
+    assert.doesNotMatch(cal, /\rDTSTART:1970/);
   });
 });

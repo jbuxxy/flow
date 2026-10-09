@@ -1,5 +1,6 @@
 import type { Income, IncomeCalcMethod, PaycheckCadence } from "@prisma/client";
 import { ordinal } from "@/lib/date";
+import { addMonthsClamped, stepCadence } from "@/lib/cadence-step";
 
 export type { IncomeCalcMethod };
 
@@ -99,19 +100,19 @@ function previousSemiMonthly(date: Date, days: SemiMonthlyDays | null | undefine
 // next of the income's two pay days — pass Income.semiMonthlyDays). An
 // off-schedule date (a hand-typed pay date, a row projected by the old
 // "+15 days") snaps onto the schedule at its next step.
-// UTC setters, not local — see addCadence's comment in recurring-bills.ts;
-// same `@db.Date` convention, same off-by-a-day-at-a-month-boundary bug a
-// local setter would reintroduce.
+// MONTHLY clamps to the target month's last day (cadence-step.ts) — a raw
+// setUTCMonth(+1) took a paycheck on the 31st from Jan 31 to Mar 3, so
+// February never projected. A walk over several cycles passes its starting
+// day as `anchorDay` so the clamp doesn't stick at the 28th.
 export function addPaycheckCadence(
   date: Date,
   cadence: PaycheckCadence,
   semiMonthlyDays?: SemiMonthlyDays | null,
+  anchorDay?: number,
 ): Date {
   if (cadence === "SEMI_MONTHLY") return nextSemiMonthly(date, semiMonthlyDays);
-  const d = new Date(date);
-  if (cadence === "MONTHLY") d.setUTCMonth(d.getUTCMonth() + 1);
-  else d.setUTCDate(d.getUTCDate() + 14); // BIWEEKLY
-  return d;
+  if (cadence === "MONTHLY") return addMonthsClamped(date, 1, anchorDay);
+  return stepCadence(date, "BIWEEKLY");
 }
 
 // The inverse step, for walking a projected pay date backward to find the
@@ -119,21 +120,18 @@ export function addPaycheckCadence(
 // mostRecentPaydayOnOrBefore — the payoff plan's extra-payment projection
 // anchors there instead of Income.nextPayDate, so a paycheck matching during
 // sync and rolling nextPayDate forward doesn't silently jump the current
-// cycle's still-pending extra to next cycle). Not a perfect inverse of
-// addPaycheckCadence at a MONTHLY month-end (e.g. Mar 31 minus "1 month"
-// via setUTCMonth lands on Mar 3, not Feb 28/29) — safe here because the
-// caller always walks back from a real, stable day-of-month
-// Income.nextPayDate and forward-reconciles any overshoot.
+// cycle's still-pending extra to next cycle). MONTHLY clamps the same way
+// addPaycheckCadence does (Mar 31 back one month is Feb 28/29), and takes
+// the same `anchorDay` for multi-step walks.
 export function subtractPaycheckCadence(
   date: Date,
   cadence: PaycheckCadence,
   semiMonthlyDays?: SemiMonthlyDays | null,
+  anchorDay?: number,
 ): Date {
   if (cadence === "SEMI_MONTHLY") return previousSemiMonthly(date, semiMonthlyDays);
-  const d = new Date(date);
-  if (cadence === "MONTHLY") d.setUTCMonth(d.getUTCMonth() - 1);
-  else d.setUTCDate(d.getUTCDate() - 14); // BIWEEKLY
-  return d;
+  if (cadence === "MONTHLY") return addMonthsClamped(date, -1, anchorDay);
+  return stepCadence(date, "BIWEEKLY", -1);
 }
 
 // method defaults to MONTHLY_AVERAGE (the annualized-average approach this

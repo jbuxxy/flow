@@ -6,6 +6,7 @@ import { currentPeriodKey, currentDateKey, currentWeekBounds, currentWeekKey, ut
 import { nameSimilarity } from "@/lib/fuzzy-match";
 import { todayAsUTCDate } from "@/lib/date";
 import { amountToleranceCents } from "@/lib/amount-tolerance";
+import { stepCadence } from "@/lib/cadence-step";
 import { MATCH_WINDOW_DAYS, catchupCycleWindow, fastForwardCycleDate } from "@/lib/bill-match-window";
 import { currentPeriodPatternWhere } from "@/lib/pattern-match";
 import type { PoolBreakdown } from "@/lib/debt-payoff";
@@ -44,25 +45,16 @@ const DAY_MS = 86_400_000;
 // 2026-08-21: a payoff-plan line landing on the actual 1st of the month
 // bucketed into the *previous* month's cycle because this used local
 // getters while the UI displaying that same date used UTC ones).
-export function addCadence(date: Date, cadence: BillCadence): Date {
-  const d = new Date(date);
-  if (cadence === "MONTHLY") d.setUTCMonth(d.getUTCMonth() + 1);
-  else if (cadence === "ANNUAL") d.setUTCFullYear(d.getUTCFullYear() + 1);
-  else if (cadence === "BIWEEKLY") d.setUTCDate(d.getUTCDate() + 14);
-  else d.setUTCDate(d.getUTCDate() + 7);
-  return d;
+// Month/year steps clamp to the target month's last day (cadence-step.ts).
+export function addCadence(date: Date, cadence: BillCadence, anchorDay?: number): Date {
+  return stepCadence(date, cadence, 1, anchorDay);
 }
 
 // The reverse of addCadence — used to bound "this cycle" lookback windows
 // (see backfillDebtPaymentHistory in debt-payments.ts) one cadence period
 // before a given due date.
-export function subtractCadence(date: Date, cadence: BillCadence): Date {
-  const d = new Date(date);
-  if (cadence === "MONTHLY") d.setUTCMonth(d.getUTCMonth() - 1);
-  else if (cadence === "ANNUAL") d.setUTCFullYear(d.getUTCFullYear() - 1);
-  else if (cadence === "BIWEEKLY") d.setUTCDate(d.getUTCDate() - 14);
-  else d.setUTCDate(d.getUTCDate() - 7);
-  return d;
+export function subtractCadence(date: Date, cadence: BillCadence, anchorDay?: number): Date {
+  return stepCadence(date, cadence, -1, anchorDay);
 }
 
 function daysInMonth(year: number, monthIndex0: number): number {

@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Check, Pencil, Trash2, X } from "lucide-react";
-import { updateMember, deleteMember } from "./actions";
+import { Check, KeyRound, Pencil, Trash2, X } from "lucide-react";
+import { updateMember, deleteMember, createTwoFactorSetupLink } from "./actions";
 import { SelectField } from "@/components/select-field";
 import { showToast } from "@/lib/toast";
 import { PasswordInput } from "@/components/password-input";
@@ -34,6 +34,11 @@ export function MemberRow({ member, currentUserId }: { member: Member; currentUs
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const [linkPending, startLinkTransition] = useTransition();
+  // A 2FA setup link for this member — from a promotion that now requires
+  // TOTP (updateMember) or the 2FA Pending row's own link button.
+  const [setupUrl, setSetupUrl] = useState<string | null>(null);
+  const twoFactorPending = !member.needsSetup && member.role !== "CHILD" && !member.totpEnabled;
 
   function resetFields() {
     setName(member.name ?? "");
@@ -78,7 +83,20 @@ export function MemberRow({ member, currentUserId }: { member: Member; currentUs
         setPassword("");
         setConfirmPassword("");
         setEditing(false);
-        showToast("Member Saved");
+        if (result.setupUrl) setSetupUrl(result.setupUrl);
+        showToast(result.setupUrl ? "Member Saved — Send 2FA Setup Link" : "Member Saved");
+      }
+    });
+  }
+
+  function getSetupLink() {
+    startLinkTransition(async () => {
+      const result = await createTwoFactorSetupLink(member.id);
+      if (result.error) {
+        showToast(result.error, "error");
+      } else if (result.setupUrl) {
+        setSetupUrl(result.setupUrl);
+        showToast("2FA Setup Link Created");
       }
     });
   }
@@ -106,7 +124,18 @@ export function MemberRow({ member, currentUserId }: { member: Member; currentUs
           {ACCESS_LEVELS[currentLevel].label}
           {member.needsSetup
             ? " · Setup Pending"
-            : member.role !== "CHILD" && !member.totpEnabled && " · 2FA Pending"}
+            : twoFactorPending && " · 2FA Pending"}
+          {twoFactorPending && (
+            <button
+              onClick={getSetupLink}
+              disabled={linkPending}
+              aria-label="Get 2FA Setup Link"
+              title="Get 2FA Setup Link"
+              className="text-blue-900 dark:text-blue-300 disabled:opacity-50"
+            >
+              <KeyRound size={14} />
+            </button>
+          )}
           <button
             onClick={() => {
               if (editing) {
@@ -133,6 +162,16 @@ export function MemberRow({ member, currentUserId }: { member: Member; currentUs
           )}
         </span>
       </div>
+
+      {setupUrl && (
+        <div className="mt-2 rounded-lg bg-neutral-100 dark:bg-neutral-800 p-3 text-xs">
+          <p className="mb-1 font-medium">
+            2FA setup link — send this to them (they&apos;ll need it before they can log in
+            with a password; works once, expires in 7 days):
+          </p>
+          <code className="break-all">{setupUrl}</code>
+        </div>
+      )}
 
       {editing && (
         <div className="mt-3 flex flex-col gap-2 border-t border-blue-100 dark:border-neutral-800 pt-3">

@@ -1,5 +1,6 @@
 "use server";
 
+import { CLEARED_CLASSIFICATION } from "@/lib/classification-reset";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/lib/db";
@@ -101,13 +102,11 @@ export async function createIncomeFromTransaction(
   await db.transaction.update({
     where: { id: transactionId },
     data: {
+      ...CLEARED_CLASSIFICATION,
       incomeId: income.id,
       isIncome: true,
-      isTransfer: false,
-      bucketId: null,
-      debtId: null,
-      patternId: null,
-      aiSuggestedBucketId: null,
+      // Now tracked as recurring income, so no longer a one-time credit.
+      oneOff: false,
     },
   });
 

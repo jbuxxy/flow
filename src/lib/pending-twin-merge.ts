@@ -37,28 +37,53 @@ type Row = Record<string, unknown> & { isIncome: boolean; isTransfer: boolean; o
 
 const isSet = (v: unknown) => v != null && v !== "";
 
+// Fields that say what the charge IS. A transaction carries one
+// classification, so these move as a group: an unfiled twin takes the
+// phantom's whole classification, a filed twin keeps its own and takes none
+// of it. Merging field by field used to mix them — a twin auto-linked as a
+// card payment (debtId + isTransfer) also picked up the hold's Groceries
+// bucketId and counted as both (2026-10-08 review).
+const CLASSIFICATION_FIELDS = new Set<string>([
+  "bucketId",
+  "categoryId",
+  "debtId",
+  "billId",
+  "incomeId",
+  "patternId",
+  "aiSuggestedBucketId",
+  "aiSuggestedCategoryId",
+]);
+const CLASSIFICATION_FLAGS = ["isIncome", "isTransfer", "oneOff"] as const;
+
 // The update to apply to the twin. A confident twin always supersedes its
 // phantom (household rule, 2026-09-30: "a pending charge should always be
-// replaced by the actual processed transaction, regardless of bucket") — on a
-// disagreement the posted row keeps its own value, bar the bill case above.
+// replaced by the actual processed transaction, regardless of bucket") — a
+// filed twin keeps its own classification, bar the bill case above.
+// Non-classification fields (label, notes, reimbursement links) fill in
+// wherever the twin has none of its own.
 export function phantomTwinMergeData(phantom: Row, twin: Row): Record<string, unknown> {
-  const billWins = isSet(phantom.billId) && !LINK_FIELDS.some((f) => isSet(twin[f]));
-  // One link per charge: a twin already tied to a bill/debt/income/pattern
-  // doesn't also pick up the phantom's.
   const twinLinked = LINK_FIELDS.some((f) => isSet(twin[f]));
+  const twinFiled =
+    twinLinked || isSet(twin.bucketId) || isSet(twin.categoryId) || twin.isIncome || twin.isTransfer;
+  // The bill's filing beats a twin's generic merchant-rule fallback, but not
+  // a twin that's a debt payment or income.
+  const billWins = isSet(phantom.billId) && !twinLinked && !twin.isIncome && !twin.isTransfer;
+
   const data: Record<string, unknown> = {};
   for (const f of MIGRATABLE_ID_FIELDS) {
     const pv = phantom[f];
-    const tv = twin[f];
     if (!isSet(pv)) continue;
-    if (twinLinked && LINK_FIELDS.includes(f)) continue;
-    if (!isSet(tv)) data[f] = pv;
-    else if (tv !== pv) {
-      if (billWins && BILL_DERIVED_FIELDS.has(f)) data[f] = pv;
+    if (CLASSIFICATION_FIELDS.has(f)) {
+      if (!twinFiled) data[f] = pv;
+      else if (billWins && (f === "billId" || BILL_DERIVED_FIELDS.has(f)) && twin[f] !== pv) data[f] = pv;
+    } else if (!isSet(twin[f])) {
+      data[f] = pv;
     }
   }
-  for (const f of ["isIncome", "isTransfer", "oneOff"] as const) {
-    if (phantom[f] && !twin[f]) data[f] = true;
+  if (!twinFiled) {
+    for (const f of CLASSIFICATION_FLAGS) {
+      if (phantom[f] && !twin[f]) data[f] = true;
+    }
   }
   return data;
 }

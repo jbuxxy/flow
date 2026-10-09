@@ -71,16 +71,26 @@ describe("totp", () => {
 
   test("rejects an obviously-wrong code", async () => {
     const secret = generateTotpSecret();
-    assert.equal(await verifyTotpCode(secret, "abc"), false);
-    assert.equal(await verifyTotpCode(secret, ""), false);
-    assert.equal(await verifyTotpCode(secret, "000000"), false);
+    assert.equal(await verifyTotpCode(secret, "abc"), null);
+    assert.equal(await verifyTotpCode(secret, ""), null);
   });
 
   test("accepts a code generated for the same secret", async () => {
     const { generate } = await import("otplib");
     const secret = generateTotpSecret();
     const token = await generate({ secret });
-    assert.equal(await verifyTotpCode(secret, token), true);
+    const step = await verifyTotpCode(secret, token);
+    assert.equal(typeof step, "number");
+  });
+
+  test("rejects a replay: a code at or before the last accepted time step", async () => {
+    const { generate } = await import("otplib");
+    const secret = generateTotpSecret();
+    const token = await generate({ secret });
+    const step = await verifyTotpCode(secret, token);
+    assert.ok(step !== null);
+    assert.equal(await verifyTotpCode(secret, token, step), null);
+    assert.equal(await verifyTotpCode(secret, token, step - 1), step);
   });
 });
 

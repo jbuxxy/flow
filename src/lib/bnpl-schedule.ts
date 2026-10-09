@@ -59,15 +59,16 @@ export function buildBnplSchedule(opts: {
   const tail = opts.balanceCents - opts.paymentCents * (remaining - 1);
   const lastAmount = tail > 0 && tail <= opts.paymentCents * 1.5 ? tail : opts.paymentCents;
 
-  let date = opts.nextDueDate.slice(0, 10);
+  // Each date is i steps from the first, not a chain of single steps, so a
+  // month-end clamp (Jan 31 -> Feb 28) doesn't stick at the 28th.
+  const first = opts.nextDueDate.slice(0, 10);
   for (let i = 0; i < remaining; i++) {
     rows.push({
       number: paidCount + i + 1,
-      date,
+      date: i === 0 ? first : addCadenceISO(first, opts.cadence, i),
       amountCents: i === remaining - 1 ? lastAmount : opts.paymentCents,
       status: i === 0 ? "NEXT" : "UPCOMING",
     });
-    date = addCadenceISO(date, opts.cadence);
   }
   return rows;
 }

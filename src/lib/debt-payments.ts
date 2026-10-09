@@ -55,6 +55,7 @@ import { currentPeriodPatternWhere } from "@/lib/pattern-match";
 import { DAY_MS, classifyCadence, MIN_OCCURRENCES, getDismissedBillKeys, type BillSuggestion } from "@/lib/bill-detect";
 import { mapConcurrent } from "@/lib/concurrency";
 import { SPEND_TX_SELECT, netChargeCents } from "@/lib/spend";
+import { stepCadence } from "@/lib/cadence-step";
 import type { BillCadence } from "@prisma/client";
 
 // The debt-payment counterpart to src/lib/recurring-bills.ts — split out
@@ -688,10 +689,12 @@ export async function matchDebtPayments(householdId: string): Promise<void> {
     // `walkDate` keeps its value after the loop — it's the first due date
     // still within the grace window (or in the future), i.e. the correct
     // post-rollover nextDueDate (see the write below).
+    // Each boundary is a step count from nextDueDate (anchored, not
+    // chained), so a month-end clamp (Jan 31 -> Feb 28) doesn't stick.
     let walkDate = dp.nextDueDate;
     for (let i = 0; walkDate < rolloverCutoffUtc && i < MAX_CATCHUP_CYCLES; i++) {
-      cycleBounds.push({ start: subtractCadence(walkDate, dp.cadence), due: walkDate });
-      walkDate = nextBillDueDate(dp.cadence, walkDate, []);
+      cycleBounds.push({ start: stepCadence(dp.nextDueDate, dp.cadence, i - 1), due: walkDate });
+      walkDate = stepCadence(dp.nextDueDate, dp.cadence, i + 1);
     }
     // Before assuming any of these cycles went unpaid, two ways a real
     // payment for one can already be on file:

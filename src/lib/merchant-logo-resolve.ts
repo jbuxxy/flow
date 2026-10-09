@@ -56,14 +56,26 @@ async function logoExists(domain: string): Promise<boolean> {
  * blast radius of an LLM inventing a domain for something that turns out
  * not to be a business at all.
  */
-export async function resolveMerchantLogoDomain(merchant: string): Promise<string | null> {
+// Longer than any real merchant/bill name — a cap so the global cache table
+// can't be stuffed with arbitrary strings through the lookup route.
+export const MAX_MERCHANT_LOOKUP_LENGTH = 100;
+
+// `readOnly` (the public demo household): answer from the cache and curated
+// table only — no new cache row, no outbound HEAD request — so a demo
+// session can't grow the global table or use this as an outbound request
+// relay (2026-10-08 review; the proxy's demo block only covers POSTs).
+export async function resolveMerchantLogoDomain(
+  merchant: string,
+  { readOnly = false }: { readOnly?: boolean } = {},
+): Promise<string | null> {
   const key = normalize(merchant);
-  if (!key) return null;
+  if (!key || key.length > MAX_MERCHANT_LOOKUP_LENGTH) return null;
 
   const cached = await db.merchantLogoDomain.findUnique({ where: { merchant: key } });
   if (cached) return cached.domain;
 
   let domain = getCuratedDomain(merchant);
+  if (readOnly) return domain;
   if (!domain) {
     const guess = guessDomain(merchant);
     if (guess && (await logoExists(guess))) domain = guess;

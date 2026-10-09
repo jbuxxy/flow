@@ -368,11 +368,16 @@ export function BucketSettingsForm({
           Delete stacked right under Save was a misclick trap). Save Settings
           submits the form above by id — it sits past Categories / Amount
           Routing, which auto-save on their own. */}
-      <div className="flex items-center justify-between gap-3 border-t border-neutral-100 dark:border-neutral-800 pt-4">
+      <div
+        className={`flex items-center gap-3 border-t border-neutral-100 dark:border-neutral-800 pt-4 ${isOwner ? "justify-between" : "justify-end"}`}
+      >
+        {/* Deleting a bucket is owner-only, same as rename/cap/type
+            (deleteBucket enforces it server-side). */}
+        {isOwner && (
         <button
           type="button"
           onClick={() => {
-            if (!confirm(`Delete "${bucket.name}"? This removes its transactions too.`)) return;
+            if (!confirm(`Delete "${bucket.name}"? Its transactions stay, moved back to Needs a Bucket.`)) return;
             startDeleteTransition(async () => {
               try {
                 await deleteBucket(bucket.id);
@@ -389,6 +394,7 @@ export function BucketSettingsForm({
           <Trash2 size={14} />
           {deletePending ? "Deleting…" : "Delete Bucket"}
         </button>
+        )}
         <button
           type="submit"
           form={formId}

@@ -162,6 +162,7 @@ export async function getIncomeThisMonth(householdId: string): Promise<MonthlyIn
     }
 
     let cursor = income.nextPayDate!;
+    const anchorDay = cursor.getUTCDate(); // a MONTHLY month-end clamp mustn't stick at the 28th
     for (let i = 0; i < MAX_PROJECTED_OCCURRENCES && cursor < utcEnd; i++) {
       if (cursor >= utcStart) {
         entries.push({
@@ -173,7 +174,7 @@ export async function getIncomeThisMonth(householdId: string): Promise<MonthlyIn
           expectedDate: cursor,
         });
       }
-      cursor = addPaycheckCadence(cursor, income.cadence, income.semiMonthlyDays);
+      cursor = addPaycheckCadence(cursor, income.cadence, income.semiMonthlyDays, anchorDay);
     }
   }
 
@@ -357,6 +358,7 @@ export async function matchIncomePayments(householdId: string): Promise<void> {
     const matchText = income.merchant ?? income.name;
 
     let cyclePayDate = income.nextPayDate;
+    const anchorDay = cyclePayDate.getUTCDate();
 
     // Self-heal: lastReceivedDate can already be ahead of nextPayDate with
     // nothing left to search for (its own qualifying transaction is
@@ -368,7 +370,7 @@ export async function matchIncomePayments(householdId: string): Promise<void> {
       : null;
     if (receivedThroughMs !== null && cyclePayDate.getTime() <= receivedThroughMs) {
       cyclePayDate = fastForwardCycleDate(cyclePayDate, receivedThroughMs, MAX_CATCHUP_CYCLES, (d) =>
-        addPaycheckCadence(d, income.cadence, income.semiMonthlyDays),
+        addPaycheckCadence(d, income.cadence, income.semiMonthlyDays, anchorDay),
       );
       await db.income.update({ where: { id: income.id }, data: { nextPayDate: cyclePayDate } });
     }
@@ -377,7 +379,7 @@ export async function matchIncomePayments(householdId: string): Promise<void> {
     // cycle in a single pass risks bulk-linking several separate real
     // paychecks to one cycle (matchBillPayments' 2026-08-14 incident).
     for (let i = 0; i < MAX_CATCHUP_CYCLES; i++) {
-      const nextCyclePayDate = addPaycheckCadence(cyclePayDate, income.cadence, income.semiMonthlyDays);
+      const nextCyclePayDate = addPaycheckCadence(cyclePayDate, income.cadence, income.semiMonthlyDays, anchorDay);
       // Widens this cycle's own end to "now" once it's overdue — same
       // widening matchBillPayments/matchPatternPayments already do (shared
       // via catchupCycleWindow, not hand-copied a third time — the earlier

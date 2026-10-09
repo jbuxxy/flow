@@ -27,9 +27,14 @@ export async function recordFailedLogin(userId: string): Promise<void> {
     select: { failedLoginCount: true },
   });
   if (failedLoginCount >= MAX_ATTEMPTS) {
-    await db.user.update({
-      where: { id: userId },
-      data: { lockedUntil: new Date(Date.now() + LOCKOUT_MS) },
+    // Reset the count as the lock starts, so the window that opens when it
+    // expires gets a fresh MAX_ATTEMPTS. Leaving it at 5 meant every single
+    // later typo re-locked the account for another 15 minutes until a
+    // successful login (2026-10-08 review). The count >= MAX guard keeps
+    // concurrent failures from each re-extending the lock.
+    await db.user.updateMany({
+      where: { id: userId, failedLoginCount: { gte: MAX_ATTEMPTS } },
+      data: { lockedUntil: new Date(Date.now() + LOCKOUT_MS), failedLoginCount: 0 },
     });
   }
 }

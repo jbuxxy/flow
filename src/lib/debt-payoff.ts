@@ -1,5 +1,6 @@
 import type { BillCadence, PaycheckCadence } from "@prisma/client";
 import { addPaycheckCadence, subtractPaycheckCadence } from "@/lib/income-calc";
+import { stepCadence } from "@/lib/cadence-step";
 import { todayAsUTCDate } from "@/lib/date";
 
 // Pure module — no `db` import. simulatePayoff/projectPaymentCalendar run
@@ -60,11 +61,12 @@ export type DebtInput = {
 // kept local so this stays a dependency-free pure module.
 function occurrencesInMonth(anchor: Date, cadence: BillCadence, monthStart: Date): number {
   const monthEnd = new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() + 1, 1));
+  // i steps from anchor each time, not chained, so a clamp doesn't drift.
   let d = new Date(anchor);
   let count = 0;
-  while (d < monthEnd) {
+  for (let i = 1; d < monthEnd; i++) {
     if (d >= monthStart) count++;
-    d = addBillCadence(d, cadence);
+    d = stepCadence(anchor, cadence, i);
   }
   return count;
 }
@@ -115,15 +117,16 @@ export type IncomeSchedule = {
 export function projectPaycheckDates(income: IncomeSchedule, count: number, from?: Date): Date[] {
   const dates: Date[] = [];
   let d = new Date(from ?? income.nextPayDate);
+  const anchorDay = d.getUTCDate(); // keeps a MONTHLY month-end clamp from sticking at the 28th
   for (let i = 0; i < count; i++) {
     dates.push(new Date(d));
-    d = addPaycheckCadence(d, income.cadence, income.semiMonthlyDays);
+    d = addPaycheckCadence(d, income.cadence, income.semiMonthlyDays, anchorDay);
   }
   return dates;
 }
 
-// Walks income.nextPayDate backward (then forward, to correct any overshoot
-// — see subtractPaycheckCadence's month-end caveat) to the most recent real
+// Walks income.nextPayDate backward (then forward, to correct any overshoot)
+// to the most recent real
 // payday on or before `onOrBefore`. The result is always within one cadence
 // period of `onOrBefore`.
 //
@@ -141,10 +144,11 @@ export function projectPaycheckDates(income: IncomeSchedule, count: number, from
 // to point at.
 export function mostRecentPaydayOnOrBefore(income: IncomeSchedule, onOrBefore: Date): Date {
   let d = new Date(income.nextPayDate);
-  while (d.getTime() > onOrBefore.getTime()) d = subtractPaycheckCadence(d, income.cadence, income.semiMonthlyDays);
-  while (addPaycheckCadence(d, income.cadence, income.semiMonthlyDays).getTime() <= onOrBefore.getTime()) {
-    d = addPaycheckCadence(d, income.cadence, income.semiMonthlyDays);
-  }
+  const anchorDay = d.getUTCDate();
+  const back = (x: Date) => subtractPaycheckCadence(x, income.cadence, income.semiMonthlyDays, anchorDay);
+  const forward = (x: Date) => addPaycheckCadence(x, income.cadence, income.semiMonthlyDays, anchorDay);
+  while (d.getTime() > onOrBefore.getTime()) d = back(d);
+  while (forward(d).getTime() <= onOrBefore.getTime()) d = forward(d);
   return d;
 }
 
@@ -944,52 +948,10 @@ export type CyclePlanMonth = {
 // overflowing extra-payment pool cascades to) is fixed once at the start,
 // same as simulatePayoff — a debt that clears mid-cycle still hands its
 // leftover pool to the next debt in that same tick, automatically.
-// UTC setters, not local — nextDueDate is a `@db.Date` value, UTC midnight
-// for a specific calendar day (see src/lib/date.ts). Deliberately a
-// separate function from recurring-bills.ts's addCadence (same BillCadence
-// enum, same one-cadence-step logic) rather than importing it: that module
-// pulls in `db`/`ai`, and this one is a pure client-safe module (see the
-// file-level comment above) used from "use client" PayoffPlanner.
+// One cadence step, month-end clamped — the shared cadence-step.ts step
+// (this used to be the only one of four copies that clamped; see there).
 export function addBillCadence(date: Date, cadence: BillCadence): Date {
-  const d = new Date(date);
-  if (cadence === "MONTHLY") {
-    // Raw setUTCMonth(+1) on a day-29/30/31 anchor overflows into the
-    // *following* month when the target month is shorter (Jan 31 -> Mar 3,
-    // since February has no 31st) — silently skipping that month's
-    // occurrence entirely wherever this gets walked one month at a time
-    // (occurrencesInMonth below). Real finding, 2026-09-12 code review: a
-    // REVOLVING debt due on the 29th-31st read a $0 minimum for the
-    // skipped month in the payoff simulation. Clamp to the target month's
-    // real last day instead, same fix nextBillDueDate (recurring-bills.ts)
-    // already applies for its own MONTHLY step.
-    const day = d.getUTCDate();
-    // Date.UTC's own month-overflow normalization (not day-overflow) is
-    // exactly what's safe to rely on for the year-rollover case (December
-    // -> January) — set day 1 first so only the month/year carries.
-    const firstOfTarget = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1));
-    const daysInTargetMonth = new Date(
-      Date.UTC(firstOfTarget.getUTCFullYear(), firstOfTarget.getUTCMonth() + 1, 0),
-    ).getUTCDate();
-    return new Date(
-      Date.UTC(firstOfTarget.getUTCFullYear(), firstOfTarget.getUTCMonth(), Math.min(day, daysInTargetMonth)),
-    );
-  }
-  if (cadence === "ANNUAL") {
-    // Same overflow this function's own MONTHLY branch was just fixed for
-    // (real finding, 2026-09-12 code review, filed against this exact
-    // function): a raw setUTCFullYear(+1) on a Feb 29 anchor silently
-    // overflows to March 1 once it rolls into a non-leap year, since that
-    // year has no Feb 29. Clamp to the target year's real last day of the
-    // same month instead — for every month but February this is a no-op
-    // (every other month has the same day count every year).
-    const day = d.getUTCDate();
-    const targetYear = d.getUTCFullYear() + 1;
-    const daysInTargetMonth = new Date(Date.UTC(targetYear, d.getUTCMonth() + 1, 0)).getUTCDate();
-    return new Date(Date.UTC(targetYear, d.getUTCMonth(), Math.min(day, daysInTargetMonth)));
-  }
-  if (cadence === "BIWEEKLY") d.setUTCDate(d.getUTCDate() + 14);
-  else d.setUTCDate(d.getUTCDate() + 7); // WEEKLY
-  return d;
+  return stepCadence(date, cadence, 1);
 }
 
 // Single source of truth for "the real next due date, once this cycle is
@@ -1190,14 +1152,18 @@ export function projectCyclePlan(
     // showed its remaining ~$40 balance projected as ~$15 — one extra
     // minimum + interest tick — then "paid off" by the next paycheck's
     // extra pool). Roll forward to the genuine next occurrence.
+    // Every date is a step count from the original due date (anchored, not
+    // chained), so a month-end clamp doesn't drift to the 28th.
+    const dueAnchor = dueDate;
+    let step = 0;
     if (minimumSatisfied.has(id)) {
-      while (dueDate <= startDate) dueDate = addBillCadence(dueDate, cadence);
+      while (dueDate <= startDate) dueDate = stepCadence(dueAnchor, cadence, ++step);
     }
     let visible = minimumSatisfied.has(id);
     for (let i = 0; i < occurrencesNeeded; i++) {
       events.push({ kind: "due", date: dueDate, debtId: id, visible });
       visible = true;
-      dueDate = addBillCadence(dueDate, cadence);
+      dueDate = stepCadence(dueAnchor, cadence, ++step);
     }
   }
   events.sort((a, b) => a.date.getTime() - b.date.getTime());

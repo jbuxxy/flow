@@ -124,6 +124,8 @@ export type UnmatchedRefund = {
   merchant: string;
   amountCents: number;
   occurredOn: Date;
+  // Import time — the refund-review nudge's "anything new?" anchor.
+  createdAt: Date;
   candidates: RefundCandidate[];
 };
 
@@ -159,7 +161,7 @@ export async function getUnmatchedRefunds(householdId: string): Promise<Unmatche
       ...budgetTrackedWhere(),
     },
     orderBy: { occurredOn: "desc" },
-    select: { id: true, merchant: true, amountCents: true, occurredOn: true },
+    select: { id: true, merchant: true, amountCents: true, occurredOn: true, createdAt: true },
   });
   const out: UnmatchedRefund[] = [];
   for (const credit of credits) {

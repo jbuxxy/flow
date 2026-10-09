@@ -223,9 +223,20 @@ export async function autoApplyAdHocIncomeToBuckets(householdId: string): Promis
   const adHoc = await getAdHocIncomeThisMonth(householdId);
   if (adHoc.entries.length === 0) return;
 
-  const [progress, buckets] = await Promise.all([
+  const topUpsByBucket = async (client: Pick<typeof db, "bucketAdHocTopUp">) =>
+    new Map(
+      (
+        await client.bucketAdHocTopUp.groupBy({
+          by: ["bucketId"],
+          where: { householdId, periodKey },
+          _sum: { amountCents: true },
+        })
+      ).map((r) => [r.bucketId, r._sum.amountCents ?? 0]),
+    );
+  const [progress, buckets, topUpsAtRead] = await Promise.all([
     getBucketsWithProgress(householdId), // already folds in prior top-ups this period
     db.bucket.findMany({ where: { householdId }, select: { id: true, name: true, sortOrder: true } }),
+    topUpsByBucket(db),
   ]);
   const sortOrderById = new Map(buckets.map((b) => [b.id, b.sortOrder]));
   const nameById = new Map(buckets.map((b) => [b.id, b.name]));
@@ -262,6 +273,20 @@ export async function autoApplyAdHocIncomeToBuckets(householdId: string): Promis
         });
         const drawnBySource = new Map(alreadyDrawn.map((r) => [r.sourceTransactionId, r._sum.amountCents ?? 0]));
 
+        // `targets` came from a progress read outside this transaction. A
+        // draw another run committed since then already covered part of an
+        // overage — without this, a run starting after it still saw the
+        // full overage and drew it a second time (2026-10-08 review; SSI
+        // can't catch it because the two transactions never overlap).
+        const topUpsNow = await topUpsByBucket(tx);
+        const liveTargets = targets
+          .map((t) => ({
+            ...t,
+            overageCents: t.overageCents - ((topUpsNow.get(t.id) ?? 0) - (topUpsAtRead.get(t.id) ?? 0)),
+          }))
+          .filter((t) => t.overageCents > 0);
+        if (liveTargets.length === 0) return [];
+
         // Oldest first — the same "spend the earliest dollar first"
         // convention this app already uses for reconciling other running pools.
         const sourceEntries: TopUpSourceEntry[] = [...adHoc.entries]
@@ -270,7 +295,7 @@ export async function autoApplyAdHocIncomeToBuckets(householdId: string): Promis
           .filter((e) => e.remainingCents > 0);
         if (sourceEntries.length === 0) return []; // this month's ad hoc income is already fully spoken for
 
-        const computedDraws = allocateAdHocSurplus(sourceEntries, targets);
+        const computedDraws = allocateAdHocSurplus(sourceEntries, liveTargets);
         if (computedDraws.length === 0) return [];
 
         await tx.bucketAdHocTopUp.createMany({

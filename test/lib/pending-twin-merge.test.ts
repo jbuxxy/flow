@@ -28,6 +28,24 @@ describe("phantomTwinMergeData", () => {
     assert.deepEqual(phantomTwinMergeData(p, row({ debtId: "d", bucketId: "x" })), {});
   });
 
+  test("a filed twin never mixes in the phantom's different classification", () => {
+    // Regression (2026-10-08 review): a twin auto-linked as a card payment
+    // also took the hold's bucket and counted as both spend and a payment.
+    const debtTwin = row({ debtId: "card", isTransfer: true });
+    assert.deepEqual(phantomTwinMergeData(row({ bucketId: "groceries", categoryId: "c" }), debtTwin), {});
+    // An income phantom doesn't flag a bucketed twin as income too.
+    assert.deepEqual(phantomTwinMergeData(row({ isIncome: true, oneOff: true }), row({ bucketId: "b" })), {});
+    // A bill can't override a twin that's a debt payment, even with no debtId.
+    assert.deepEqual(phantomTwinMergeData(row({ billId: "bill", bucketId: "subs" }), row({ isTransfer: true })), {});
+  });
+
+  test("an unfiled twin takes the phantom's whole classification, flags included", () => {
+    assert.deepEqual(phantomTwinMergeData(row({ isIncome: true, incomeId: "pay" }), row()), {
+      incomeId: "pay",
+      isIncome: true,
+    });
+  });
+
   test("the bill only overrides bill-derived fields, not a label", () => {
     assert.deepEqual(phantomTwinMergeData(row({ billId: "bill", label: "a" }), row({ label: "b" })), { billId: "bill" });
   });

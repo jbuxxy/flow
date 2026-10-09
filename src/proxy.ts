@@ -7,5 +7,9 @@ const { auth } = NextAuth(authConfig);
 export const proxy = auth;
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|.*\\.png$|.*\\.svg$).*)"],
+  // Skip by directory, never by file extension: an extension exclusion
+  // (`.*\.png$`) also skipped a POST to a dynamic page route like
+  // /buckets/x.png, bypassing the demo-household POST block in
+  // auth.config.ts. Every static image lives under /icons/.
+  matcher: ["/((?!_next/static|_next/image|icons/).*)"],
 };

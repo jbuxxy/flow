@@ -6,10 +6,10 @@ import { isDemoHousehold } from "@/lib/demo";
 import { fetchSimpleFinData, decimalStringToCents, type SimpleFinAccount } from "@/lib/simplefin";
 import { checkAndSendGoalAlerts } from "@/lib/savings";
 import { autoApplyAdHocIncomeToBuckets } from "@/lib/bucket-ad-hoc-topup";
-import { checkAndSendBucketAlerts } from "@/lib/buckets";
+import { checkAndSendBucketAlertsFor } from "@/lib/buckets";
 import { suggestBucketsForMerchants, suggestCategoriesForMerchants, suggestP2PClassifications } from "@/lib/ai";
 import { pollHouseholdEmails, matchReceipts, purgeStaleReceipts } from "@/lib/receipt-sync";
-import { trackSync } from "@/lib/sync-in-flight";
+import { singleFlight, trackSync } from "@/lib/sync-in-flight";
 import { matchBillNoticeAmounts, purgeStaleBillNotices } from "@/lib/bill-notice-sync";
 import { reclassifyFromReceipts } from "@/lib/receipt-reclassify";
 import { upsertMerchantRule, pickMerchantRule } from "@/lib/merchant-rules";
@@ -1657,9 +1657,7 @@ export async function categorizeUncategorizedTransactions(householdId: string): 
     select: { bucketId: true },
     distinct: ["bucketId"],
   });
-  for (const { bucketId } of autoFiled) {
-    if (bucketId) await checkAndSendBucketAlerts(bucketId);
-  }
+  await checkAndSendBucketAlertsFor(autoFiled.flatMap((t) => (t.bucketId ? [t.bucketId] : [])));
 }
 
 // The ordinary-merchant AI-guess pass — batched per unique merchant, one
@@ -1878,8 +1876,9 @@ async function runP2PAiSuggestions(
 export type SyncResult = { accountsSynced: number; transactionsSynced: number };
 
 export function syncHousehold(householdId: string): Promise<SyncResult> {
-  // Tracked so the scheduled nudge checks wait for it (see sync-in-flight.ts).
-  return trackSync(runHouseholdSync(householdId));
+  // Tracked so the scheduled nudge checks wait for it, and single-flight per
+  // household so overlapping triggers share one run (see sync-in-flight.ts).
+  return singleFlight(householdId, () => trackSync(runHouseholdSync(householdId)));
 }
 
 async function runHouseholdSync(householdId: string): Promise<SyncResult> {

@@ -167,12 +167,21 @@ export async function setBucketAlertOverride(
   revalidatePath(`/buckets/${bucketId}`);
 }
 
+// Owner-only, same as renaming or changing a bucket's cap/type
+// (updateBucketSettings) — this used to check only household ownership, so a
+// Basic Access member could delete any bucket (2026-10-08 review).
 export async function deleteBucket(bucketId: string) {
-  const session = await auth();
-  if (!session?.user) redirect("/login");
+  const session = await requireOwner();
 
   const bucket = await requireOwned(db.bucket.findUnique({ where: { id: bucketId } }), session.user.householdId);
-  await db.bucket.delete({ where: { id: bucket.id } });
+  // Transactions survive (Transaction.bucket is onDelete: SetNull) and fall
+  // back to Needs a Bucket — clear their category too, since this bucket's
+  // categories go bucketless and a category only means something inside
+  // its bucket.
+  await db.$transaction([
+    db.transaction.updateMany({ where: { bucketId: bucket.id }, data: { categoryId: null } }),
+    db.bucket.delete({ where: { id: bucket.id } }),
+  ]);
 
   revalidatePath("/buckets");
   redirect("/buckets");

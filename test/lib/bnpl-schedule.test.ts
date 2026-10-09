@@ -69,14 +69,19 @@ describe("buildBnplSchedule", () => {
     assert.equal(rows.at(-1)!.amountCents, 2500);
   });
 
-  test("monthly from the 31st chains like the server's addCadence", () => {
+  test("monthly from the 31st clamps to each month's last day without drifting", () => {
+    // Was Jan 31 -> Mar 3 (raw setUTCMonth overflow), skipping February.
     const rows = buildBnplSchedule({
       ...base,
+      installmentsTotal: 6,
       cadence: "MONTHLY",
       nextDueDate: "2027-01-31",
-      installmentsRemaining: 2,
+      installmentsRemaining: 4,
     });
-    assert.deepEqual(rows.slice(2).map((r) => r.date), ["2027-01-31", "2027-03-03"]);
+    assert.deepEqual(
+      rows.slice(2).map((r) => r.date),
+      ["2027-01-31", "2027-02-28", "2027-03-31", "2027-04-30"],
+    );
   });
 
   test("no total or no next due date: nothing projected", () => {

@@ -41,16 +41,19 @@ export type RawEmail = {
 };
 
 // Gmail (and every other provider we care about) uses implicit TLS on 993;
-// 143 would be STARTTLS. No plaintext fallback.
-function isSecurePort(port: number): boolean {
-  return port !== 143;
+// 143 is STARTTLS — required, not opportunistic. imapflow's default only
+// upgrades when the server advertises STARTTLS and otherwise logs in over
+// cleartext (or a stripped capability list downgrades it), so 143 has to
+// set doSTARTTLS: true explicitly (2026-10-08 review). No plaintext fallback.
+function tlsOptions(port: number): { secure: boolean; doSTARTTLS?: boolean } {
+  return port === 143 ? { secure: false, doSTARTTLS: true } : { secure: true };
 }
 
 function buildClient(config: EmailConfig): ImapFlow {
   return new ImapFlow({
     host: config.host,
     port: config.port,
-    secure: isSecurePort(config.port),
+    ...tlsOptions(config.port),
     auth: { user: config.user, pass: config.password },
     // One-shot fetches, not a long-lived idle connection.
     disableAutoIdle: true,
@@ -133,7 +136,7 @@ export async function verifyEmailConfig(config: EmailConfig): Promise<string | n
   const client = new ImapFlow({
     host: config.host,
     port: config.port,
-    secure: isSecurePort(config.port),
+    ...tlsOptions(config.port),
     auth: { user: config.user, pass: config.password },
     logger: false,
     socketTimeout: 30_000,
@@ -205,8 +208,20 @@ export async function openMailbox(config: EmailConfig): Promise<MailboxSession> 
   // Re-checked on every poll, not just at save time — see ssrf-guard.ts.
   await assertPublicHost(config.host);
   const client = buildClient(config);
-  await client.connect();
-  const lock = await client.getMailboxLock("INBOX", { readOnly: true });
+  let lock: Awaited<ReturnType<ImapFlow["getMailboxLock"]>>;
+  try {
+    await client.connect();
+    lock = await client.getMailboxLock("INBOX", { readOnly: true });
+  } catch (err) {
+    // Without this, a failed INBOX select leaked one logged-in connection
+    // per poll until the provider's per-account limit broke later polls.
+    try {
+      await client.logout();
+    } catch {
+      client.close();
+    }
+    throw err;
+  }
 
   return {
     async fetchWindow(opts) {

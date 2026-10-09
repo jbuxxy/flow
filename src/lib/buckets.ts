@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { runOnce } from "@/lib/run-once";
 import { currentPeriodKey, utcPeriodBounds, monthElapsedFraction, daysAgo } from "@/lib/period";
 import { occurrencesInPeriod } from "@/lib/cycle-slots";
 import { sendPushToBucketForType } from "@/lib/push";
@@ -519,7 +520,13 @@ const ONE_TIME_ALERT_PERIOD = "ONE_TIME";
 // concurrent transaction writes can't double-send), plus — for a bucket with
 // transactionAlertEnabled — one BUCKET_TRANSACTION push per not-yet-alerted
 // transaction currently in the period (see sendUnalertedBucketTransactions).
-export async function checkAndSendBucketAlerts(bucketId: string): Promise<void> {
+//
+// `spend` lets a caller checking many buckets at once share one
+// household-wide spend + top-up read (checkAndSendBucketAlertsFor below)
+// instead of every bucket recomputing the whole household's month.
+type AlertSpendContext = { period: string; spendByBucket: Map<string, number>; topUpByBucket: Map<string, number> };
+
+export async function checkAndSendBucketAlerts(bucketId: string, spend?: AlertSpendContext): Promise<void> {
   const bucket = await db.bucket.findUnique({
     where: { id: bucketId },
     include: {
@@ -550,8 +557,15 @@ export async function checkAndSendBucketAlerts(bucketId: string): Promise<void> 
     ? netSpendCents(
         await db.transaction.findMany({ where: { bucketId }, select: SPEND_TX_SELECT, take: 2000 }),
       )
-    : ((await spendByBucketInRange(bucket.householdId, utcStart, utcEnd)).get(bucketId) ?? 0);
-  const topUpCents = (await getBucketTopUpCentsByBucketId(bucket.householdId, period)).get(bucketId) ?? 0;
+    : ((spend?.period === period
+        ? spend.spendByBucket
+        : await spendByBucketInRange(bucket.householdId, utcStart, utcEnd)
+      ).get(bucketId) ?? 0);
+  const topUpCents =
+    (spend?.period === period
+      ? spend.topUpByBucket
+      : await getBucketTopUpCentsByBucketId(bucket.householdId, period)
+    ).get(bucketId) ?? 0;
   // needsAttention doesn't factor into alert thresholds — irrelevant here.
   const progress = computeProgress(bucket, spentCents, paceFraction, paceBasis, false, topUpCents);
 
@@ -592,27 +606,22 @@ export async function checkAndSendBucketAlerts(bucketId: string): Promise<void> 
     });
   }
 
+  // Once per bucket/period/level (see run-once.ts). Never throws — this runs
+  // inside simplefin-sync without a catch, and a failed push mustn't abort
+  // the sync; it releases its claim and retries next run instead.
   for (const { level, title, body, period: alertPeriod } of levelsToTry) {
-    // skipDuplicates rather than create-and-catch: same once-per-period/level
-    // dedup without a Postgres unique-violation ERROR on every re-check.
-    // Real DB errors still skip (not throw) — simplefin-sync calls this
-    // without a catch, and a failed claim shouldn't abort the sync.
-    let claimed: number;
-    try {
-      ({ count: claimed } = await db.bucketAlert.createMany({
-        data: [{ bucketId, period: alertPeriod ?? period, level }],
-        skipDuplicates: true,
-      }));
-    } catch (err) {
-      console.error(`[buckets] alert claim failed for bucket ${bucketId} (${level}):`, err);
-      continue;
-    }
-    if (claimed === 0) continue; // already notified this period/level
-    await sendPushToBucketForType(bucket.id, bucket.householdId, NOTIFICATION_TYPE_BY_ALERT_LEVEL[level], {
-      title,
-      body,
-      url: `/buckets/${bucket.id}`,
-    });
+    const row = { bucketId, period: alertPeriod ?? period, level };
+    await runOnce(
+      `bucket alert ${bucketId} ${level}`,
+      () => db.bucketAlert.createMany({ data: [row], skipDuplicates: true }),
+      () => db.bucketAlert.deleteMany({ where: row }),
+      () =>
+        sendPushToBucketForType(bucket.id, bucket.householdId, NOTIFICATION_TYPE_BY_ALERT_LEVEL[level], {
+          title,
+          body,
+          url: `/buckets/${bucket.id}`,
+        }),
+    );
   }
 
   if (bucket.transactionAlertEnabled) {
@@ -680,34 +689,58 @@ async function sendUnalertedBucketTransactions(
   }
 
   for (const t of unalerted) {
-    try {
-      // The dedup row is created (and keyed) off this transaction's own id,
-      // which SimpleFIN sync upserts in place across pending -> posted (see
-      // simplefin-sync.ts) rather than creating a new row — so a pending
-      // transaction that fires this alert here is never re-alerted once it
-      // settles, even if the posted amount differs from the pending hold
-      // (household requirement, 2026-09-24).
-      await db.bucketTransactionAlert.create({ data: { transactionId: t.id } });
-    } catch {
-      continue; // unique constraint hit — already alerted (race with another caller)
-    }
-    // A funded one-time bucket already got (or is getting, from the caller's
-    // level loop) its single "Fully Funded" push — the charge that completes
-    // it, and any after, stay silent instead of doubling up. The row above is
-    // still recorded so it can never re-alert later.
-    if (oneTimeStatus?.fullyFunded) continue;
-
     const dayTxns = byDay.get(t.occurredOn.getTime()) ?? [];
     const dailyCount = dayTxns.length;
     const dailyLine = `${dailyCount} transaction${dailyCount === 1 ? "" : "s"} today totaling ${formatCents(netSpendCents(dayTxns))}.`;
 
-    await sendPushToBucketForType(bucketId, householdId, "BUCKET_TRANSACTION", {
-      title: `${formatCents(Math.abs(t.amountCents))} at ${t.merchant}`,
-      body: oneTimeStatus
-        ? `${bucketName}: ${formatCents(spentCents)} of ${formatCents(monthlyCapCents)} funded (${oneTimeStatus.pctFunded}%). ${dailyLine}`
-        : `${bucketName}: ${formatCents(spentCents)} of ${formatCents(monthlyCapCents)} spent this month. ${dailyLine}`,
-      url: `/buckets/${bucketId}`,
-    });
+    // The dedup row is keyed off this transaction's own id, which SimpleFIN
+    // sync upserts in place across pending -> posted (see simplefin-sync.ts)
+    // rather than creating a new row — so a pending transaction that fires
+    // this alert here is never re-alerted once it settles, even if the
+    // posted amount differs from the pending hold (household requirement,
+    // 2026-09-24). Same claim rules as every once-only push (run-once.ts).
+    await runOnce(
+      `transaction alert ${t.id}`,
+      () => db.bucketTransactionAlert.createMany({ data: [{ transactionId: t.id }], skipDuplicates: true }),
+      () => db.bucketTransactionAlert.deleteMany({ where: { transactionId: t.id } }),
+      async () => {
+        // A funded one-time bucket already got (or is getting, from the
+        // caller's level loop) its single "Fully Funded" push — the charge
+        // that completes it, and any after, stay silent instead of doubling
+        // up. The claim is still kept so it can never re-alert later.
+        if (oneTimeStatus?.fullyFunded) return;
+        await sendPushToBucketForType(bucketId, householdId, "BUCKET_TRANSACTION", {
+          title: `${formatCents(Math.abs(t.amountCents))} at ${t.merchant}`,
+          body: oneTimeStatus
+            ? `${bucketName}: ${formatCents(spentCents)} of ${formatCents(monthlyCapCents)} funded (${oneTimeStatus.pctFunded}%). ${dailyLine}`
+            : `${bucketName}: ${formatCents(spentCents)} of ${formatCents(monthlyCapCents)} spent this month. ${dailyLine}`,
+          url: `/buckets/${bucketId}`,
+        });
+      },
+    );
+  }
+}
+
+// checkAndSendBucketAlerts for several buckets (a sync's auto-filed buckets,
+// a receipt reclassify's touched ones), reading each household's month of
+// spend and top-ups once rather than once per bucket.
+export async function checkAndSendBucketAlertsFor(bucketIds: Iterable<string>): Promise<void> {
+  const ids = [...new Set(bucketIds)];
+  if (ids.length === 0) return;
+  const buckets = await db.bucket.findMany({ where: { id: { in: ids } }, select: { id: true, householdId: true } });
+  const period = currentPeriodKey();
+  const { start, end } = utcPeriodBounds(period);
+  const contexts = new Map<string, Promise<AlertSpendContext>>();
+  for (const b of buckets) {
+    let ctx = contexts.get(b.householdId);
+    if (!ctx) {
+      ctx = Promise.all([
+        spendByBucketInRange(b.householdId, start, end),
+        getBucketTopUpCentsByBucketId(b.householdId, period),
+      ]).then(([spendByBucket, topUpByBucket]) => ({ period, spendByBucket, topUpByBucket }));
+      contexts.set(b.householdId, ctx);
+    }
+    await checkAndSendBucketAlerts(b.id, await ctx);
   }
 }
 

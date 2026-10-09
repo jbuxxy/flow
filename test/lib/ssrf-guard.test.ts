@@ -52,4 +52,30 @@ describe("isDisallowedIp", () => {
   test("allows a real public IPv6 address", () => {
     assert.equal(isDisallowedIp("2606:4700:4700::1111"), false);
   });
+
+  test("blocks all of fe80::/10, not just the literal fe80 prefix", () => {
+    assert.equal(isDisallowedIp("fe90::1"), true);
+    assert.equal(isDisallowedIp("febf::1"), true);
+    assert.equal(isDisallowedIp("fec0::1"), true); // site-local
+    assert.equal(isDisallowedIp("ff02::1"), true); // multicast
+  });
+
+  test("checks IPv4 embedded in compatible, NAT64 and 6to4 addresses", () => {
+    assert.equal(isDisallowedIp("::10.0.0.5"), true);
+    assert.equal(isDisallowedIp("64:ff9b::a00:5"), true);
+    assert.equal(isDisallowedIp("64:ff9b::808:808"), false);
+    assert.equal(isDisallowedIp("64:ff9b:1::1"), true);
+    assert.equal(isDisallowedIp("2002:c0a8:0101::1"), true); // 6to4 of 192.168.1.1
+    assert.equal(isDisallowedIp("2001:0:4136:e378::1"), true); // Teredo
+  });
+
+  test("blocks IPv4 multicast, broadcast and benchmarking ranges", () => {
+    assert.equal(isDisallowedIp("224.0.0.1"), true);
+    assert.equal(isDisallowedIp("255.255.255.255"), true);
+    assert.equal(isDisallowedIp("198.18.0.1"), true);
+  });
+
+  test("allows a real public IPv6 address", () => {
+    assert.equal(isDisallowedIp("2606:4700:4700::1111"), false);
+  });
 });
