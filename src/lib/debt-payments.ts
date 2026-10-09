@@ -12,6 +12,7 @@ import {
   type UpcomingBill,
 } from "@/lib/recurring-bills";
 import {
+  capAtPayoffCents,
   nextPaidOffDate,
   projectCyclePlan,
   debtsWithInsufficientMinimum,
@@ -1758,6 +1759,7 @@ export async function getDebtPaymentsThisWeek(householdId: string, weekOf: Date 
           name: true,
           debtType: true,
           balanceCents: true,
+          aprBasisPoints: true,
           includeInPayoffPlan: true,
           purchaseDate: true,
           installmentsRemaining: true,
@@ -2130,13 +2132,18 @@ export async function getDebtPaymentsThisWeek(householdId: string, weekOf: Date 
 
       // "Still expected this week" — what the household is still on the hook
       // for. Feeds the dashboard's "due this week" total.
-      const stillOwedMinimumCents = minimumMet
-        ? 0
-        : isInstallment
-          ? minimumCents
-          : dueDateInWeek
-            ? Math.max(0, owedThisWeekCents - receivedCents)
-            : Math.max(0, dp.amountDueCents);
+      // Never more than it takes to pay the debt off (capAtPayoffCents) — a
+      // $65 minimum on a card with $59.27 left is owed as $59.27.
+      const stillOwedMinimumCents = capAtPayoffCents(
+        minimumMet
+          ? 0
+          : isInstallment
+            ? minimumCents
+            : dueDateInWeek
+              ? Math.max(0, owedThisWeekCents - receivedCents)
+              : Math.max(0, dp.amountDueCents),
+        dp.debt,
+      );
       // Full obligation still on the books this week: the rolling minimum
       // still due plus the *whole* payoff-plan allocation. A partial payment
       // that's already landed does NOT net down the plan's figure here — the
@@ -2154,17 +2161,23 @@ export async function getDebtPaymentsThisWeek(householdId: string, weekOf: Date 
       // missing half (that sum then double-counts anything paid past the
       // minimum — a $101 payment on a no-minimum $140.80 payoff target read
       // as "$101 / $241.80"). 0 when nothing's due this week.
-      const minimumDueCents = isInstallment
-        ? installmentDone || dp.nextDueDate >= end
-          ? 0
-          : minimumCents
-        : dueDateInWeek
-          ? tracksMinimum && !settledAfterWeek
-            ? owedThisWeekCents
-            : 0
-          : minimumMet
+      // Capped the same way: what's been paid this week plus the payoff
+      // amount still left, so "$X / $Y" never reads past the balance.
+      const minimumDueCents = capAtPayoffCents(
+        isInstallment
+          ? installmentDone || dp.nextDueDate >= end
             ? 0
-            : Math.max(dp.amountDueCents, 0);
+            : minimumCents
+          : dueDateInWeek
+            ? tracksMinimum && !settledAfterWeek
+              ? owedThisWeekCents
+              : 0
+            : minimumMet
+              ? 0
+              : Math.max(dp.amountDueCents, 0),
+        dp.debt,
+        receivedCents,
+      );
 
       // Surplus toward principal: this cycle's total over the minimum + the
       // planned payoff extra, capped at what landed *this week* and only
@@ -3747,7 +3760,9 @@ export async function getPaymentCalendarThisCycle(
       // minDisplayCents and This Week's Bills' owedThisWeekCents. A $0-minimum
       // debt (ignoreMinimumPayment / paid in full each cycle) still gets no
       // "$0.00 due" cell (household report, 2026-08-31).
-      const minimumOwedCents = Math.max(p.amountDueCents, p.amountCents);
+      // Capped at the payoff amount (capAtPayoffCents): a $65 minimum on a
+      // card with $59.27 left is a $59.27 due cell.
+      const minimumOwedCents = capAtPayoffCents(Math.max(p.amountDueCents, p.amountCents), d);
       if (d.balanceCents > 0 && corrected && !corrected.cyclePaid && minimumOwedCents > 0) {
         add(corrected.date, debtDisplayName(d), minimumOwedCents, "due", d.includeInPayoffPlan);
       }
@@ -4166,7 +4181,11 @@ export async function getPaymentCalendarIcsEvents(householdId: string): Promise<
     const corrected = dueDateByDebtId.get(d.id);
     // Never less than the regular minimum — see getPaymentCalendarThisCycle's
     // identical minimumOwedCents (2026-10-03).
-    const amountDueCents = Math.max(amountDueByDebtId.get(d.id) ?? 0, minimumByDebtId.get(d.id) ?? 0);
+    // Capped at the payoff amount, same as the in-app calendar's due cell.
+    const amountDueCents = capAtPayoffCents(
+      Math.max(amountDueByDebtId.get(d.id) ?? 0, minimumByDebtId.get(d.id) ?? 0),
+      d,
+    );
     if (!corrected || corrected.cyclePaid || amountDueCents <= 0) continue;
     const day = ymd(corrected.date);
     if (emittedUids.has(`${d.id}-minimum-${day}`)) continue;

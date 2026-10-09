@@ -14,7 +14,7 @@ import {
 } from "@/lib/debt-payments";
 import { coveredMinimumDates, ledgerMinimumCents } from "@/lib/minimum-ledger";
 import { ACCOUNTED_FOR_SELECT, accountedForCents, accountedForDisplayList } from "@/lib/spend";
-import { confirmProjectedExtras } from "@/lib/debt-payoff";
+import { confirmProjectedExtras, capAtPayoffCents } from "@/lib/debt-payoff";
 import { currentPeriodKey, utcPeriodBounds } from "@/lib/period";
 import { splitPlanExtraPayments, buildCycleSlots, slotBounds, cyclePaymentStatus } from "@/lib/cycle-slots";
 import {
@@ -119,6 +119,7 @@ export default async function RecurringPage() {
               debtType: true,
               purchaseDate: true,
               balanceCents: true,
+              aprBasisPoints: true,
               paidOffDate: true,
               includeInPayoffPlan: true,
               ignoreMinimumPayment: true,
@@ -381,6 +382,7 @@ export default async function RecurringPage() {
       debtLabel: p.debt.label,
       balanceCents: p.debt.balanceCents,
       amountCents: p.amountCents,
+      dueLineCents: capAtPayoffCents(p.amountCents, p.debt),
       toleranceCents: p.toleranceCents,
       cadence: p.cadence,
       categoryId: p.categoryId,

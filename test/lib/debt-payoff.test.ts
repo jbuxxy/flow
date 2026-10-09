@@ -18,6 +18,8 @@ import {
   simulatePayoff,
   supersededPayoffExtraCents,
   supersededPayoffTargetAmounts,
+  capAtPayoffCents,
+  payoffAmountCents,
 } from "@/lib/debt-payoff";
 import { debt, income, utc } from "../helpers.ts";
 
@@ -864,3 +866,40 @@ describe("splitPlanExtraPayments", () => {
     assert.equal(splitPlanExtraPayments([{ amountCents: 10_000, occurredOn: utc(2026, 10, 12) }], planned).planExtraPayments.length, 0);
   });
 });
+
+describe("capAtPayoffCents", () => {
+  const card = (balanceCents: number, aprBasisPoints = 0) => ({ balanceCents, aprBasisPoints, debtType: "REVOLVING" });
+
+  test("a minimum above what's left to pay off is owed as the payoff amount", () => {
+    // Household report, 2026-10-09: PayPal Credit, $65 minimum, $59.27 left at 0% APR.
+    assert.equal(capAtPayoffCents(6500, card(5927)), 5927);
+  });
+
+  test("a card with interest owes the balance plus one month's interest", () => {
+    // $50.00 at 24% APR: 2%/month = $1.00 of interest before the payment.
+    assert.equal(payoffAmountCents(card(5000, 2400)), 5100);
+    assert.equal(capAtPayoffCents(6500, card(5000, 2400)), 5100);
+  });
+
+  test("an installment plan accrues no interest per payment", () => {
+    assert.equal(payoffAmountCents({ balanceCents: 1500, aprBasisPoints: 999, debtType: "INSTALLMENT" }), 1500);
+  });
+
+  test("a minimum below the payoff amount is untouched", () => {
+    assert.equal(capAtPayoffCents(6500, card(20000, 2015)), 6500);
+  });
+
+  test("a paid-off debt is left to its callers' own handling", () => {
+    assert.equal(payoffAmountCents(card(0)), null);
+    assert.equal(capAtPayoffCents(6500, card(0)), 6500);
+  });
+
+  test("paid-so-far counts toward the headline, so a paid minimum isn't re-read as a smaller one", () => {
+    // $65 paid against a $100 balance leaves $35: the cycle's minimum is
+    // still $65, not $35 of minimum plus $30 extra.
+    assert.equal(capAtPayoffCents(6500, card(3500), 6500), 6500);
+    // $30 paid toward a $59.27 payoff leaves $29.27: the headline is $59.27.
+    assert.equal(capAtPayoffCents(6500, card(2927), 3000), 5927);
+  });
+});
+

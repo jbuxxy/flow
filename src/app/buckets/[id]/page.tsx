@@ -25,7 +25,7 @@ import {
   planExtraTargetsByDebt,
 } from "@/lib/debt-payments";
 import { coveredMinimumDates, ledgerMinimumCents } from "@/lib/minimum-ledger";
-import { confirmProjectedExtras } from "@/lib/debt-payoff";
+import { confirmProjectedExtras, capAtPayoffCents } from "@/lib/debt-payoff";
 import { pickableDebtWhere } from "@/lib/debt-reassign";
 import { AppShell } from "@/components/app-shell";
 import { ensureBucketIcons } from "@/lib/bucket-icons-sync";
@@ -237,6 +237,7 @@ export default async function BucketDetailPage({
               debtType: true,
               purchaseDate: true,
               balanceCents: true,
+              aprBasisPoints: true,
               paidOffDate: true,
               includeInPayoffPlan: true,
               ignoreMinimumPayment: true,
@@ -604,6 +605,7 @@ export default async function BucketDetailPage({
       debtLabel: p.debt.label,
       balanceCents: p.debt.balanceCents,
       amountCents: p.amountCents,
+      dueLineCents: capAtPayoffCents(p.amountCents, p.debt),
       toleranceCents: p.toleranceCents,
       cadence: p.cadence,
       categoryId: p.categoryId,

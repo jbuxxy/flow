@@ -26,6 +26,7 @@ import {
 import { reassignTransactionsForMerchant } from "@/lib/merchant-rule-reassign";
 import { P2P_DISCOVERY_KEYWORDS } from "@/lib/p2p-keywords";
 import { isDemoHousehold } from "@/lib/demo";
+import { capAtPayoffCents } from "@/lib/debt-payoff";
 import { generateBudgetPlanRedraft, type ReportFindings, type MonthSummary } from "@/lib/ai";
 
 // "Set the Month" — the forward-looking monthly budget allocation. Mirrors
@@ -378,6 +379,7 @@ export async function assembleBudgetPlanInputs(
           id: true,
           name: true,
           minPaymentCents: true,
+          debtType: true,
           balanceCents: true,
           aprBasisPoints: true,
           kind: true,
@@ -574,7 +576,9 @@ export async function assembleBudgetPlanInputs(
     if (dp?.active && dp.bucketId && !dp.hiddenFromBucket) {
       const occurrences = occurrencesInPeriod(dp.nextDueDate, dp.cadence, utcStart, utcEnd);
       const occ = Math.max(1, occurrences.length);
-      const floor = dp.amountCents * occ + plannedExtra;
+      // Every minimum this period together never exceeds what's left to pay
+      // the debt off (capAtPayoffCents).
+      const floor = capAtPayoffCents(dp.amountCents * occ, d) + plannedExtra;
       addRecurringItem(dp.bucketId, {
         label: d.account?.displayName ?? d.name,
         cents: floor,
@@ -584,7 +588,7 @@ export async function assembleBudgetPlanInputs(
       debtFloorByBucket.set(dp.bucketId, (debtFloorByBucket.get(dp.bucketId) ?? 0) + floor);
       bucketedPlannedExtraCents += plannedExtra;
     } else {
-      unbucketedDebtMinCents += d.minPaymentCents;
+      unbucketedDebtMinCents += capAtPayoffCents(d.minPaymentCents, d);
     }
   }
 

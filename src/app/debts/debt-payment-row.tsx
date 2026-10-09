@@ -21,6 +21,9 @@ import { CADENCE_LABEL } from "@/lib/cadence-label";
 export type DebtPaymentData = {
   id: string;
   amountCents: number;
+  // What a still-unpaid minimum line shows: amountCents, never more than it
+  // takes to pay the debt off (capAtPayoffCents, debt-payoff.ts).
+  dueLineCents: number;
   toleranceCents: number | null;
   cadence: "WEEKLY" | "BIWEEKLY" | "MONTHLY" | "ANNUAL";
   categoryId: string | null;
@@ -538,7 +541,7 @@ export function DebtPaymentRow({
                       key={slot.date}
                       state="due"
                       date={new Date(slot.date)}
-                      amountCents={debtPayment.amountCents}
+                      amountCents={debtPayment.dueLineCents}
                       approximate={!debtPayment.dueDateLocked}
                       dateClassName={dueDateProximity(new Date(slot.date)).textClassName}
                       dateTitle={dueDateProximity(new Date(slot.date)).label}
@@ -548,7 +551,7 @@ export function DebtPaymentRow({
                       <Circle size={15} className="shrink-0 text-neutral-400 dark:text-neutral-600" />
                       <span className="flex-1 text-neutral-800 dark:text-neutral-200">
                         {debtPayment.dueDateLocked ? "" : "~"}
-                        {minimumLabel(debtPayment.amountCents, slot.date, "due")}
+                        {minimumLabel(debtPayment.dueLineCents, slot.date, "due")}
                       </span>
                     </li>
                   ),
@@ -560,7 +563,7 @@ export function DebtPaymentRow({
                       key="next-due"
                       state="due"
                       date={new Date(debtPayment.nextDueDate)}
-                      amountCents={debtPayment.amountCents}
+                      amountCents={debtPayment.dueLineCents}
                       approximate={!debtPayment.dueDateLocked}
                       dateClassName={dueDateProximity(new Date(debtPayment.nextDueDate)).textClassName}
                       dateTitle={dueDateProximity(new Date(debtPayment.nextDueDate)).label}

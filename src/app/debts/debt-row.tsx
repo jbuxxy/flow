@@ -18,7 +18,7 @@ async function toasted(run: () => Promise<unknown>, message: string) {
     showToast("Something Went Wrong", "error");
   }
 }
-import { pickPayoffPaymentTime, type PoolBreakdown } from "@/lib/debt-payoff";
+import { capAtPayoffCents, pickPayoffPaymentTime, type PoolBreakdown } from "@/lib/debt-payoff";
 import { EntryLine } from "@/components/entry-line";
 import { InstallmentProgressBar } from "@/components/installment-progress-bar";
 import { PlanReceiptSection, type PlanReceiptItem } from "@/components/plan-receipt-section";
@@ -320,7 +320,10 @@ export function DebtRow({
   // payment already covered it — "minimum is always paid" (household rule,
   // 2026-09-01). Arrears (amountDueCents > amountCents) still win, and keep
   // the "carried over" sub-note.
-  const minDisplayCents = Math.max(minRegularCents, cycleMinimum?.amountDueCents ?? 0);
+  // Never more than it takes to pay the debt off (capAtPayoffCents): a $65
+  // minimum on a card with $59.27 left reads $59.27.
+  const minDisplayCents = capAtPayoffCents(Math.max(minRegularCents, cycleMinimum?.amountDueCents ?? 0), debt);
+  const minDueLineCents = capAtPayoffCents(minRegularCents, debt);
   // A projected extra payment that clears this debt makes every later
   // minimum moot — the balance is gone before that due date, so the line
   // drops out entirely rather than showing as still-owed (household request,
@@ -477,9 +480,9 @@ export function DebtRow({
               onToggle={() => startMinTransition(() => toasted(() => markDebtPaymentPaid(cycleMinimum.debtPaymentId), "Payment Marked Paid"))}
               disabled={readOnly || minPending}
             >
-              {cycleMinimum.amountDueCents > cycleMinimum.amountCents && (
+              {minDisplayCents > cycleMinimum.amountCents && (
                 <p className="ml-[23px] flex items-center gap-1.5 text-[11px] text-red-600 dark:text-red-400">
-                  Includes {formatCents(cycleMinimum.amountDueCents - cycleMinimum.amountCents)} carried over from an
+                  Includes {formatCents(minDisplayCents - cycleMinimum.amountCents)} carried over from an
                   earlier cycle
                   {!readOnly && (
                     <button
@@ -500,7 +503,7 @@ export function DebtRow({
               key={slot.date.getTime()}
               state="due"
               date={slot.date}
-              amountCents={minRegularCents}
+              amountCents={minDueLineCents}
               // Same flag as the actionable slot above — every slot here is
               // walked forward from the tracker's own nextDueDate at a fixed
               // cadence, so an unconfirmed anchor makes every one of them a
@@ -532,7 +535,7 @@ export function DebtRow({
             key="next-due"
             state="due"
             date={cycleMinimum.dueDate}
-            amountCents={minRegularCents}
+            amountCents={minDueLineCents}
             approximate={!cycleMinimum.dueDateLocked}
             dateClassName={dueDateProximity(cycleMinimum.dueDate).textClassName}
             dateTitle={dueDateProximity(cycleMinimum.dueDate).label}

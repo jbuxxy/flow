@@ -240,6 +240,39 @@ export function monthlyRateOf(aprBasisPoints: number): number {
   return aprBasisPoints / 10000 / 12;
 }
 
+// What it takes to clear a debt at its next payment: the balance plus the one
+// month of interest the payoff engine charges before taking a minimum
+// (applyInterestAndMinimums — so a capped due line matches the projection's
+// own final payment). An installment plan accrues nothing per tick. Null
+// when nothing's owed: a paid-off debt keeps its callers' own handling.
+export function payoffAmountCents(debt: {
+  balanceCents: number;
+  aprBasisPoints: number;
+  debtType: string;
+}): number | null {
+  if (debt.balanceCents <= 0) return null;
+  const interest = debt.debtType === "INSTALLMENT" ? 0 : Math.round(debt.balanceCents * monthlyRateOf(debt.aprBasisPoints));
+  return debt.balanceCents + interest;
+}
+
+// A payment's amount still owed, never more than the payoff amount: a
+// $65 minimum on a card with $59.27 left is a $59.27 payment (household
+// report, 2026-10-09: PayPal Credit). Every "still due" figure for a debt —
+// /debts, the bills and bucket cards, This Week's Bills, the Payment
+// Calendar and its feed — goes through this. `paidSoFarCents` turns it into
+// the occurrence's full minimum (paid + capped remainder) for a headline
+// figure. Only what's still owed is capped, never the regular minimum
+// itself: a $65 payment on a $100 balance leaves $35, and that $65 must
+// still read as the minimum, not $35 of minimum plus $30 extra.
+export function capAtPayoffCents(
+  owedCents: number,
+  debt: { balanceCents: number; aprBasisPoints: number; debtType: string },
+  paidSoFarCents = 0,
+): number {
+  const payoff = payoffAmountCents(debt);
+  return payoff === null ? owedCents : Math.min(owedCents, paidSoFarCents + payoff);
+}
+
 function addMonths(date: Date, months: number): Date {
   // Snap to the 1st before shifting the month — otherwise starting from a
   // day 29–31 overflows a shorter target month (Aug 31 + 6 → "Feb 31" →
