@@ -19,6 +19,7 @@ import {
   supersededPayoffExtraCents,
   supersededPayoffTargetAmounts,
   capAtPayoffCents,
+  monthlyInterestCents,
   payoffAmountCents,
 } from "@/lib/debt-payoff";
 import { debt, income, utc } from "../helpers.ts";
@@ -879,6 +880,12 @@ describe("capAtPayoffCents", () => {
     // $50.00 at 24% APR: 2%/month = $1.00 of interest before the payment.
     assert.equal(payoffAmountCents(card(5000, 2400)), 5100);
     assert.equal(capAtPayoffCents(6500, card(5000, 2400)), 5100);
+  });
+
+  test("a no-minimum card accrues no interest per payment, same as the payoff engine", () => {
+    const noMin = { balanceCents: 5000, aprBasisPoints: 2400, debtType: "REVOLVING", ignoreMinimumPayment: true };
+    assert.equal(monthlyInterestCents(5000, noMin), 0);
+    assert.equal(payoffAmountCents(noMin), 5000);
   });
 
   test("an installment plan accrues no interest per payment", () => {

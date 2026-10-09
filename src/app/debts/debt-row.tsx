@@ -18,13 +18,13 @@ async function toasted(run: () => Promise<unknown>, message: string) {
     showToast("Something Went Wrong", "error");
   }
 }
-import { capAtPayoffCents, pickPayoffPaymentTime, type PoolBreakdown } from "@/lib/debt-payoff";
+import { pickPayoffPaymentTime, type PoolBreakdown } from "@/lib/debt-payoff";
 import { EntryLine } from "@/components/entry-line";
 import { InstallmentProgressBar } from "@/components/installment-progress-bar";
 import { PlanReceiptSection, type PlanReceiptItem } from "@/components/plan-receipt-section";
 import { MerchantLogos } from "@/components/merchant-logo";
 import { debtLogoSearchText } from "@/lib/merchant-domains";
-import { ledgerMinimumCents, resolveMinimumLedger } from "@/lib/minimum-ledger";
+import { ledgerMinimumCents, minimumOwedCents, resolveMinimumLedger } from "@/lib/minimum-ledger";
 import {
   linkDebtAccount,
   markDebtPaymentPaid,
@@ -315,15 +315,14 @@ export function DebtRow({
   // (household request, 2026-09-01: "they should be listed Sep 3, then min on
   // Sept 12 full amount, then payoff extra on 17").
   const minRegularCents = cycleMinimum?.amountCents ?? 0;
-  // What an unpaid minimum line shows: the full recurring minimum, never the
-  // rolling $0 a caught-up tracker reports for a cycle whose early extra
-  // payment already covered it — "minimum is always paid" (household rule,
-  // 2026-09-01). Arrears (amountDueCents > amountCents) still win, and keep
-  // the "carried over" sub-note.
-  // Never more than it takes to pay the debt off (capAtPayoffCents): a $65
-  // minimum on a card with $59.27 left reads $59.27.
-  const minDisplayCents = capAtPayoffCents(Math.max(minRegularCents, cycleMinimum?.amountDueCents ?? 0), debt);
-  const minDueLineCents = capAtPayoffCents(minRegularCents, debt);
+  // What the current unpaid minimum line shows (minimumOwedCents — arrears
+  // win and keep the "carried over" sub-note), and what any other due line
+  // shows (a later slot, a covered one): the regular minimum, capped.
+  const minDisplayCents = minimumOwedCents(
+    { amountDueCents: cycleMinimum?.amountDueCents ?? 0, amountCents: minRegularCents },
+    debt,
+  );
+  const minDueLineCents = minimumOwedCents({ amountDueCents: 0, amountCents: minRegularCents }, debt);
   // A projected extra payment that clears this debt makes every later
   // minimum moot — the balance is gone before that due date, so the line
   // drops out entirely rather than showing as still-owed (household request,
@@ -390,7 +389,7 @@ export function DebtRow({
                 key={`covered-${isoDate}`}
                 state="due"
                 date={entry.date}
-                amountCents={minRegularCents}
+                amountCents={minDueLineCents}
                 approximate={!cycleMinimum.dueDateLocked}
                 muted={entry.skipped}
                 trailingAction={

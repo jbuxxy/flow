@@ -20,7 +20,7 @@ import {
 } from "@/lib/debt-payoff";
 import { updateHouseholdPayoffPlan, setDebtPayoffOrder, type PayoffPlanState } from "./actions";
 import { DebtRow, type CycleMinimum, type CycleExtra } from "./debt-row";
-import { coveredMinimumDates, ledgerMinimumCents } from "@/lib/minimum-ledger";
+import { coveredMinimumDates, ledgerMinimumCents, minimumOwedCents } from "@/lib/minimum-ledger";
 import { PayoffCycleCard } from "./payoff-cycle-card";
 import { CycleCalendarView, type CalendarDayEvent } from "./cycle-calendar-view";
 import { PayoffProjectionChart, PayoffProjectionSparkline } from "@/components/payoff-projection-chart";
@@ -754,8 +754,10 @@ export function PayoffPlanner({
         // showed on the dashboard's Payment Calendar and the /debts list
         // view — both of which walk every slot — but not here).
         if (debt.balanceCents > 0 && cm.amountCents > 0) {
+          // Capped at the payoff amount, same as every other due line (minimumOwedCents).
+          const dueCents = minimumOwedCents({ amountDueCents: 0, amountCents: cm.amountCents }, debt);
           for (const slot of cm.slots) {
-            if (!slot.payment) add(slot.date, debt.name, cm.amountCents, "due", debt.includeInPayoffPlan);
+            if (!slot.payment) add(slot.date, debt.name, dueCents, "due", debt.includeInPayoffPlan);
           }
           // A minimum an earlier, bigger payment already covered stays on the
           // calendar as a "due" cell unless the household skipped it — same
@@ -771,7 +773,7 @@ export function PayoffPlanner({
             }),
             skippedDates: new Set(cm.skippedSlotDates ?? []),
           })) {
-            add(date, debt.name, cm.amountCents, "due", debt.includeInPayoffPlan);
+            add(date, debt.name, dueCents, "due", debt.includeInPayoffPlan);
           }
         }
       }

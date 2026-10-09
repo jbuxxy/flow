@@ -1,4 +1,5 @@
 import { amountToleranceCents } from "@/lib/amount-tolerance";
+import { capAtPayoffCents } from "@/lib/debt-payoff";
 
 // Pure — no `db`. Decides how a debt's "This Month" ledger presents each
 // minimum-payment slot when a payment was made *ahead of* it that's bigger
@@ -78,6 +79,20 @@ export function resolveMinimumLedger(opts: {
     entries.push({ kind: "covered", date: slot.date, skipped: skippedDates.has(slot.date.toISOString().slice(0, 10)) });
   }
   return { entries, extraPayments: remainingExtras };
+}
+
+// What an unpaid minimum line shows for a debt's current occurrence: the
+// full recurring minimum, or the rolling amount due when it's in arrears —
+// never the rolling $0 a caught-up tracker reports ("minimum is always
+// shown", household rule 2026-09-01) — and never more than it takes to pay
+// the debt off (capAtPayoffCents). Pass amountDueCents 0 for a slot that
+// isn't the current occurrence (a later or covered one). Shared by /debts,
+// the Payment Calendar and its ICS feed so they can't disagree.
+export function minimumOwedCents(
+  amounts: { amountDueCents: number; amountCents: number },
+  debt: Parameters<typeof capAtPayoffCents>[1],
+): number {
+  return capAtPayoffCents(Math.max(amounts.amountDueCents, amounts.amountCents), debt);
 }
 
 // The minimum the "covered" logic should be sized against, or 0 to disable it:

@@ -1,6 +1,6 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { coveredMinimumDates, ledgerMinimumCents, resolveMinimumLedger } from "@/lib/minimum-ledger";
+import { coveredMinimumDates, ledgerMinimumCents, resolveMinimumLedger, minimumOwedCents } from "@/lib/minimum-ledger";
 import { utc } from "../helpers.ts";
 
 const pay = (id: string, cents: number, d: Date) => ({ id, amountCents: cents, occurredOn: d });
@@ -134,3 +134,19 @@ describe("ledgerMinimumCents", () => {
     assert.equal(ledgerMinimumCents({ ...ok, paidOff: true }), 0);
   });
 });
+
+describe("minimumOwedCents", () => {
+  const card = (balanceCents: number) => ({ balanceCents, aprBasisPoints: 0, debtType: "REVOLVING" });
+
+  test("the regular minimum, or arrears when larger — never the caught-up $0", () => {
+    assert.equal(minimumOwedCents({ amountDueCents: 0, amountCents: 6500 }, card(50000)), 6500);
+    assert.equal(minimumOwedCents({ amountDueCents: 9000, amountCents: 6500 }, card(50000)), 9000);
+  });
+
+  test("capped at the payoff amount", () => {
+    // 2026-10-09: PayPal Credit, $65 minimum, $59.27 left.
+    assert.equal(minimumOwedCents({ amountDueCents: 0, amountCents: 6500 }, card(5927)), 5927);
+    assert.equal(minimumOwedCents({ amountDueCents: 9000, amountCents: 6500 }, card(5927)), 5927);
+  });
+});
+

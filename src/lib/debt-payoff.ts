@@ -240,35 +240,39 @@ export function monthlyRateOf(aprBasisPoints: number): number {
   return aprBasisPoints / 10000 / 12;
 }
 
-// What it takes to clear a debt at its next payment: the balance plus the one
-// month of interest the payoff engine charges before taking a minimum
-// (applyInterestAndMinimums — so a capped due line matches the projection's
-// own final payment). An installment plan accrues nothing per tick. Null
-// when nothing's owed: a paid-off debt keeps its callers' own handling.
-export function payoffAmountCents(debt: {
-  balanceCents: number;
-  aprBasisPoints: number;
-  debtType: string;
-}): number | null {
-  if (debt.balanceCents <= 0) return null;
-  const interest = debt.debtType === "INSTALLMENT" ? 0 : Math.round(debt.balanceCents * monthlyRateOf(debt.aprBasisPoints));
-  return debt.balanceCents + interest;
+// One month's interest on `balanceCents` — the tick the payoff engine charges
+// before taking a minimum (applyInterestAndMinimums). Installment plans
+// accrue none, and neither does a no-minimum card (ignoreMinimumPayment —
+// paid in full each statement, so the engine never compounds it).
+export function monthlyInterestCents(
+  balanceCents: number,
+  debt: { aprBasisPoints: number; debtType?: string; ignoreMinimumPayment?: boolean },
+): number {
+  if (debt.debtType === "INSTALLMENT" || debt.ignoreMinimumPayment) return 0;
+  return Math.round(balanceCents * monthlyRateOf(debt.aprBasisPoints));
 }
 
-// A payment's amount still owed, never more than the payoff amount: a
-// $65 minimum on a card with $59.27 left is a $59.27 payment (household
-// report, 2026-10-09: PayPal Credit). Every "still due" figure for a debt —
-// /debts, the bills and bucket cards, This Week's Bills, the Payment
-// Calendar and its feed — goes through this. `paidSoFarCents` turns it into
-// the occurrence's full minimum (paid + capped remainder) for a headline
-// figure. Only what's still owed is capped, never the regular minimum
-// itself: a $65 payment on a $100 balance leaves $35, and that $65 must
-// still read as the minimum, not $35 of minimum plus $30 extra.
-export function capAtPayoffCents(
-  owedCents: number,
-  debt: { balanceCents: number; aprBasisPoints: number; debtType: string },
-  paidSoFarCents = 0,
-): number {
+type PayoffCapDebt = { balanceCents: number; aprBasisPoints: number; debtType: string; ignoreMinimumPayment?: boolean };
+
+// What it takes to clear a debt at its next payment: the balance plus one
+// month's interest, so a capped due line matches the projection's own final
+// payment. Null when nothing's owed — a paid-off debt keeps its callers' own
+// handling.
+export function payoffAmountCents(debt: PayoffCapDebt): number | null {
+  if (debt.balanceCents <= 0) return null;
+  return debt.balanceCents + monthlyInterestCents(debt.balanceCents, debt);
+}
+
+// A payment's amount still owed, never more than the payoff amount: a $65
+// minimum on a card with $59.27 left is a $59.27 payment (household report,
+// 2026-10-09: PayPal Credit). Every "still due" figure for a debt goes
+// through this (directly, or via minimumOwedCents in minimum-ledger.ts).
+// `paidSoFarCents` turns it into the occurrence's full minimum (paid +
+// capped remainder) for a headline figure. Only what's still owed is
+// capped, never the regular minimum itself: a $65 payment on a $100 balance
+// leaves $35, and that $65 must still read as the minimum, not $35 of
+// minimum plus $30 extra.
+export function capAtPayoffCents(owedCents: number, debt: PayoffCapDebt, paidSoFarCents = 0): number {
   const payoff = payoffAmountCents(debt);
   return payoff === null ? owedCents : Math.min(owedCents, paidSoFarCents + payoff);
 }
@@ -448,14 +452,14 @@ export function debtsWithInsufficientMinimum(debts: DebtInput[]): InsufficientMi
   const flagged: InsufficientMinimumDebt[] = [];
   for (const d of debts) {
     if (d.debtType === "INSTALLMENT" || d.balanceCents <= 0 || d.ignoreMinimumPayment) continue;
-    const monthlyInterestCents = Math.round(d.balanceCents * monthlyRateOf(d.aprBasisPoints));
-    if (d.minPaymentCents <= monthlyInterestCents) {
+    const interestCents = monthlyInterestCents(d.balanceCents, d);
+    if (d.minPaymentCents <= interestCents) {
       flagged.push({
         id: d.id,
         name: d.name,
         minPaymentCents: d.minPaymentCents,
         aprBasisPoints: d.aprBasisPoints,
-        monthlyInterestCents,
+        monthlyInterestCents: interestCents,
       });
     }
   }
@@ -568,7 +572,7 @@ function applyInterestAndMinimums(
     // for the identical reason, just never carried over to the actual tick
     // loop that does the compounding.
     if (d.remaining <= 0 || d.debtType === "INSTALLMENT" || d.ignoreMinimumPayment) continue;
-    const interest = Math.round(d.remaining * monthlyRateOf(d.aprBasisPoints));
+    const interest = monthlyInterestCents(d.remaining, d);
     d.remaining += interest;
     interestCents += interest;
     interestByDebtId.set(d.id, interest);
