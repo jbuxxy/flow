@@ -593,11 +593,21 @@ export async function checkAndSendBucketAlerts(bucketId: string): Promise<void> 
   }
 
   for (const { level, title, body, period: alertPeriod } of levelsToTry) {
+    // skipDuplicates rather than create-and-catch: same once-per-period/level
+    // dedup without a Postgres unique-violation ERROR on every re-check.
+    // Real DB errors still skip (not throw) — simplefin-sync calls this
+    // without a catch, and a failed claim shouldn't abort the sync.
+    let claimed: number;
     try {
-      await db.bucketAlert.create({ data: { bucketId, period: alertPeriod ?? period, level } });
-    } catch {
-      continue; // unique constraint hit — already notified this period/level
+      ({ count: claimed } = await db.bucketAlert.createMany({
+        data: [{ bucketId, period: alertPeriod ?? period, level }],
+        skipDuplicates: true,
+      }));
+    } catch (err) {
+      console.error(`[buckets] alert claim failed for bucket ${bucketId} (${level}):`, err);
+      continue;
     }
+    if (claimed === 0) continue; // already notified this period/level
     await sendPushToBucketForType(bucket.id, bucket.householdId, NOTIFICATION_TYPE_BY_ALERT_LEVEL[level], {
       title,
       body,

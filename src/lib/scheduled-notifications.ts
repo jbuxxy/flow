@@ -38,8 +38,8 @@ async function checkMonthRolloverForAllHouseholds(): Promise<void> {
       console.error(`[scheduled-notifications] month-rollover failed for household ${h.id}:`, err),
     );
     // Independent of checkMonthRolloverForHousehold's own once-per-month
-    // dedup above (db.cycleAlert.create throws and returns early on every
-    // call after the month's first) — refreshReportFindings has its own
+    // dedup above (the cycleAlert claim returns early on every call after
+    // the month's first) — refreshReportFindings has its own
     // settle-window/throttle gating meant to let it re-run repeatedly
     // through the first few days of a month as SimpleFIN data settles, but
     // it used to only ever be reached from inside that dedup-guarded call,
@@ -55,11 +55,17 @@ async function checkMonthRolloverForAllHouseholds(): Promise<void> {
 }
 
 async function checkMonthRolloverForHousehold(householdId: string, periodKey: string): Promise<void> {
+  // skipDuplicates (ON CONFLICT DO NOTHING) instead of create-and-catch, so
+  // the once-per-month dedup no longer logs a unique-violation ERROR in
+  // Postgres on every scheduled run after the month's first.
+  let claimed: number;
   try {
-    await db.cycleAlert.create({ data: { householdId, periodKey } });
-  } catch {
-    return; // already handled this household's rollover into this month
+    ({ count: claimed } = await db.cycleAlert.createMany({ data: [{ householdId, periodKey }], skipDuplicates: true }));
+  } catch (err) {
+    console.error(`[scheduled-notifications] cycle-alert claim failed for household ${householdId}:`, err);
+    return;
   }
+  if (claimed === 0) return; // already handled this household's rollover into this month
 
   await sendPushToHouseholdForType(householdId, "NEW_CYCLE", {
     title: "New Budget Period Started",
@@ -152,11 +158,16 @@ async function checkWeeklyBucketDigestsForHousehold(
   const progressById = new Map(progress.map((p) => [p.id, p]));
 
   for (const bucket of flagged.filter((b) => b.householdId === householdId)) {
+    // skipDuplicates rather than create-and-catch: same once-per-week dedup
+    // without a Postgres unique-violation ERROR for every repeat run.
+    let claimed: number;
     try {
-      await db.bucketDigest.create({ data: { bucketId: bucket.id, weekKey } });
-    } catch {
-      continue; // already sent this week
+      ({ count: claimed } = await db.bucketDigest.createMany({ data: [{ bucketId: bucket.id, weekKey }], skipDuplicates: true }));
+    } catch (err) {
+      console.error(`[scheduled-notifications] digest claim failed for bucket ${bucket.id}:`, err);
+      continue;
     }
+    if (claimed === 0) continue; // already sent this week
 
     const p = progressById.get(bucket.id);
     if (!p) continue;
