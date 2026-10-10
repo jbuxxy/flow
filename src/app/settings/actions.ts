@@ -1,12 +1,12 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { auth, signOut } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { requireFullAccess } from "@/lib/access";
 import type { IncomeCalcMethod, HouseholdGoalPosture } from "@prisma/client";
+import { revalidateHousehold } from "@/lib/revalidate";
 
 export type DeleteHouseholdState = { error?: string };
 
@@ -51,20 +51,14 @@ export async function updateIncomeCalcMethod(method: IncomeCalcMethod): Promise<
   if (!INCOME_CALC_METHODS.includes(method)) return;
 
   await db.household.update({ where: { id: session.user.householdId }, data: { incomeCalcMethod: method } });
-  revalidatePath("/settings/income");
-  revalidatePath("/settings");
-  revalidatePath("/income");
-  revalidatePath("/buckets");
+  revalidateHousehold();
 }
 
 export async function setIncludeP2PInIncomeCalc(include: boolean): Promise<void> {
   const session = await requireFullAccess();
 
   await db.household.update({ where: { id: session.user.householdId }, data: { includeP2PInIncomeCalc: include } });
-  revalidatePath("/settings/income");
-  revalidatePath("/settings");
-  revalidatePath("/income");
-  revalidatePath("/buckets");
+  revalidateHousehold();
 }
 
 // See Household.autoApplyAdHocIncomeToBuckets's own schema comment and
@@ -77,10 +71,7 @@ export async function setAutoApplyAdHocIncomeToBuckets(enabled: boolean): Promis
     where: { id: session.user.householdId },
     data: { autoApplyAdHocIncomeToBuckets: enabled },
   });
-  revalidatePath("/settings/income");
-  revalidatePath("/settings");
-  revalidatePath("/income");
-  revalidatePath("/buckets");
+  revalidateHousehold();
 }
 
 const GOAL_POSTURES: HouseholdGoalPosture[] = ["DEBT_PAYDOWN", "SAVINGS_FOCUSED", "BALANCED"];
@@ -97,12 +88,10 @@ export async function updateGoalPosture(posture: HouseholdGoalPosture): Promise<
   if (!GOAL_POSTURES.includes(posture)) return;
 
   await db.household.update({ where: { id: session.user.householdId }, data: { goalPosture: posture } });
-  revalidatePath("/settings/household");
-  revalidatePath("/settings");
+  revalidateHousehold();
   // The posture now also drives the "Set the Month" surplus routing + the
   // Reports realignment card, so refresh those too.
-  revalidatePath("/reports");
-  revalidatePath("/budget");
+  revalidateHousehold();
 }
 
 // Feeds the same AI prompts as updateGoalPosture above (family size affects
@@ -116,6 +105,5 @@ export async function updateHouseholdSize(adultsCount: number, kidsCount: number
   if (!Number.isFinite(kids) || kids < 0 || kids > 10) return;
 
   await db.household.update({ where: { id: session.user.householdId }, data: { adultsCount: adults, kidsCount: kids } });
-  revalidatePath("/settings/household");
-  revalidatePath("/settings");
+  revalidateHousehold();
 }

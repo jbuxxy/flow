@@ -10,8 +10,8 @@ import { TrackAsBillForm } from "./[id]/track-as-bill-form";
 import { TransactionLabelEditor } from "@/components/transaction-label-editor";
 import { MerchantLogo } from "@/components/merchant-logo";
 import { PendingIcon } from "@/components/pending-icon";
-import { SelectField } from "@/components/select-field";
-import { CategoryPicker, type CategoryOption } from "@/app/bills/category-picker";
+import { MoveTargetPicker } from "@/components/move-target-picker";
+import { type CategoryOption } from "@/app/bills/category-picker";
 
 type UncategorizedTxn = {
   id: string;
@@ -117,29 +117,15 @@ function DebitAssign({
 
       {mode === "spend" ? (
         <div className="flex items-center gap-2">
-          <SelectField
-            value={selection}
-            onChange={setSelection}
-            small
-            searchable={false}
-            options={[
-              ...spendBuckets.map((b) => ({ value: `bucket:${b.id}`, label: b.name, group: "Bucket" })),
-              ...debts.map((d) => ({ value: `debt:${d.id}`, label: d.name, group: "Debt Payment" })),
-            ]}
-            className="min-w-0 flex-1"
+          <MoveTargetPicker
+            selection={selection}
+            onSelectionChange={setSelection}
+            buckets={spendBuckets}
+            debts={debts}
+            categories={categories}
+            categoryId={categoryId}
+            onCategoryChange={setCategoryId}
           />
-          {selection.startsWith("bucket:") && (
-            <div className="w-32 shrink-0">
-              <CategoryPicker
-                key={selection}
-                categories={categories.filter((c) => c.bucketId === selection.slice("bucket:".length))}
-                defaultCategoryId={categoryId}
-                bucketId={selection.slice("bucket:".length)}
-                onSelect={setCategoryId}
-                small
-              />
-            </div>
-          )}
           <button
             onClick={() =>
               startTransition(async () => {

@@ -1,9 +1,9 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { requireOwner } from "@/lib/access";
+import { revalidateHousehold } from "@/lib/revalidate";
 
 // Full JSON snapshot of the household's data, for self-service backup —
 // mirrors the manual pg_dump-to-a-folder process this household already
@@ -176,11 +176,7 @@ export async function purgeFinancialData(
     }),
   ]);
 
-  revalidatePath("/");
-  revalidatePath("/buckets");
-  revalidatePath("/debts");
-  revalidatePath("/reports");
-  revalidatePath("/settings");
+  revalidateHousehold();
   return {};
 }
 
@@ -194,5 +190,5 @@ export async function restartOnboarding(): Promise<void> {
     where: { id: user.householdId },
     data: { onboardingCompletedAt: null, onboardingStep: "PROFILE" },
   });
-  revalidatePath("/");
+  revalidateHousehold();
 }

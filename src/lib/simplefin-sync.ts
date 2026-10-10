@@ -34,7 +34,7 @@ import {
   backfillBnplKeywords,
 } from "@/lib/bnpl-detect";
 import { checkForNewSubscriptions } from "@/lib/bill-detect";
-import { nextPaidOffDate, nextPaidOffAmountCents } from "@/lib/debt-payoff";
+import { debtBalanceUpdate } from "@/lib/debt-payoff";
 import {
   CARD_PAYMENT_MERCHANT_PATTERN,
   isGenericCardPaymentDescriptor,
@@ -42,7 +42,7 @@ import {
   txnTextNamesDebt,
   scopeToNamedDebts,
 } from "@/lib/debt-payment-pattern";
-import { isP2PMerchant, p2pMerchantMatch } from "@/lib/p2p-keywords";
+import { effectiveMerchant, p2pMerchantMatch } from "@/lib/p2p-keywords";
 import { nameSimilarity } from "@/lib/fuzzy-match";
 import { pendingRowRetirable, phantomTwinMergeData, settleOrphanPendingInPlace } from "@/lib/pending-twin-merge";
 import { todayAsUTCDate } from "@/lib/date";
@@ -1244,10 +1244,8 @@ export async function categorizeUncategorizedTransactions(householdId: string): 
     // confirm. A resolved PERSON ("Danny R") does not — a friend-to-friend
     // payment could be for anything, so it keeps the suggest-only P2P path
     // (the name is still shown and fed to the P2P model as a hint).
-    const resolvedBusiness =
-      t.resolvedMerchant && !t.resolvedMerchantIsPerson ? t.resolvedMerchant.trim() : null;
-    const effectiveMerchant = resolvedBusiness || t.merchant;
-    const key = effectiveMerchant.trim().toLowerCase();
+    const { merchant: effectiveMerchantText, p2p: treatAsP2P } = effectiveMerchant(t);
+    const key = effectiveMerchantText.trim().toLowerCase();
     // See the schema comment on Account.budgetTracked — a manual entry has
     // no account at all, so it's always eligible (a household typed it in
     // themselves, on purpose).
@@ -1270,8 +1268,6 @@ export async function categorizeUncategorizedTransactions(householdId: string): 
     // A P2P charge is treated as an ordinary merchant only once a matched
     // receipt has resolved it to a *business*. Unresolved, or resolved to a
     // person, it stays on the suggest-only P2P path.
-    const treatAsP2P =
-      !resolvedBusiness && isP2PMerchant(t.merchant);
 
     // User-defined patterns (Venmo-paid activities, recurring reimbursements)
     // are the most specific signal available — checked before the generic
@@ -1436,7 +1432,7 @@ export async function categorizeUncategorizedTransactions(householdId: string): 
     // 'loan'" match or a minimum-payment coincidence can't shadow an actual
     // down payment.
     if (!treatAsP2P && budgetTracked && t.amountCents > 0 && oneTimeBuckets.length > 0 && !t.aiSuggestedBucketId) {
-      const match = matchOneTimeBucket(oneTimeBuckets, effectiveMerchant, t.amountCents);
+      const match = matchOneTimeBucket(oneTimeBuckets, effectiveMerchantText, t.amountCents);
       // A non-commit match is a hint — same "no suggestion while pending"
       // rule as everywhere else above; a commit (an already-eligible
       // one-time bucket auto-filing) still applies regardless.
@@ -1635,7 +1631,7 @@ export async function categorizeUncategorizedTransactions(householdId: string): 
     // effectiveMerchant, not t.merchant — so a receipt-resolved P2P charge
     // is batched and (on a confident result) gets its MerchantRule written
     // under the real party name, not "Venmo".
-    needsAi.push({ id: t.id, merchant: effectiveMerchant, amountCents: t.amountCents });
+    needsAi.push({ id: t.id, merchant: effectiveMerchantText, amountCents: t.amountCents });
   }
 
   if (needsAi.length > 0 && buckets.length > 0) {
@@ -2023,15 +2019,7 @@ async function runHouseholdSync(householdId: string): Promise<SyncResult> {
       for (const linkedDebt of linkedDebts) {
         await db.debt.update({
           where: { id: linkedDebt.id },
-          data: {
-            balanceCents: newDebtBalanceCents,
-            paidOffDate: nextPaidOffDate(linkedDebt.balanceCents, newDebtBalanceCents, linkedDebt.paidOffDate),
-            paidOffAmountCents: nextPaidOffAmountCents(
-              linkedDebt.balanceCents,
-              newDebtBalanceCents,
-              linkedDebt.paidOffAmountCents,
-            ),
-          },
+          data: debtBalanceUpdate(linkedDebt, newDebtBalanceCents),
         });
         await unhideDebtPaymentIfBalanceReturned(linkedDebt.id, linkedDebt.balanceCents, newDebtBalanceCents, linkedDebt.paidOffDate);
         await notifyIfDebtJustPaidOff(linkedDebt.id, linkedDebt.balanceCents, newDebtBalanceCents);

@@ -12,9 +12,9 @@ import { MerchantLogo } from "@/components/merchant-logo";
 import { PendingIcon } from "@/components/pending-icon";
 import { ReceiptDetailBlock } from "@/components/receipt-detail-block";
 import { deriveP2PDisplay, bankDescriptionFor } from "@/lib/transaction-display";
-import { SelectField } from "@/components/select-field";
+import { MoveTargetPicker } from "@/components/move-target-picker";
 import { ReimbursementLinker, type ReimbursementCandidate } from "@/components/reimbursement-linker";
-import { CategoryPicker, type CategoryOption } from "@/app/bills/category-picker";
+import { type CategoryOption } from "@/app/bills/category-picker";
 import { AmountRoutingToggle, MakeRuleToggle, suggestRoutingMax, type RoutingDirection } from "@/components/amount-routing-toggle";
 import { isP2PMerchant } from "@/lib/p2p-keywords";
 import { useEntryFilter } from "@/components/bucket-entry-filter";
@@ -359,40 +359,21 @@ export function TransactionRow({
           {moveOpen && (buckets.length > 0 || debts.length > 0) && (
             <div className="flex flex-col gap-2 border-t border-blue-100 dark:border-neutral-800 pt-2">
               <div className="flex items-center gap-2">
-                <SelectField
-                  value={selection}
-                  onChange={setSelection}
-                  small
-                  searchable={false}
-                  options={[
-                    // RECURRING buckets excluded — a plain Move sets bucketId
-                    // directly, which the server rejects for one (see the guard
-                    // in reassignTransaction); moving something into a bill
-                    // bucket has to go through the bill-tracking flow instead
-                    // (/transactions' "Track as a recurring transaction").
-                    ...buckets
-                      .filter((b) => b.trackingMode !== "RECURRING")
-                      .map((b) => ({
-                        value: `bucket:${b.id}`,
-                        label: b.id === currentBucketId ? `${b.name} (Current)` : b.name,
-                        group: "Bucket",
-                      })),
-                    ...debts.map((d) => ({ value: `debt:${d.id}`, label: d.name, group: "Debt Payment" })),
-                  ]}
-                  className="min-w-0 flex-1"
+                {/* RECURRING buckets excluded — a plain Move sets bucketId
+                    directly, which the server rejects for one (see the guard
+                    in reassignTransaction); moving something into a bill
+                    bucket has to go through the bill-tracking flow instead
+                    (/transactions' "Track as a recurring transaction"). */}
+                <MoveTargetPicker
+                  selection={selection}
+                  onSelectionChange={setSelection}
+                  buckets={buckets.filter((b) => b.trackingMode !== "RECURRING")}
+                  debts={debts}
+                  categories={categories}
+                  categoryId={categoryId}
+                  onCategoryChange={setCategoryId}
+                  currentBucketId={currentBucketId}
                 />
-                {selection.startsWith("bucket:") && (
-                  <div className="w-32 shrink-0">
-                    <CategoryPicker
-                      key={selection}
-                      categories={categories.filter((c) => c.bucketId === selection.slice("bucket:".length))}
-                      defaultCategoryId={categoryId}
-                      bucketId={selection.slice("bucket:".length)}
-                      onSelect={setCategoryId}
-                      small
-                    />
-                  </div>
-                )}
                 <button
                   onClick={() =>
                     startTransition(async () => {

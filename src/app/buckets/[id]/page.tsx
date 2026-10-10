@@ -20,7 +20,7 @@ import {
 } from "@/lib/debt-payments";
 import { pickableDebtWhere } from "@/lib/debt-reassign";
 import { AppShell } from "@/components/app-shell";
-import { ensureBucketIcons } from "@/lib/bucket-icons-sync";
+import { scheduleBucketIcons } from "@/lib/bucket-icons-sync";
 import { billCardInclude, buildBillCards, buildDebtPaymentCards, debtPaymentCardInclude } from "@/lib/recurring-cards";
 import { BucketProgressBar } from "@/components/bucket-progress-bar";
 import { SwipeCarousel } from "@/components/swipe-carousel";
@@ -48,7 +48,7 @@ export default async function BucketDetailPage({
   const { id } = await params;
   // Resolve any not-yet-iconed bucket first (no-op after the first run for
   // this household) so the row loaded just below carries a fresh icon key.
-  await ensureBucketIcons(session.user.householdId);
+  scheduleBucketIcons(session.user.householdId);
   const bucket = await db.bucket.findUnique({ where: { id } });
   if (!belongsToHousehold(bucket, session.user.householdId)) notFound();
 

@@ -10,7 +10,8 @@ import { MerchantLogo } from "@/components/merchant-logo";
 import { MoneyInput } from "@/components/money-input";
 import { PercentInput } from "@/components/percent-input";
 import { SelectField } from "@/components/select-field";
-import { CategoryPicker, type CategoryOption } from "@/app/bills/category-picker";
+import { BucketCategoryFields } from "@/components/bucket-category-fields";
+import { type CategoryOption } from "@/app/bills/category-picker";
 
 // Linking a new institution only ever happens on SimpleFIN's own bridge site
 // — our /settings/accounts page is just where an already-issued setup token
@@ -184,29 +185,14 @@ function TrackInstallmentForm({
         Amount Tolerance (optional — how much a payment can vary and still match)
         <MoneyInput name="tolerance" placeholder="Auto" className={FIELD_CLS} />
       </label>
-      <label className={FIELD_LABEL_CLS}>
-        Category
-        <CategoryPicker
-          key={bucketId}
-          categories={bucketCategories}
-          defaultCategoryId={bnplCategoryId}
-          bucketId={bucketId || null}
-          name="categoryId"
-          small
-        />
-      </label>
-      {buckets.length > 0 && (
-        <label className={FIELD_LABEL_CLS}>
-          Bucket
-          <SelectField
-            name="bucketId"
-            value={bucketId}
-            onChange={setBucketId}
-            small
-            options={buckets.map((b) => ({ value: b.id, label: b.name }))}
-          />
-        </label>
-      )}
+      <BucketCategoryFields
+        buckets={buckets}
+        bucketId={bucketId}
+        onBucketChange={setBucketId}
+        categories={categories}
+        defaultCategoryId={bnplCategoryId}
+        small
+      />
       {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
       <button
         type="submit"

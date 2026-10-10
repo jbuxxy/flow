@@ -1,12 +1,12 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { requireOwner } from "@/lib/access";
 import {
   feedUrlForToken,
   ensureCalendarFeedToken as ensureCalendarFeedTokenForHousehold,
   regenerateCalendarFeedToken as regenerateCalendarFeedTokenForHousehold,
 } from "@/lib/calendar-feed-url";
+import { revalidateHousehold } from "@/lib/revalidate";
 
 // Lazily creates the household's calendar feed token on first visit to the
 // settings page (see the lib helper for why nothing happens until then).
@@ -24,7 +24,6 @@ export async function ensureCalendarFeedUrl(): Promise<string> {
 export async function regenerateCalendarFeedUrl(): Promise<string> {
   const { user } = await requireOwner();
   const token = await regenerateCalendarFeedTokenForHousehold(user.householdId);
-  revalidatePath("/settings/calendar-sync");
-  revalidatePath("/debts");
+  revalidateHousehold();
   return feedUrlForToken(token);
 }

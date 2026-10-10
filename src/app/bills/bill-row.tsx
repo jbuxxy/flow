@@ -9,9 +9,10 @@ import { DayOfMonthPicker } from "@/components/day-of-month-picker";
 import { EntryLine } from "@/components/entry-line";
 import { CycleLedger } from "@/components/cycle-ledger";
 import { deleteBill, skipBillCycle, unskipBillCycle, updateBill, type BillFormState } from "./actions";
-import { CategoryPicker, type CategoryOption } from "./category-picker";
+import { type CategoryOption } from "./category-picker";
 import { MerchantLogo } from "@/components/merchant-logo";
 import { SelectField } from "@/components/select-field";
+import { BucketCategoryFields } from "@/components/bucket-category-fields";
 import { RowActions, type RowAction } from "@/components/row-actions";
 import { InlineSaveButton } from "@/components/inline-save-button";
 import { useActionToast } from "@/lib/use-action-toast";
@@ -631,38 +632,15 @@ export function BillRow({
               </label>
             )}
           </div>
-          {buckets.length > 0 && (
-            <div className="grid grid-cols-2 gap-2">
-              <label className="flex min-w-0 flex-col gap-1 text-xs text-gray-500 dark:text-neutral-400">
-                Bucket
-                <SelectField
-                  name="bucketId"
-                  value={bucketId}
-                  onChange={setBucketId}
-                  options={[{ value: "", label: "None" }, ...buckets.map((b) => ({ value: b.id, label: b.name }))]}
-                  className="mt-1"
-                />
-              </label>
-              <label className="flex min-w-0 flex-col gap-1 text-xs text-gray-500 dark:text-neutral-400">
-                Category
-                <div className="mt-1">
-                  {bucketId ? (
-                    <CategoryPicker
-                      key={bucketId}
-                      categories={categories.filter((c) => c.bucketId === bucketId)}
-                      defaultCategoryId={bill.categoryId}
-                      bucketId={bucketId}
-                      name="categoryId"
-                    />
-                  ) : (
-                    <p className="rounded-lg border border-neutral-200 dark:border-neutral-800 px-3 py-2 text-xs text-gray-400 dark:text-neutral-500">
-                      Pick A Bucket First
-                    </p>
-                  )}
-                </div>
-              </label>
-            </div>
-          )}
+          <BucketCategoryFields
+            buckets={buckets}
+            bucketId={bucketId}
+            onBucketChange={setBucketId}
+            categories={categories}
+            defaultCategoryId={bill.categoryId}
+            allowNoBucket
+            hideWithoutBuckets
+          />
           <label className="flex flex-col gap-1 text-xs text-gray-500 dark:text-neutral-400">
             Amount Tolerance (optional — how much this can vary and still match a payment)
             <MoneyInput

@@ -1,6 +1,5 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { requireOwner } from "@/lib/access";
 import { currentPeriodKey } from "@/lib/period";
 import {
@@ -11,6 +10,7 @@ import {
   clearBudgetRedraft,
   type ConfirmBudgetPlanPayload,
 } from "@/lib/budget-plan";
+import { revalidateHousehold } from "@/lib/revalidate";
 
 // Setting the month's budget is owner-only ("full financials") — a non-owner
 // full-access member (a spouse scoped to buckets/budget) can view the proposed
@@ -23,20 +23,14 @@ export async function confirmBudgetPlanAction(payload: ConfirmBudgetPlanPayload)
   const { user } = await requireOwner();
   const res = await confirmBudgetPlan(user.householdId, payload);
   if (res.error) return res;
-  revalidatePath("/budget");
-  revalidatePath("/");
-  revalidatePath("/buckets");
-  revalidatePath("/savings");
-  revalidatePath("/debts");
-  revalidatePath("/transactions");
+  revalidateHousehold();
   return {};
 }
 
 export async function dismissBudgetPlanAction(): Promise<void> {
   const { user } = await requireOwner();
   await dismissBudgetPlan(user.householdId, currentPeriodKey());
-  revalidatePath("/budget");
-  revalidatePath("/");
+  revalidateHousehold();
 }
 
 export async function createSinkingFundAction(input: {
@@ -47,8 +41,7 @@ export async function createSinkingFundAction(input: {
   const { user } = await requireOwner();
   const res = await createSinkingFund(user.householdId, input);
   if (res.error) return res;
-  revalidatePath("/budget");
-  revalidatePath("/savings");
+  revalidateHousehold();
   return {};
 }
 
@@ -57,12 +50,12 @@ export async function redraftBudgetPlanAction(instructions: string): Promise<{ e
   const { user } = await requireOwner();
   const res = await redraftBudgetPlan(user.householdId, currentPeriodKey(), instructions);
   if (res.error) return res;
-  revalidatePath("/budget");
+  revalidateHousehold();
   return {};
 }
 
 export async function clearBudgetRedraftAction(): Promise<void> {
   const { user } = await requireOwner();
   await clearBudgetRedraft(user.householdId, currentPeriodKey());
-  revalidatePath("/budget");
+  revalidateHousehold();
 }

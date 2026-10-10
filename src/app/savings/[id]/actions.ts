@@ -1,12 +1,12 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { requireFullAccess, requireOwned } from "@/lib/access";
 import { parseDollarsToCents } from "@/lib/money";
 import { checkAndSendGoalAlerts, goalSavedCents, resolveGoalAccountLink } from "@/lib/savings";
+import { revalidateHousehold } from "@/lib/revalidate";
 
 function requireGoalInHousehold(goalId: string, householdId: string) {
   return requireOwned(db.savingsGoal.findUnique({ where: { id: goalId } }), householdId);
@@ -61,8 +61,7 @@ export async function addContribution(
 
   await checkAndSendGoalAlerts(goal.id);
 
-  revalidatePath(`/savings/${goal.id}`);
-  revalidatePath("/savings");
+  revalidateHousehold();
   return {};
 }
 
@@ -79,7 +78,7 @@ export async function linkGoalAccount(goalId: string, accountId: string) {
       where: { id: goal.id },
       data: { accountId: null, source: "MANUAL", currentAmountCents: goalSavedCents(goal), baselineCents: 0 },
     });
-    revalidatePath(`/savings/${goal.id}`);
+    revalidateHousehold();
     return;
   }
 
@@ -99,8 +98,7 @@ export async function linkGoalAccount(goalId: string, accountId: string) {
   });
   await checkAndSendGoalAlerts(goal.id);
 
-  revalidatePath(`/savings/${goal.id}`);
-  revalidatePath("/savings");
+  revalidateHousehold();
 }
 
 const updateGoalSchema = z.object({
@@ -152,8 +150,7 @@ export async function updateGoal(
     },
   });
 
-  revalidatePath(`/savings/${goal.id}`);
-  revalidatePath("/savings");
+  revalidateHousehold();
   return {};
 }
 
@@ -163,7 +160,7 @@ export async function toggleGoalReminder(goalId: string, enabled: boolean) {
   const goal = await requireGoalInHousehold(goalId, session.user.householdId);
   await db.savingsGoal.update({ where: { id: goal.id }, data: { reminderEnabled: enabled } });
 
-  revalidatePath(`/savings/${goal.id}`);
+  revalidateHousehold();
 }
 
 export async function deleteGoal(goalId: string) {
@@ -172,6 +169,6 @@ export async function deleteGoal(goalId: string) {
   const goal = await requireGoalInHousehold(goalId, session.user.householdId);
   await db.savingsGoal.delete({ where: { id: goal.id } });
 
-  revalidatePath("/savings");
+  revalidateHousehold();
   redirect("/savings");
 }

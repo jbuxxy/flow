@@ -16,7 +16,8 @@ import {
   supersededPayoffExtraByDebtInPeriod,
   planExtraTargetsByDebt,
 } from "@/lib/debt-payments";
-import { buildCycleSlots, slotBounds, splitPlanExtraPayments, extraPaymentsBeyondSlots as resolveExtraPaymentsBeyondSlots } from "@/lib/cycle-slots";
+import { tracksMinimum } from "@/lib/minimum-ledger";
+import { buildCycleSlots, cycleDueDate, recentPaymentsWhere, slotBounds, splitPlanExtraPayments, extraPaymentsBeyondSlots as resolveExtraPaymentsBeyondSlots } from "@/lib/cycle-slots";
 import { currentPeriodKey, utcPeriodBounds } from "@/lib/period";
 import { todayAsUTCDate } from "@/lib/date";
 import { recordDebtSnapshot, getDebtTrend } from "@/lib/debt-history";
@@ -133,7 +134,7 @@ export default async function DebtsPage() {
         cycleRestartDueDate: true,
         dueDateLocked: true,
         createdAt: true,
-        payments: { select: { id: true, amountCents: true, occurredOn: true, pending: true } },
+        payments: { where: recentPaymentsWhere(), select: { id: true, amountCents: true, occurredOn: true, pending: true } },
       },
     }),
     // A REVOLVING debt "needs setup" — badged on its row and (see
@@ -337,7 +338,7 @@ export default async function DebtsPage() {
     // apart the way they already have once (2026-09-06, Quicksilver payoff).
     const extraPaymentsBeyondSlots = resolveExtraPaymentsBeyondSlots(extraPayments, paymentsAbs, monthStart, monthEnd, {
       paidOffDate: d.paidOffDate,
-      tracksMinimum: !d.ignoreMinimumPayment,
+      tracksMinimum: payment ? tracksMinimum(d, payment) : !d.ignoreMinimumPayment,
     });
     // A no-minimum debt (ignoreMinimumPayment — a card the household pays
     // ad hoc) has no "Minimum … due/paid" concept: fold every paired payment
@@ -369,11 +370,12 @@ export default async function DebtsPage() {
           // matched, nextDueDate rolled to Sept 25 while Aug 25 sits unpaid —
           // pointing "due" at Sept 25 dropped it off the Payoff Calendar
           // entirely and threw off the cascading extra-payment projection,
-          // which keys off this same date via dueDateByDebtId). Prefer the
-          // latest occurrence actually landing in this period; fall back to
-          // nextDueDate only when nothing's expected this period at all
-          // (e.g. an ANNUAL debt due in a different month).
-          dueDate: slots.length > 0 ? slots[slots.length - 1].date : payment.nextDueDate,
+          // which keys off this same date via dueDateByDebtId). The first
+          // still-unpaid occurrence in this period (cycleDueDate — the same
+          // rule the server calendars use); nextDueDate only when nothing's
+          // expected this period at all (e.g. an ANNUAL debt due in a
+          // different month).
+          dueDate: cycleDueDate(slots, payment.nextDueDate),
           nextDueDate: payment.nextDueDate,
           // Whether the tracked next due date actually lands in the current
           // calendar month. An empty `slots` list means it doesn't — the
@@ -409,7 +411,7 @@ export default async function DebtsPage() {
       payment && cycleMinimum
         ? {
             ...cycleMinimum,
-            dueDate: lastMonth.slots.length > 0 ? lastMonth.slots[lastMonth.slots.length - 1].date : payment.nextDueDate,
+            dueDate: cycleDueDate(lastMonth.slots, payment.nextDueDate),
             // "this month" here means the viewed month — ledgerMinimumCents
             // must still see arrears when the tracker hasn't rolled out of it.
             nextDueThisMonth: payment.nextDueDate >= lastMonthStart && payment.nextDueDate < monthStart,

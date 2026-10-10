@@ -124,3 +124,18 @@ export function coveredMinimumDates(opts: {
   return resolveMinimumLedger(opts)
     .entries.flatMap((e) => (e.kind === "covered" && !e.skipped ? [e.date] : []));
 }
+
+// Whether a debt carries a real minimum payment: not flagged no-minimum
+// (Debt.ignoreMinimumPayment) and the tracker holds an amount above $0. This
+// used to be decided three ways — the flag alone on /debts, the amount alone
+// on the dashboard and calendars — which disagreed right after a hidden
+// no-minimum card's balance returned: unhideDebtPaymentIfBalanceReturned
+// clears the flag but the tracker's minimum stays $0 until the household
+// enters one (2026-10-09 review).
+export function tracksMinimum(
+  debt: { ignoreMinimumPayment?: boolean | null },
+  tracker: { amountCents: number },
+): boolean {
+  return !debt.ignoreMinimumPayment && tracker.amountCents > 0;
+}
+

@@ -1,7 +1,6 @@
 "use server";
 
 import { CLEARED_CLASSIFICATION } from "@/lib/classification-reset";
-import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { belongsToHousehold, requireFullAccess } from "@/lib/access";
@@ -9,6 +8,7 @@ import { parseDollarsToCents } from "@/lib/money";
 import { addPaycheckCadence, semiMonthlyDaysOrDefault } from "@/lib/income-calc";
 import { dismissUnlabeledP2P } from "@/lib/p2p-transfers";
 import { todayAsUTCDate } from "@/lib/date";
+import { revalidateHousehold } from "@/lib/revalidate";
 
 const createIncomeSchema = z.object({
   name: z.string().trim().min(1).max(80),
@@ -110,10 +110,7 @@ export async function createIncomeFromTransaction(
     },
   });
 
-  revalidatePath("/income");
-  revalidatePath("/buckets");
-  revalidatePath("/transactions");
-  revalidatePath("/debts");
+  revalidateHousehold();
   return {};
 }
 
@@ -172,9 +169,7 @@ export async function updateIncome(
     },
   });
 
-  revalidatePath("/income");
-  revalidatePath("/debts");
-  revalidatePath("/transactions");
+  revalidateHousehold();
   return {};
 }
 
@@ -197,8 +192,7 @@ export async function markIncomeReceived(incomeId: string) {
         : null,
     },
   });
-  revalidatePath("/income");
-  revalidatePath("/debts");
+  revalidateHousehold();
 }
 
 export async function deleteIncome(incomeId: string) {
@@ -208,8 +202,7 @@ export async function deleteIncome(incomeId: string) {
   if (!belongsToHousehold(income, session.user.householdId)) return;
 
   await db.income.delete({ where: { id: incomeId } });
-  revalidatePath("/income");
-  revalidatePath("/debts");
+  revalidateHousehold();
 }
 
 export async function acceptIncomeSuggestion(
@@ -262,8 +255,7 @@ export async function acceptIncomeSuggestion(
     update: {},
   });
 
-  revalidatePath("/income");
-  revalidatePath("/debts");
+  revalidateHousehold();
 }
 
 export async function dismissIncomeSuggestion(key: string) {
@@ -274,7 +266,7 @@ export async function dismissIncomeSuggestion(key: string) {
     create: { householdId: session.user.householdId, kind: "INCOME", key },
     update: {},
   });
-  revalidatePath("/income");
+  revalidateHousehold();
 }
 
 // "Yes, that money really did come in — but don't treat it as a repeating
@@ -294,13 +286,11 @@ export async function markIncomeSuggestionOneOff(key: string, transactionIds: st
     create: { householdId: session.user.householdId, kind: "INCOME", key },
     update: {},
   });
-  revalidatePath("/income");
-  revalidatePath("/");
+  revalidateHousehold();
 }
 
 export async function dismissUnlabeledP2PCredits() {
   const session = await requireFullAccess();
   await dismissUnlabeledP2P(session.user.householdId, "CREDIT");
-  revalidatePath("/income");
-  revalidatePath("/");
+  revalidateHousehold();
 }

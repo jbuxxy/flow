@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   assignPaymentsToSlots,
   buildCycleSlots,
+  cycleDueDate,
   cyclePaymentStatus,
   extraPaymentsBeyondSlots,
   occurrencesInPeriod,
@@ -311,5 +312,26 @@ describe("extraPaymentsBeyondSlots", () => {
         24_180,
       );
     });
+  });
+});
+
+describe("cycleDueDate", () => {
+  test("the first unpaid slot, not the last (biweekly BNPL billing twice a month)", () => {
+    // Regression (2026-10-09 review): /debts used the last slot (Sep 17)
+    // while the dashboard used the first unpaid (Sep 3).
+    const slots = [
+      { date: utc(2026, 9, 3), payment: null },
+      { date: utc(2026, 9, 17), payment: null },
+    ];
+    assert.deepEqual(cycleDueDate(slots, utc(2026, 9, 3)), utc(2026, 9, 3));
+  });
+
+  test("all paid -> last slot; nothing this period -> nextDueDate", () => {
+    const paid = { occurredOn: utc(2026, 9, 1) };
+    assert.deepEqual(
+      cycleDueDate([{ date: utc(2026, 9, 3), payment: paid }, { date: utc(2026, 9, 17), payment: paid }], utc(2026, 10, 1)),
+      utc(2026, 9, 17),
+    );
+    assert.deepEqual(cycleDueDate([], utc(2027, 3, 1)), utc(2027, 3, 1));
   });
 });

@@ -1,7 +1,6 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
@@ -9,6 +8,7 @@ import { belongsToHousehold } from "@/lib/access";
 import { hashPassword, verifyPassword } from "@/lib/password";
 import { generateInviteCode, resolveAppOrigin, INVITE_CODE_TTL_MS } from "@/lib/invite-link";
 import { ACCESS_LEVELS, type AccessLevel } from "@/lib/member-access";
+import { revalidateHousehold } from "@/lib/revalidate";
 
 const inviteSchema = z.object({
   accessLevel: z.enum(["OWNER", "PARTNER", "BASIC"]),
@@ -64,7 +64,7 @@ export async function inviteHouseholdMember(
     },
   });
 
-  revalidatePath("/settings/members");
+  revalidateHousehold();
 
   const base = await resolveAppOrigin();
   return {
@@ -195,7 +195,7 @@ export async function updateMember(
     },
   });
 
-  revalidatePath("/settings/members");
+  revalidateHousehold();
   return { setupUrl };
 }
 
@@ -267,6 +267,6 @@ export async function deleteMember(userId: string): Promise<DeleteMemberResult> 
     },
   });
 
-  revalidatePath("/settings/members");
+  revalidateHousehold();
   return {};
 }

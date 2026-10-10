@@ -1,6 +1,5 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
@@ -8,6 +7,8 @@ import { db } from "@/lib/db";
 import { requireOwned, requireOwner } from "@/lib/access";
 import { parseDollarsToCents } from "@/lib/money";
 import type { BucketAlertOverrideValue } from "@prisma/client";
+import { scheduleBucketIcons } from "@/lib/bucket-icons-sync";
+import { revalidateHousehold } from "@/lib/revalidate";
 
 // A misclassified transaction gets fixed by reclassifying
 // (reassignTransaction) or marked reviewed-but-not-spend, never by deleting
@@ -98,9 +99,9 @@ export async function updateBucketSettings(
       ...(isOwner && parsed.data.name !== bucket.name ? { icon: null } : {}),
     },
   });
+  if (isOwner && parsed.data.name !== bucket.name) scheduleBucketIcons(bucket.householdId, { newName: true });
 
-  revalidatePath(`/buckets/${bucket.id}`);
-  revalidatePath("/buckets");
+  revalidateHousehold();
   return {};
 }
 
@@ -164,7 +165,7 @@ export async function setBucketAlertOverride(
     });
   }
 
-  revalidatePath(`/buckets/${bucketId}`);
+  revalidateHousehold();
 }
 
 // Owner-only, same as renaming or changing a bucket's cap/type
@@ -183,6 +184,6 @@ export async function deleteBucket(bucketId: string) {
     db.bucket.delete({ where: { id: bucket.id } }),
   ]);
 
-  revalidatePath("/buckets");
+  revalidateHousehold();
   redirect("/buckets");
 }

@@ -2,7 +2,7 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { clusterByAmount } from "@/lib/amount-tolerance";
 import { formatBasisPoints, parseAmountParamCents, parseOptionalToleranceCents, parsePercentToBasisPoints } from "@/lib/money";
-import { isP2PMerchant, p2pMerchantMatch } from "@/lib/p2p-keywords";
+import { effectiveMerchant, isP2PMerchant, p2pMerchantMatch } from "@/lib/p2p-keywords";
 import { nameSimilarity, prepareName, preparedNameSimilarity } from "@/lib/fuzzy-match";
 import { formatCompact, niceTicks } from "@/lib/chart-axis";
 import { monthsAgoPeriodKey, periodLabel } from "@/lib/period";
@@ -101,5 +101,21 @@ describe("access-rules", () => {
     assert.equal(hasFullAccess({ role: "CHILD", dashboardScope: "BUCKETS_ONLY" }), false);
     assert.equal(belongsToHousehold({ householdId: "h1" }, "h1"), true);
     assert.equal(belongsToHousehold(null, "h1"), false);
+  });
+});
+
+describe("effectiveMerchant", () => {
+  test("a receipt-resolved business replaces the P2P app text and stops being P2P", () => {
+    assert.deepEqual(effectiveMerchant({ merchant: "Venmo", resolvedMerchant: " Jane's Dog Walking ", resolvedMerchantIsPerson: false }), {
+      merchant: "Jane's Dog Walking",
+      p2p: false,
+    });
+  });
+  test("a resolved person, or nothing resolved, stays P2P under the bank text", () => {
+    assert.deepEqual(effectiveMerchant({ merchant: "Venmo", resolvedMerchant: "Danny R", resolvedMerchantIsPerson: true }), {
+      merchant: "Venmo",
+      p2p: true,
+    });
+    assert.deepEqual(effectiveMerchant({ merchant: "Walmart" }), { merchant: "Walmart", p2p: false });
   });
 });

@@ -1,12 +1,12 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { requireFullAccess } from "@/lib/access";
 import { parseDollarsToCents } from "@/lib/money";
 import { resolveGoalAccountLink, getGoalPlan } from "@/lib/savings";
 import type { GoalPlanMessage, GoalPlanProposal } from "@/lib/ai";
+import { revalidateHousehold } from "@/lib/revalidate";
 
 const createGoalSchema = z.object({
   name: z.string().trim().min(1).max(80),
@@ -87,6 +87,6 @@ export async function createGoal(
     },
   });
 
-  revalidatePath("/savings");
+  revalidateHousehold();
   return {};
 }

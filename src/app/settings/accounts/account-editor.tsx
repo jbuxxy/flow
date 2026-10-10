@@ -23,7 +23,8 @@ import { MoneyInput } from "@/components/money-input";
 import { PercentInput } from "@/components/percent-input";
 import { DayOfMonthPicker } from "@/components/day-of-month-picker";
 import { SelectField } from "@/components/select-field";
-import { CategoryPicker, type CategoryOption } from "@/app/bills/category-picker";
+import { BucketCategoryFields } from "@/components/bucket-category-fields";
+import { type CategoryOption } from "@/app/bills/category-picker";
 import { dayOfMonthUTC } from "@/lib/date";
 import type { AccountType } from "@prisma/client";
 
@@ -389,34 +390,15 @@ export function AccountEditor({
                 />
                 No real minimum — don&apos;t track one
               </label>
-              <div className={buckets.length > 0 ? "grid grid-cols-2 gap-2" : "flex flex-col gap-2"}>
-                {buckets.length > 0 && (
-                  <label className="flex min-w-0 flex-col gap-1 text-xs text-gray-500 dark:text-neutral-400">
-                    Bucket
-                    <SelectField
-                      name="bucketId"
-                      value={bucketId}
-                      onChange={setBucketId}
-                      options={[{ value: "", label: "None" }, ...buckets.map((b) => ({ value: b.id, label: b.name }))]}
-                      className="mt-1"
-                      small
-                    />
-                  </label>
-                )}
-                <label className="flex min-w-0 flex-col gap-1 text-xs text-gray-500 dark:text-neutral-400">
-                  Category
-                  <div className="mt-1">
-                    <CategoryPicker
-                      key={bucketId}
-                      categories={categories.filter((c) => c.bucketId === bucketId)}
-                      defaultCategoryId={debt.categoryId}
-                      bucketId={bucketId || null}
-                      name="categoryId"
-                      small
-                    />
-                  </div>
-                </label>
-              </div>
+              <BucketCategoryFields
+                buckets={buckets}
+                bucketId={bucketId}
+                onBucketChange={setBucketId}
+                categories={categories}
+                defaultCategoryId={debt.categoryId}
+                allowNoBucket
+                small
+              />
               {termsState.error && <p className="text-xs text-red-600 dark:text-red-400">{termsState.error}</p>}
             </div>
           )}

@@ -1,6 +1,6 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { coveredMinimumDates, ledgerMinimumCents, resolveMinimumLedger, minimumOwedCents } from "@/lib/minimum-ledger";
+import { coveredMinimumDates, ledgerMinimumCents, resolveMinimumLedger, minimumOwedCents, tracksMinimum } from "@/lib/minimum-ledger";
 import { utc } from "../helpers.ts";
 
 const pay = (id: string, cents: number, d: Date) => ({ id, amountCents: cents, occurredOn: d });
@@ -150,3 +150,13 @@ describe("minimumOwedCents", () => {
   });
 });
 
+
+describe("tracksMinimum", () => {
+  test("needs both: not flagged no-minimum, and an amount above $0", () => {
+    assert.equal(tracksMinimum({ ignoreMinimumPayment: false }, { amountCents: 2500 }), true);
+    assert.equal(tracksMinimum({ ignoreMinimumPayment: true }, { amountCents: 2500 }), false);
+    // Regression (2026-10-09): a returned balance clears the flag before a
+    // minimum is entered — /debts said "tracks", the calendars said not.
+    assert.equal(tracksMinimum({ ignoreMinimumPayment: false }, { amountCents: 0 }), false);
+  });
+});

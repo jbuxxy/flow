@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useMemo, useState, useTransition } from "react";
+import { useActionState, useEffect, useMemo, useState, useTransition, type ComponentProps } from "react";
 import { useRouter } from "next/navigation";
 import type { BillCadence } from "@prisma/client";
 import { CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, FlaskConical, List, Zap } from "lucide-react";
@@ -401,56 +401,6 @@ export function PayoffPlanner({
     [payoffExtraSkips],
   );
 
-  const result = useMemo(
-    () =>
-      projectionDebtInputs.length > 0
-        ? simulatePayoff(projectionDebtInputs, {
-            order: orderMode,
-            rollFreedMinimums,
-            extraPerPaycheckCents,
-            income: income ?? undefined,
-            alreadyFreedMinimums,
-            extraEligibleIds: inPlanIds,
-            minimumSatisfiedThisCycleIds,
-            skippedExtraPairs,
-          })
-        : null,
-    [
-      projectionDebtInputs,
-      orderMode,
-      rollFreedMinimums,
-      extraPerPaycheckCents,
-      income,
-      alreadyFreedMinimums,
-      inPlanIds,
-      minimumSatisfiedThisCycleIds,
-      skippedExtraPairs,
-    ],
-  );
-  // The same plan with no extra payments at all — the baseline for "how much
-  // interest is this plan actually saving you." Capped to the actual plan's
-  // own payoff horizon so the comparison is apples-to-apples: interest paid
-  // by each scenario over the same window. Without the cap, a debt whose
-  // minimum doesn't cover its own interest would run this baseline out to
-  // the full 50-year safety cap and rack up decades of runaway compounding
-  // that was never a meaningful "savings" figure.
-  const baseline = useMemo(
-    () =>
-      projectionDebtInputs.length > 0 && result
-        ? simulatePayoff(projectionDebtInputs, {
-            order: orderMode,
-            rollFreedMinimums: false,
-            extraPerPaycheckCents: 0,
-            income: income ?? undefined,
-            horizonMonths: result.months,
-            extraEligibleIds: inPlanIds,
-            minimumSatisfiedThisCycleIds,
-          })
-        : null,
-    [projectionDebtInputs, orderMode, income, result, inPlanIds, minimumSatisfiedThisCycleIds],
-  );
-  const interestSavedCents =
-    result && baseline ? Math.max(0, baseline.totalInterestPaidCents - result.totalInterestPaidCents) : 0;
 
   // Each debt's own real due date + cadence, straight from the tracked
   // DebtPayment — without this, projectCyclePlan has no way to know a
@@ -520,6 +470,88 @@ export function PayoffPlanner({
   // regardless of extra-payment strategy.
   // postedExtraNettedByDebtId: real extra the past-payday branch already
   // netted away — see confirmProjectedExtras' nettedByPlanCents.
+  const result = useMemo(
+    () =>
+      projectionDebtInputs.length > 0
+        ? simulatePayoff(projectionDebtInputs, {
+            order: orderMode,
+            rollFreedMinimums,
+            extraPerPaycheckCents,
+            income: income ?? undefined,
+            alreadyFreedMinimums,
+            extraEligibleIds: inPlanIds,
+            minimumSatisfiedThisCycleIds,
+            skippedExtraPairs,
+            // Same inputs the Payment Calendar's projectCyclePlan gets, so
+            // the chart's first months are that engine's own (see
+            // simulatePayoff's seed months).
+            dueDateByDebtId,
+            extraPaidThisCycleByDebtId,
+            rollFreedMinimumsSplit,
+          })
+        : null,
+    [
+      projectionDebtInputs,
+      orderMode,
+      rollFreedMinimums,
+      rollFreedMinimumsSplit,
+      extraPerPaycheckCents,
+      income,
+      alreadyFreedMinimums,
+      inPlanIds,
+      minimumSatisfiedThisCycleIds,
+      skippedExtraPairs,
+      dueDateByDebtId,
+      extraPaidThisCycleByDebtId,
+    ],
+  );
+  // The same plan with no extra payments at all — the baseline for "how much
+  // interest is this plan actually saving you." Capped to the actual plan's
+  // own payoff horizon so the comparison is apples-to-apples: interest paid
+  // by each scenario over the same window. Without the cap, a debt whose
+  // minimum doesn't cover its own interest would run this baseline out to
+  // the full 50-year safety cap and rack up decades of runaway compounding
+  // that was never a meaningful "savings" figure.
+  const baseline = useMemo(
+    () =>
+      projectionDebtInputs.length > 0 && result
+        ? simulatePayoff(projectionDebtInputs, {
+            order: orderMode,
+            rollFreedMinimums: false,
+            extraPerPaycheckCents: 0,
+            income: income ?? undefined,
+            horizonMonths: result.months,
+            extraEligibleIds: inPlanIds,
+            minimumSatisfiedThisCycleIds,
+            dueDateByDebtId,
+          })
+        : null,
+    [projectionDebtInputs, orderMode, income, result, inPlanIds, minimumSatisfiedThisCycleIds, dueDateByDebtId],
+  );
+  // Every list on this page renders the same DebtRow; only a few props
+  // differ per list (the live plan's own order/extras, the Last Month
+  // look-back), passed as overrides.
+  const debtRow = (debt: PlannerDebt, overrides: Partial<ComponentProps<typeof DebtRow>> = {}) => (
+    <DebtRow
+      key={debt.id}
+      debt={debt}
+      attackOrderIndex={null}
+      payoffDate={null}
+      suggestedAccount={debt.suggestedAccount}
+      needsSetup={debt.needsSetup}
+      patternCount={debt.patternCount}
+      draggable={false}
+      cycleMinimum={debt.cycleMinimum}
+      expectedExtras={[]}
+      readOnly={!isOwner}
+      todayISO={todayISO}
+      {...overrides}
+    />
+  );
+
+  const interestSavedCents =
+    result && baseline ? Math.max(0, baseline.totalInterestPaidCents - result.totalInterestPaidCents) : 0;
+
   const { cyclePlan, postedExtraNettedByDebtId } = useMemo(() => {
     const postedExtraNettedByDebtId = new Map<string, number>();
     const cyclePlan =
@@ -1138,22 +1170,7 @@ export function PayoffPlanner({
           region they'd otherwise live in. */}
       {allDebtsPaidOff && trailingDebts.length > 0 && (
         <ul className="flex flex-col gap-3 lg:mx-auto lg:max-w-3xl">
-          {trailingDebts.map((debt) => (
-            <DebtRow
-              key={debt.id}
-              debt={debt}
-              attackOrderIndex={null}
-              payoffDate={null}
-              suggestedAccount={debt.suggestedAccount}
-              needsSetup={debt.needsSetup}
-              patternCount={debt.patternCount}
-              draggable={false}
-              cycleMinimum={debt.cycleMinimum}
-              expectedExtras={[]}
-              readOnly={!isOwner}
-              todayISO={todayISO}
-            />
-          ))}
+          {trailingDebts.map((debt) => debtRow(debt))}
         </ul>
       )}
 
@@ -1268,20 +1285,13 @@ export function PayoffPlanner({
                   {lastMonthListDebts.length > 0 ? (
                     <ul className="flex flex-col gap-3">
                       {lastMonthListDebts.map((debt) => (
-                        <DebtRow
-                          key={debt.id}
-                          debt={debt}
-                          attackOrderIndex={null}
-                          payoffDate={null}
-                          needsSetup={false}
-                          patternCount={0}
-                          draggable={false}
-                          cycleMinimum={debt.lastMonthCycleMinimum ?? null}
-                          expectedExtras={[]}
-                          readOnly={!isOwner}
-                          todayISO={todayISO}
-                          lookBack
-                        />
+                        debtRow(debt, {
+                          suggestedAccount: undefined,
+                          needsSetup: false,
+                          patternCount: 0,
+                          cycleMinimum: debt.lastMonthCycleMinimum ?? null,
+                          lookBack: true,
+                        })
                       ))}
                     </ul>
                   ) : (
@@ -1301,20 +1311,12 @@ export function PayoffPlanner({
                             // so its own projection stays visible either way.
                             const extras = minimumOnly ? [] : thisCycleExtrasByDebtId.get(id) ?? [];
                             return (
-                              <DebtRow
-                                key={id}
-                                debt={debt}
-                                attackOrderIndex={minimumOnly ? null : attackOrderIndexById.get(id) ?? null}
-                                payoffDate={result?.perDebt.find((p) => p.id === id)?.payoffDate ?? null}
-                                suggestedAccount={debt.suggestedAccount}
-                                needsSetup={debt.needsSetup}
-                                patternCount={debt.patternCount}
-                                draggable={isOwner && orderMode === "CUSTOM"}
-                                cycleMinimum={debt.cycleMinimum}
-                                expectedExtras={extras}
-                                readOnly={!isOwner}
-                                todayISO={todayISO}
-                              />
+                              debtRow(debt, {
+                                attackOrderIndex: minimumOnly ? null : attackOrderIndexById.get(id) ?? null,
+                                payoffDate: result?.perDebt.find((p) => p.id === id)?.payoffDate ?? null,
+                                draggable: isOwner && orderMode === "CUSTOM",
+                                expectedExtras: extras,
+                              })
                             );
                           })}
                         </ul>
@@ -1364,22 +1366,7 @@ export function PayoffPlanner({
                       debts as projected PayoffCycleCards above instead. */}
                   {isThisCycle && notInPlanDebts.length > 0 && (
                     <ul className="flex flex-col gap-3">
-                      {notInPlanDebts.map((debt) => (
-                        <DebtRow
-                          key={debt.id}
-                          debt={debt}
-                          attackOrderIndex={null}
-                          payoffDate={result?.perDebt.find((p) => p.id === debt.id)?.payoffDate ?? null}
-                          suggestedAccount={debt.suggestedAccount}
-                          needsSetup={debt.needsSetup}
-                          patternCount={debt.patternCount}
-                          draggable={false}
-                          cycleMinimum={debt.cycleMinimum}
-                          expectedExtras={[]}
-                          readOnly={!isOwner}
-                          todayISO={todayISO}
-                        />
-                      ))}
+                      {notInPlanDebts.map((debt) => debtRow(debt, { payoffDate: result?.perDebt.find((p) => p.id === debt.id)?.payoffDate ?? null }))}
                     </ul>
                   )}
 
@@ -1389,22 +1376,7 @@ export function PayoffPlanner({
                       balances, where a $0 debt simply isn't part of the picture. */}
                   {isThisCycle && paidOffDebts.length > 0 && (
                     <ul className="flex flex-col gap-3">
-                      {paidOffDebts.map((debt) => (
-                        <DebtRow
-                          key={debt.id}
-                          debt={debt}
-                          attackOrderIndex={null}
-                          payoffDate={null}
-                          suggestedAccount={debt.suggestedAccount}
-                          needsSetup={debt.needsSetup}
-                          patternCount={debt.patternCount}
-                          draggable={false}
-                          cycleMinimum={debt.cycleMinimum}
-                          expectedExtras={[]}
-                          readOnly={!isOwner}
-                          todayISO={todayISO}
-                        />
-                      ))}
+                      {paidOffDebts.map((debt) => debtRow(debt))}
                     </ul>
                   )}
                 </div>

@@ -1,5 +1,4 @@
 import type { BillCadence } from "@prisma/client";
-import { subtractCadence } from "@/lib/recurring-bills";
 import { stepCadence } from "@/lib/cadence-step";
 import { MATCH_WINDOW_DAYS } from "@/lib/bill-match-window";
 import { DAY_MS } from "@/lib/date";
@@ -184,7 +183,7 @@ export function buildCycleSlots<T extends { occurredOn: Date }>(
   // early/duplicate payment toward an upcoming, not-yet-due cycle) is
   // untouched — see the "genuine second payment this same month" test.
   const graceMs = MATCH_WINDOW_DAYS * DAY_MS;
-  const priorOccurrence = occurrences.length > 0 ? subtractCadence(occurrences[0], cadence) : null;
+  const priorOccurrence = occurrences.length > 0 ? stepCadence(occurrences[0], cadence, -1) : null;
   const lastOccurrence = occurrences.length > 0 ? occurrences[occurrences.length - 1] : null;
   const priorLeakCutoffMs = priorOccurrence ? priorOccurrence.getTime() + graceMs : null;
   const forwardLeakCutoffMs = lastOccurrence ? lastOccurrence.getTime() + graceMs : null;
@@ -323,3 +322,29 @@ export function splitPlanExtraPayments<T extends { amountCents: number; occurred
   }
   return { planExtraPayments: claimed, rest: remaining };
 }
+
+// The occurrence a cycle is "due" on: the first still-unpaid slot this
+// period, else the last slot, else the tracker's own nextDueDate (nothing
+// lands this period — an ANNUAL debt due in another month). The first
+// unpaid, not the last: a BIWEEKLY BNPL billing twice a month would
+// otherwise read its later installment (Sep 17) while the earlier one
+// (Sep 3) sat unpaid (real report, 2026-09-01: Klarna–Puma). Shared by the
+// server calendars (correctedDueDateByDebtId) and /debts' CycleMinimum —
+// /debts used to keep the last slot, so its planner disagreed with the
+// dashboard on exactly that case (2026-10-09 review).
+export function cycleDueDate(slots: { date: Date; payment: unknown }[], nextDueDate: Date): Date {
+  const firstUnpaid = slots.find((s) => s.payment === null);
+  return firstUnpaid?.date ?? (slots.length > 0 ? slots[slots.length - 1].date : nextDueDate);
+}
+
+// How far back a ledger loads a tracker's payments. Every ledger view reads
+// this cycle and last (and an ANNUAL bill its prior payment, ~a year back);
+// none needs a tracker's whole history, which used to load on every render
+// and grew forever (2026-10-09 review). Same 400-day reach bill detection
+// already uses.
+export const PAYMENT_HISTORY_DAYS = 400;
+
+export function recentPaymentsWhere() {
+  return { occurredOn: { gte: new Date(Date.now() - PAYMENT_HISTORY_DAYS * DAY_MS) } };
+}
+

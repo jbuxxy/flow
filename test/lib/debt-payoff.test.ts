@@ -19,6 +19,7 @@ import {
   supersededPayoffExtraCents,
   supersededPayoffTargetAmounts,
   capAtPayoffCents,
+  debtBalanceUpdate,
   monthlyInterestCents,
   payoffAmountCents,
 } from "@/lib/debt-payoff";
@@ -910,3 +911,61 @@ describe("capAtPayoffCents", () => {
   });
 });
 
+
+describe("simulatePayoff agrees with projectCyclePlan over the calendar window", () => {
+  // Regression (2026-10-09 review): the "Projected Payoff" chart ran its own
+  // engine and ignored real due dates and extra already paid this cycle, so
+  // it disagreed with the Payment Calendar by a cycle. It now takes its
+  // first months from projectCyclePlan itself.
+  const a = { id: "a", name: "A", balanceCents: 300_000, aprBasisPoints: 2400, minPaymentCents: 9_000, debtType: "REVOLVING" as const };
+  const b = { id: "b", name: "B", balanceCents: 80_000, aprBasisPoints: 1500, minPaymentCents: 3_500, debtType: "REVOLVING" as const };
+  const base = {
+    order: "AVALANCHE" as const,
+    rollFreedMinimums: true,
+    extraPerPaycheckCents: 20_000,
+    income: { nextPayDate: utc(2026, 10, 2), cadence: "BIWEEKLY" as const },
+    startDate: utc(2026, 10, 9),
+  };
+  const scenarios: [string, Record<string, unknown>][] = [
+    ["plain", {}],
+    ["extra already paid this cycle", { extraPaidThisCycleByDebtId: new Map([["a", 20_000]]) }],
+    [
+      "real due dates (one not due until next month)",
+      {
+        dueDateByDebtId: new Map([
+          ["a", { date: utc(2026, 10, 25), cadence: "MONTHLY" }],
+          ["b", { date: utc(2026, 11, 2), cadence: "MONTHLY" }],
+        ]),
+      },
+    ],
+    ["split rollover", { rollFreedMinimumsSplit: true }],
+  ];
+  for (const [label, extra] of scenarios) {
+    test(label, () => {
+      const debts = [a, b];
+      const sim = simulatePayoff(debts, { ...base, ...extra });
+      const plan = projectCyclePlan(debts, { ...base, ...extra, monthsCount: 3 });
+      for (let m = 0; m < 3; m++) {
+        const planRow = Object.fromEntries(plan[m].debts.map((e) => [e.debtId, e.endBalanceCents]));
+        assert.deepEqual(sim.timeline[m].perDebtRemainingCents, planRow, `month ${m + 1}`);
+      }
+    });
+  }
+});
+
+describe("debtBalanceUpdate", () => {
+  test("stamps paid-off date AND amount together on the transition to $0", () => {
+    // Regression (2026-10-09): installment matching wrote paidOffDate without
+    // paidOffAmountCents.
+    const out = debtBalanceUpdate({ balanceCents: 1706, paidOffDate: null, paidOffAmountCents: null }, 0);
+    assert.equal(out.balanceCents, 0);
+    assert.ok(out.paidOffDate instanceof Date);
+    assert.equal(out.paidOffAmountCents, 1706);
+  });
+
+  test("a balance returning clears both; sitting at $0 keeps both", () => {
+    const paid = { balanceCents: 0, paidOffDate: utc(2026, 9, 1), paidOffAmountCents: 500 };
+    assert.deepEqual(debtBalanceUpdate(paid, 1200), { balanceCents: 1200, paidOffDate: null, paidOffAmountCents: null });
+    assert.deepEqual(debtBalanceUpdate(paid, 0), { balanceCents: 0, paidOffDate: utc(2026, 9, 1), paidOffAmountCents: 500 });
+  });
+});

@@ -11,7 +11,7 @@ import {
   getPendingBillAmountReviews,
 } from "@/lib/recurring-bills";
 import { pickableDebtWhere } from "@/lib/debt-reassign";
-import { ensureBucketIcons } from "@/lib/bucket-icons-sync";
+import { scheduleBucketIcons } from "@/lib/bucket-icons-sync";
 import { AppShell } from "@/components/app-shell";
 import { BillAmountReviewCard } from "@/components/bill-amount-review-card";
 import { type PatternData, serializePatternDates } from "@/lib/pattern-data";
@@ -46,8 +46,7 @@ export default async function RecurringPage() {
   // (UTC midnight), see utcPeriodBounds's own comment.
   const { start: utcMonthStart, end: utcMonthEnd } = utcPeriodBounds(currentPeriodKey());
 
-  // Before the batch — the bucket query below reads the icons it backfills.
-  await ensureBucketIcons(householdId);
+  scheduleBucketIcons(householdId);
   const [buckets, rawDebts, categories, bills, debtPayments, patterns, pendingReviews, pendingBillAmountReviews] =
     await Promise.all([
       db.bucket.findMany({

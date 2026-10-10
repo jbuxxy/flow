@@ -31,7 +31,8 @@ import {
 import { MoneyInput } from "@/components/money-input";
 import { PercentInput } from "@/components/percent-input";
 import { SelectField } from "@/components/select-field";
-import { CategoryPicker, type CategoryOption } from "@/app/bills/category-picker";
+import { BucketCategoryFields } from "@/components/bucket-category-fields";
+import { type CategoryOption } from "@/app/bills/category-picker";
 import { CADENCE_OPTIONS } from "@/lib/cadence-label";
 
 const initialRenameState: RenameDebtState = {};
@@ -504,32 +505,13 @@ export function ManualDebtEditor({
                   />
                 </label>
               </div>
-              <div className={buckets.length > 0 ? "grid grid-cols-2 gap-2" : "flex flex-col gap-2"}>
-                {buckets.length > 0 && (
-                  <label className="flex min-w-0 flex-col gap-1 text-xs text-gray-500 dark:text-neutral-400">
-                    Bucket
-                    <SelectField
-                      name="bucketId"
-                      value={bucketId}
-                      onChange={setBucketId}
-                      options={buckets.map((b) => ({ value: b.id, label: b.name }))}
-                      className="mt-1"
-                    />
-                  </label>
-                )}
-                <label className="flex min-w-0 flex-col gap-1 text-xs text-gray-500 dark:text-neutral-400">
-                  Category
-                  <div className="mt-1">
-                    <CategoryPicker
-                      key={bucketId}
-                      categories={categories.filter((c) => c.bucketId === bucketId)}
-                      defaultCategoryId={trackedCategoryId}
-                      bucketId={bucketId || null}
-                      name="categoryId"
-                    />
-                  </div>
-                </label>
-              </div>
+              <BucketCategoryFields
+                buckets={buckets}
+                bucketId={bucketId}
+                onBucketChange={setBucketId}
+                categories={categories}
+                defaultCategoryId={trackedCategoryId}
+              />
               <label className="flex flex-col gap-1 text-xs text-gray-500 dark:text-neutral-400">
                 Amount Tolerance (how much a payment can vary and still auto-match)
                 <MoneyInput
@@ -609,32 +591,13 @@ export function ManualDebtEditor({
                 />
                 No real minimum — don&apos;t track one
               </label>
-              <div className={buckets.length > 0 ? "grid grid-cols-2 gap-2" : "flex flex-col gap-2"}>
-                {buckets.length > 0 && (
-                  <label className="flex min-w-0 flex-col gap-1 text-xs text-gray-500 dark:text-neutral-400">
-                    Bucket
-                    <SelectField
-                      name="bucketId"
-                      value={bucketId}
-                      onChange={setBucketId}
-                      options={buckets.map((b) => ({ value: b.id, label: b.name }))}
-                      className="mt-1"
-                    />
-                  </label>
-                )}
-                <label className="flex min-w-0 flex-col gap-1 text-xs text-gray-500 dark:text-neutral-400">
-                  Category
-                  <div className="mt-1">
-                    <CategoryPicker
-                      key={bucketId}
-                      categories={categories.filter((c) => c.bucketId === bucketId)}
-                      defaultCategoryId={trackedCategoryId}
-                      bucketId={bucketId || null}
-                      name="categoryId"
-                    />
-                  </div>
-                </label>
-              </div>
+              <BucketCategoryFields
+                buckets={buckets}
+                bucketId={bucketId}
+                onBucketChange={setBucketId}
+                categories={categories}
+                defaultCategoryId={trackedCategoryId}
+              />
               {/* Convert this manual debt to a synced one, once SimpleFIN
                   actually has a matching account for it — reuses the same
                   linkDebtAccount action the auto-suggestion banner and a

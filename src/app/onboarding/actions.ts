@@ -1,6 +1,5 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { requireOwner } from "@/lib/access";
@@ -12,6 +11,8 @@ import {
 } from "@/app/settings/actions";
 import { categorizeUncategorizedTransactions } from "@/lib/simplefin-sync";
 import type { OnboardingStep } from "@prisma/client";
+import { scheduleBucketIcons } from "@/lib/bucket-icons-sync";
+import { revalidateHousehold } from "@/lib/revalidate";
 
 const profileSchema = z.object({
   goalPosture: z.enum(["DEBT_PAYDOWN", "SAVINGS_FOCUSED", "BALANCED"]),
@@ -47,7 +48,7 @@ export async function saveProfileAndAdvance(
   await updateIncomeCalcMethod(parsed.data.incomeCalcMethod);
   await setIncludeP2PInIncomeCalc(parsed.data.includeP2P);
   await db.household.update({ where: { id: user.householdId }, data: { onboardingStep: "CONNECT" } });
-  revalidatePath("/onboarding");
+  revalidateHousehold();
   return {};
 }
 
@@ -57,7 +58,7 @@ export async function advanceOnboardingStep(step: OnboardingStep): Promise<void>
   const { user } = await requireOwner();
   if (!ADVANCEABLE_STEPS.includes(step)) return;
   await db.household.update({ where: { id: user.householdId }, data: { onboardingStep: step } });
-  revalidatePath("/onboarding");
+  revalidateHousehold();
 }
 
 const bucketSuggestionSchema = z.object({
@@ -94,6 +95,7 @@ export async function confirmBucketsAndFinish(buckets: unknown): Promise<Confirm
         sortOrder: i,
       })),
     });
+    scheduleBucketIcons(user.householdId, { newName: true });
     await categorizeUncategorizedTransactions(user.householdId);
   }
 
@@ -101,7 +103,6 @@ export async function confirmBucketsAndFinish(buckets: unknown): Promise<Confirm
     where: { id: user.householdId },
     data: { onboardingCompletedAt: new Date(), onboardingStep: "DONE" },
   });
-  revalidatePath("/");
-  revalidatePath("/buckets");
+  revalidateHousehold();
   return {};
 }

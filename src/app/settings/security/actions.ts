@@ -1,8 +1,8 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { revalidateHousehold } from "@/lib/revalidate";
 
 async function requireSession() {
   const session = await auth();
@@ -29,7 +29,7 @@ export async function removePasskey(id: string): Promise<PasskeyActionResult> {
     data: { userId: user.id, action: "PASSKEY_REMOVED", detail: { nickname: credential.nickname } },
   });
 
-  revalidatePath("/settings/security");
+  revalidateHousehold();
   return { ok: true };
 }
 
@@ -50,6 +50,6 @@ export async function renamePasskey(id: string, nickname: string): Promise<Passk
     data: { nickname: trimmed.slice(0, 60) },
   });
 
-  revalidatePath("/settings/security");
+  revalidateHousehold();
   return { ok: true };
 }

@@ -1,6 +1,5 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
@@ -15,6 +14,7 @@ import {
   type HomeEstimateDetails,
 } from "@/lib/ai";
 import { estimateCryptoValue, type CryptoEstimateDetails } from "@/lib/crypto-lookup";
+import { revalidateHousehold } from "@/lib/revalidate";
 
 const ASSET_TYPES = [
   "RETIREMENT_401K",
@@ -206,7 +206,7 @@ export async function createAsset(
     },
   });
 
-  revalidatePath("/networth");
+  revalidateHousehold();
   return {};
 }
 
@@ -261,7 +261,7 @@ export async function updateAssetEstimateDetails(
       source: asset.assetType === "CRYPTO" ? "LIVE_PRICE" : "AI_ESTIMATE",
     },
   });
-  revalidatePath("/networth");
+  revalidateHousehold();
   return {};
 }
 
@@ -296,7 +296,7 @@ export async function rerunAssetEstimate(assetId: string) {
       source: asset.assetType === "CRYPTO" ? "LIVE_PRICE" : "AI_ESTIMATE",
     },
   });
-  revalidatePath("/networth");
+  revalidateHousehold();
 }
 
 // One-click "start tracking this synced investment account" — unlike debts,
@@ -333,7 +333,7 @@ export async function trackAccountAsAsset(accountId: string) {
     },
   });
 
-  revalidatePath("/networth");
+  revalidateHousehold();
 }
 
 // A cash (CHECKING/SAVINGS) account has no Asset row to delete the way an
@@ -351,7 +351,7 @@ export async function excludeCashAccount(accountId: string) {
   if (account.accountType !== "CHECKING" && account.accountType !== "SAVINGS") return;
 
   await db.account.update({ where: { id: accountId }, data: { excludedFromNetWorth: true } });
-  revalidatePath("/networth");
+  revalidateHousehold();
 }
 
 export async function includeCashAccount(accountId: string) {
@@ -363,7 +363,7 @@ export async function includeCashAccount(accountId: string) {
   if (!belongsToHousehold(account, session.user.householdId)) return;
 
   await db.account.update({ where: { id: accountId }, data: { excludedFromNetWorth: false } });
-  revalidatePath("/networth");
+  revalidateHousehold();
 }
 
 export async function linkAssetAccount(assetId: string, accountId: string) {
@@ -376,7 +376,7 @@ export async function linkAssetAccount(assetId: string, accountId: string) {
 
   if (!accountId) {
     await db.asset.update({ where: { id: assetId }, data: { accountId: null, source: "MANUAL" } });
-    revalidatePath("/networth");
+    revalidateHousehold();
     return;
   }
 
@@ -399,7 +399,7 @@ export async function linkAssetAccount(assetId: string, accountId: string) {
       asOfDate: todayAsUTCDate(), // @db.Date — the local calendar day, not a raw UTC instant
     },
   });
-  revalidatePath("/networth");
+  revalidateHousehold();
 }
 
 // Points a HOME_EQUITY/VEHICLE_EQUITY asset at the mortgage/auto loan Debt
@@ -417,7 +417,7 @@ export async function linkAssetDebt(assetId: string, debtId: string) {
 
   if (!debtId) {
     await db.asset.update({ where: { id: assetId }, data: { debtId: null } });
-    revalidatePath("/networth");
+    revalidateHousehold();
     return;
   }
 
@@ -431,7 +431,7 @@ export async function linkAssetDebt(assetId: string, debtId: string) {
   if (alreadyLinked && alreadyLinked.id !== assetId) return;
 
   await db.asset.update({ where: { id: assetId }, data: { debtId } });
-  revalidatePath("/networth");
+  revalidateHousehold();
 }
 
 const createLinkedDebtSchema = z.object({
@@ -491,8 +491,7 @@ export async function createLinkedDebt(
 
   await db.asset.update({ where: { id: assetId }, data: { debtId: debt.id } });
 
-  revalidatePath("/networth");
-  revalidatePath("/debts");
+  revalidateHousehold();
   return {};
 }
 
@@ -548,7 +547,7 @@ export async function updateAssetValue(
       estimateUpdatedAt: asset.estimateDetails ? new Date() : asset.estimateUpdatedAt,
     },
   });
-  revalidatePath("/networth");
+  revalidateHousehold();
   return {};
 }
 
@@ -569,7 +568,7 @@ export async function confirmAssetValue(assetId: string) {
   if (asset.source !== "MANUAL") return;
 
   await db.asset.update({ where: { id: assetId }, data: { asOfDate: todayAsUTCDate() } });
-  revalidatePath("/networth");
+  revalidateHousehold();
 }
 
 export async function deleteAsset(assetId: string) {
@@ -581,5 +580,5 @@ export async function deleteAsset(assetId: string) {
   if (!belongsToHousehold(asset, session.user.householdId)) return;
 
   await db.asset.delete({ where: { id: assetId } });
-  revalidatePath("/networth");
+  revalidateHousehold();
 }

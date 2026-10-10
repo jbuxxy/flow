@@ -4,7 +4,7 @@ import { Receipt, Repeat } from "lucide-react";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getBucketsWithProgress, uncategorizedTransactionWhere } from "@/lib/buckets";
-import { ensureBucketIcons } from "@/lib/bucket-icons-sync";
+import { scheduleBucketIcons } from "@/lib/bucket-icons-sync";
 import { hasFullAccess } from "@/lib/access";
 import { getLabelSuggestionsByMerchant } from "@/lib/transaction-labels";
 import { detectUnlinkedBnpl } from "@/lib/bnpl-detect";
@@ -32,7 +32,7 @@ export default async function BucketsPage() {
 
   // Backfill any missing bucket icons (AI pick for keyword-miss names)
   // before reading progress — a fast no-op once every bucket is resolved.
-  await ensureBucketIcons(session.user.householdId);
+  scheduleBucketIcons(session.user.householdId);
 
   const [buckets, uncategorized, debts, categories, existingBills, bnplSuggestions, merchantSuggestions, defaultBucketId, unlabeledP2PDebits, incomeSummary, extraIncome, household] = await Promise.all([
     getBucketsWithProgress(session.user.householdId),

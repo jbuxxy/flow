@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { daysAgo } from "@/lib/period";
-import { isP2PMerchant } from "@/lib/p2p-keywords";
+import { effectiveMerchant } from "@/lib/p2p-keywords";
 import { budgetTrackedWhere } from "@/lib/budget-tracked";
 import type { BucketComposition, MerchantDigestEntry } from "@/lib/budget-plan";
 
@@ -87,6 +87,8 @@ export async function buildBucketAndMerchantDigest(householdId: string): Promise
       },
       select: {
         merchant: true,
+        resolvedMerchant: true,
+        resolvedMerchantIsPerson: true,
         label: true,
         categoryId: true,
         amountCents: true,
@@ -126,9 +128,11 @@ export async function buildBucketAndMerchantDigest(householdId: string): Promise
   let denominator = 0;
 
   for (const t of txns) {
-    const merchant = t.merchant.trim();
-    if (!merchant) continue;
-    if (isP2PMerchant(merchant)) continue;
+    // A receipt-resolved business counts under its own name; an unresolved
+    // (or person-to-person) P2P charge says nothing about a merchant.
+    const { merchant: effective, p2p } = effectiveMerchant(t);
+    const merchant = effective.trim();
+    if (!merchant || p2p) continue;
     if (t.bucketId && excludeFromBucketHistory(bucketMode.get(t.bucketId), t.bill?.cadence)) continue;
     denominator += 1;
 

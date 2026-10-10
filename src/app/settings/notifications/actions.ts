@@ -1,10 +1,10 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import type { NotificationType } from "@prisma/client";
 import { belongsToHousehold } from "@/lib/access";
+import { revalidateHousehold } from "@/lib/revalidate";
 
 export type UpdatePreferenceResult = { error?: string };
 
@@ -43,7 +43,7 @@ export async function updateNotificationPreference(
     update: { enabled },
   });
 
-  revalidatePath("/settings/notifications");
+  revalidateHousehold();
   return {};
 }
 
@@ -63,8 +63,7 @@ export async function setNotificationsEnabled(targetUserId: string, enabled: boo
   if (target.notificationsLocked && !isOwner) return { error: "Locked by the household owner." };
 
   await db.user.update({ where: { id: targetUserId }, data: { notificationsEnabled: enabled } });
-  revalidatePath("/settings/notifications");
-  revalidatePath("/settings");
+  revalidateHousehold();
   return {};
 }
 
@@ -79,7 +78,6 @@ export async function setNotificationsLocked(targetUserId: string, locked: boole
   if (!belongsToHousehold(target, session.user.householdId)) return { error: "Not found." };
 
   await db.user.update({ where: { id: targetUserId }, data: { notificationsLocked: locked } });
-  revalidatePath("/settings/notifications");
-  revalidatePath("/settings");
+  revalidateHousehold();
   return {};
 }

@@ -1,6 +1,5 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
@@ -17,9 +16,11 @@ import {
 } from "@/lib/merchant-rules";
 import { reassignTransactionsForMerchant } from "@/lib/merchant-rule-reassign";
 import { previewRoutingRule, type RoutingRulePreview } from "@/lib/routing-rules";
-import { isP2PMerchant } from "@/lib/p2p-keywords";
+import { isP2PMerchant, effectiveMerchant } from "@/lib/p2p-keywords";
 import { isGenericCardPaymentDescriptor } from "@/lib/debt-payment-pattern";
 import { dismissUnlabeledP2P } from "@/lib/p2p-transfers";
+import { scheduleBucketIcons } from "@/lib/bucket-icons-sync";
+import { revalidateHousehold } from "@/lib/revalidate";
 
 const createBucketSchema = z.object({
   name: z.string().trim().min(1).max(60),
@@ -76,8 +77,9 @@ export async function createBucket(
       sortOrder: (maxSort._max.sortOrder ?? -1) + 1,
     },
   });
+  scheduleBucketIcons(session.user.householdId, { newName: true });
 
-  revalidatePath("/buckets");
+  revalidateHousehold();
   return {};
 }
 
@@ -120,11 +122,7 @@ export async function updateTransactionLabel(transactionId: string, label: strin
     }
   }
 
-  revalidatePath("/buckets");
-  if (transaction.bucketId) revalidatePath(`/buckets/${transaction.bucketId}`);
-  revalidatePath("/debts");
-  revalidatePath("/transactions");
-  revalidatePath("/bills");
+  revalidateHousehold();
 }
 
 // Single entry point for changing what a transaction is: a spending bucket,
@@ -178,14 +176,7 @@ export async function reassignTransaction(
   // and is how a P2P charge becomes a learnable merchant. A payment resolved
   // to a PERSON stays no-rule: a friend-to-friend payment could be for
   // anything, so it's classified one transaction at a time.
-  const resolvedBusiness =
-    transaction.resolvedMerchant && !transaction.resolvedMerchantIsPerson
-      ? transaction.resolvedMerchant.trim()
-      : null;
-  const ruleMerchant = resolvedBusiness || transaction.merchant;
-  const isP2P =
-    !resolvedBusiness &&
-    isP2PMerchant(transaction.merchant);
+  const { merchant: ruleMerchant, p2p: isP2P } = effectiveMerchant(transaction);
 
   if ("bucketId" in target) {
     // A non-budget-tracked account's spend (see Account.budgetTracked) must
@@ -269,11 +260,9 @@ export async function reassignTransaction(
         { confidence: 1, source: "USER" },
       );
     }
-    revalidatePath("/buckets");
-    revalidatePath(`/buckets/${bucket.id}`);
-    revalidatePath("/transactions");
+    revalidateHousehold();
     if (transaction.bucketId && transaction.bucketId !== bucket.id) {
-      revalidatePath(`/buckets/${transaction.bucketId}`);
+      revalidateHousehold();
     }
   } else if ("debtId" in target) {
     // Debts are one of the sections a BUCKETS_ONLY member is specifically
@@ -321,10 +310,7 @@ export async function reassignTransaction(
         { confidence: 1, source: "USER" },
       );
     }
-    revalidatePath("/buckets");
-    revalidatePath("/debts");
-    revalidatePath("/transactions");
-    if (transaction.bucketId) revalidatePath(`/buckets/${transaction.bucketId}`);
+    revalidateHousehold();
   } else {
     // Same reasoning as the debtId branch above — income is also scoped
     // away from a BUCKETS_ONLY member.
@@ -361,10 +347,7 @@ export async function reassignTransaction(
         { confidence: 1, source: "USER" },
       );
     }
-    revalidatePath("/buckets");
-    revalidatePath("/income");
-    revalidatePath("/transactions");
-    if (transaction.bucketId) revalidatePath(`/buckets/${transaction.bucketId}`);
+    revalidateHousehold();
   }
 }
 
@@ -425,9 +408,7 @@ export async function setAmountRoutingRule(input: {
   await reassignTransactionsForMerchant(session.user.householdId, merchant);
   await checkAndSendBucketAlerts(bucket.id);
 
-  revalidatePath("/buckets");
-  revalidatePath(`/buckets/${bucket.id}`);
-  revalidatePath("/transactions");
+  revalidateHousehold();
   return {};
 }
 
@@ -483,10 +464,7 @@ export async function updateAmountRoutingRule(input: {
   await reassignTransactionsForMerchant(session.user.householdId, rule.merchant, movedAway);
   await checkAndSendBucketAlerts(bucket.id);
 
-  revalidatePath("/buckets");
-  revalidatePath(`/buckets/${bucket.id}`);
-  if (rule.bucketId && rule.bucketId !== bucket.id) revalidatePath(`/buckets/${rule.bucketId}`);
-  revalidatePath("/transactions");
+  revalidateHousehold();
   return {};
 }
 
@@ -504,8 +482,7 @@ export async function removeAmountRoutingRule(ruleId: string): Promise<void> {
     deleted.merchant,
     deleted.bucketId ? [deleted.bucketId] : [],
   );
-  revalidatePath("/buckets");
-  revalidatePath("/transactions");
+  revalidateHousehold();
 }
 
 // --- Plain-language amount-routing rule authoring ---
@@ -591,6 +568,7 @@ export async function applyRoutingRuleAction(input: ApplyRoutingRuleInput): Prom
         sortOrder: (maxSort._max.sortOrder ?? -1) + 1,
       },
     });
+    scheduleBucketIcons(householdId, { newName: true });
     targetBucketId = created.id;
   }
 
@@ -607,10 +585,7 @@ export async function applyRoutingRuleAction(input: ApplyRoutingRuleInput): Prom
   }
   await checkAndSendBucketAlerts(targetBucketId);
 
-  revalidatePath("/buckets");
-  revalidatePath("/transactions");
-  revalidatePath(`/buckets/${targetBucketId}`);
-  revalidatePath(`/buckets/${input.fromBucketId}`);
+  revalidateHousehold();
   return {};
 }
 
@@ -620,6 +595,5 @@ export async function dismissUnlabeledP2PDebits() {
   // or income, both outside a BUCKETS_ONLY member's scope.
   const session = await requireFullAccess();
   await dismissUnlabeledP2P(session.user.householdId, "DEBIT");
-  revalidatePath("/buckets");
-  revalidatePath("/");
+  revalidateHousehold();
 }

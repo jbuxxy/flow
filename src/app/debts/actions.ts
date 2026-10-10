@@ -1,14 +1,13 @@
 "use server";
 
 import { CLEARED_CLASSIFICATION } from "@/lib/classification-reset";
-import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
 import { requireOwner, belongsToHousehold } from "@/lib/access";
 import { db } from "@/lib/db";
 import { parseDollarsToCents, parseOptionalToleranceCents, parsePercentToBasisPoints } from "@/lib/money";
 import { reassignTransactionsForDebt } from "@/lib/debt-reassign";
-import { nextPaidOffDate, nextPaidOffAmountCents } from "@/lib/debt-payoff";
+import { debtBalanceUpdate } from "@/lib/debt-payoff";
 import { nextBillDueDate } from "@/lib/recurring-bills";
 import { upsertMerchantRule } from "@/lib/merchant-rules";
 import { nextOccurrenceOfDay, currentMonthOccurrenceOfDay, todayAsUTCDate, parseDueDay } from "@/lib/date";
@@ -25,6 +24,7 @@ import {
   debtSetupDismissKey,
   shouldRefreshAmountDueOnEmailConfirm,
 } from "@/lib/debt-payments";
+import { revalidateHousehold } from "@/lib/revalidate";
 
 const cadenceEnum = z.enum(["WEEKLY", "BIWEEKLY", "MONTHLY", "ANNUAL"]);
 
@@ -468,13 +468,11 @@ export async function createDebt(
   // Also clears a BNPL suggestion once tracked as an installment debt — that
   // suggestion now renders on /buckets, not /debts (2026-08-16 move), and
   // the dashboard's own AttentionLinkCard reads detectUnlinkedBnpl too.
-  revalidatePath("/debts");
-  revalidatePath("/buckets");
+  revalidateHousehold();
   // AddDebtModal (src/app/buckets/[id]/add-debt-modal.tsx) calls this from
   // /transactions and needs its debt picker (debtOptions,
   // src/app/transactions/page.tsx) to see a debt created here on next load.
-  revalidatePath("/transactions");
-  revalidatePath("/");
+  revalidateHousehold();
   return { debtId: createdDebtId };
 }
 
@@ -506,14 +504,11 @@ export async function updateDebtBalance(
   await db.debt.update({
     where: { id: debt.id },
     data: {
-      balanceCents,
-      paidOffDate: nextPaidOffDate(debt.balanceCents, balanceCents, debt.paidOffDate),
-      paidOffAmountCents: nextPaidOffAmountCents(debt.balanceCents, balanceCents, debt.paidOffAmountCents),
+      ...debtBalanceUpdate(debt, balanceCents),
     },
   });
   await unhideDebtPaymentIfBalanceReturned(debt.id, debt.balanceCents, balanceCents, debt.paidOffDate);
-  revalidatePath("/debts");
-  revalidatePath("/");
+  revalidateHousehold();
   return {};
 }
 
@@ -545,10 +540,7 @@ export async function renameDebt(
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
 
   await db.debt.update({ where: { id: debtId }, data: { name: parsed.data.name } });
-  revalidatePath("/settings/accounts");
-  revalidatePath("/debts");
-  revalidatePath("/networth");
-  revalidatePath("/buckets");
+  revalidateHousehold();
   return {};
 }
 
@@ -724,14 +716,11 @@ export async function updateDebtTerms(
         where: { id: tracker.id },
         data: { bucketId: resolvedBucketId, categoryId: resolvedCategoryId },
       });
-      if (tracker.bucketId) revalidatePath(`/buckets/${tracker.bucketId}`);
-      if (resolvedBucketId) revalidatePath(`/buckets/${resolvedBucketId}`);
+      if (tracker.bucketId) revalidateHousehold();
+      if (resolvedBucketId) revalidateHousehold();
     }
   }
-  revalidatePath("/debts");
-  revalidatePath("/buckets");
-  revalidatePath("/settings/accounts");
-  revalidatePath("/");
+  revalidateHousehold();
   return {};
 }
 
@@ -824,9 +813,7 @@ export async function updateInstallmentTerms(
       minPaymentCents: paymentCents,
       installmentsTotal: parsed.data.totalPayments,
       installmentsRemaining,
-      balanceCents,
-      paidOffDate: nextPaidOffDate(debt.balanceCents, balanceCents, debt.paidOffDate),
-      paidOffAmountCents: nextPaidOffAmountCents(debt.balanceCents, balanceCents, debt.paidOffAmountCents),
+      ...debtBalanceUpdate(debt, balanceCents),
     },
   });
   await unhideDebtPaymentIfBalanceReturned(debtId, debt.balanceCents, balanceCents, debt.paidOffDate);
@@ -839,8 +826,7 @@ export async function updateInstallmentTerms(
     bucketId: parsed.data.bucketId ?? null,
     categoryId: parsed.data.categoryId ?? null,
   });
-  revalidatePath("/debts");
-  revalidatePath("/");
+  revalidateHousehold();
   return {};
 }
 
@@ -860,9 +846,7 @@ export async function updateDebtLabel(debtId: string, label: string) {
   if (!belongsToHousehold(debt, session.user.householdId)) return;
 
   await db.debt.update({ where: { id: debtId }, data: { label: label.trim().slice(0, 120) || null } });
-  revalidatePath("/debts");
-  revalidatePath("/settings/accounts");
-  revalidatePath("/");
+  revalidateHousehold();
 }
 
 export async function linkDebtAccount(debtId: string, accountId: string) {
@@ -873,7 +857,7 @@ export async function linkDebtAccount(debtId: string, accountId: string) {
 
   if (!accountId) {
     await db.debt.update({ where: { id: debtId }, data: { accountId: null, source: "MANUAL" } });
-    revalidatePath("/debts");
+    revalidateHousehold();
     return;
   }
 
@@ -944,9 +928,7 @@ export async function linkDebtAccount(debtId: string, accountId: string) {
     data: {
       accountId,
       source: "SIMPLEFIN",
-      balanceCents,
-      paidOffDate: nextPaidOffDate(debt.balanceCents, balanceCents, debt.paidOffDate),
-      paidOffAmountCents: nextPaidOffAmountCents(debt.balanceCents, balanceCents, debt.paidOffAmountCents),
+      ...debtBalanceUpdate(debt, balanceCents),
     },
   });
   // Unconditional, not gated on wasAlreadyLinked — a re-point (SimpleFIN
@@ -987,10 +969,7 @@ export async function linkDebtAccount(debtId: string, accountId: string) {
     }
   }
   await reassignTransactionsForDebt(debtId);
-  revalidatePath("/debts");
-  revalidatePath("/settings/accounts");
-  revalidatePath("/buckets");
-  revalidatePath("/");
+  revalidateHousehold();
 }
 
 const trackAccountSchema = z.object({
@@ -1066,9 +1045,9 @@ export async function trackAccountAsDebt(
   if (dueDate) {
     await upsertDebtPayment(session.user.householdId, newDebt.id, { amountCents: minPaymentCents, nextDueDate: dueDate });
   }
-  revalidatePath("/buckets");
+  revalidateHousehold();
 
-  revalidatePath("/debts");
+  revalidateHousehold();
   return {};
 }
 
@@ -1190,7 +1169,6 @@ export async function updateSyncedDebtTerms(
   });
 
   const existing = await db.debtPayment.findUnique({ where: { debtId } });
-  const oldBucketId = existing?.bucketId ?? null;
   if (existing) {
     await db.debtPayment.update({
       where: { id: existing.id },
@@ -1226,12 +1204,7 @@ export async function updateSyncedDebtTerms(
     await backfillDebtPaymentHistory(session.user.householdId, created);
   }
 
-  revalidatePath("/debts");
-  revalidatePath("/settings/accounts");
-  revalidatePath("/buckets");
-  revalidatePath("/");
-  if (oldBucketId) revalidatePath(`/buckets/${oldBucketId}`);
-  if (resolvedBucketId) revalidatePath(`/buckets/${resolvedBucketId}`);
+  revalidateHousehold();
   return {};
 }
 
@@ -1373,11 +1346,7 @@ export async function createDebtPaymentFromTransaction(
     { confidence: 1, source: "USER" },
   );
 
-  revalidatePath("/");
-  revalidatePath("/buckets");
-  revalidatePath("/transactions");
-  if (transaction.bucketId) revalidatePath(`/buckets/${transaction.bucketId}`);
-  revalidatePath("/debts");
+  revalidateHousehold();
   return {};
 }
 
@@ -1473,8 +1442,7 @@ export async function acceptDebtPaymentSuggestion(
     update: {},
   });
 
-  revalidatePath("/debts");
-  revalidatePath("/");
+  revalidateHousehold();
 }
 
 // The debt-payment counterpart to markBillPaid — manual "mark this cycle
@@ -1497,8 +1465,7 @@ export async function markDebtPaymentPaid(debtPaymentId: string) {
       amountDueCents: debtPayment.amountCents,
     },
   });
-  revalidatePath("/debts");
-  revalidatePath("/");
+  revalidateHousehold();
 }
 
 // Inline "Mark Caught Up" on the debt row itself (household feedback,
@@ -1519,8 +1486,7 @@ export async function settleDebtAmountDue(debtPaymentId: string) {
     where: { id: debtPaymentId },
     data: { amountDueCents: debtPayment.amountCents },
   });
-  revalidatePath("/debts");
-  revalidatePath("/");
+  revalidateHousehold();
 }
 
 // The Account Settings "stop showing this" call for a debt — same self-heal
@@ -1563,11 +1529,7 @@ export async function hideDebt(debtId: string) {
 
   await db.debt.update({ where: { id: debtId }, data: { hiddenAt: new Date() } });
   await db.debtPayment.updateMany({ where: { debtId }, data: { hiddenFromBucket: true } });
-  revalidatePath("/settings/hidden");
-  revalidatePath("/settings/accounts");
-  revalidatePath("/debts");
-  revalidatePath("/bills");
-  if (debt.debtPayment?.bucketId) revalidatePath(`/buckets/${debt.debtPayment.bucketId}`);
+  revalidateHousehold();
 }
 
 // Undoes hideDebt (or a hide inherited from its Account being removed and
@@ -1589,11 +1551,7 @@ export async function restoreDebt(debtId: string) {
 
   await db.debt.update({ where: { id: debtId }, data: { hiddenAt: null } });
   await db.debtPayment.updateMany({ where: { debtId }, data: { hiddenFromBucket: false } });
-  revalidatePath("/settings/hidden");
-  revalidatePath("/settings/accounts");
-  revalidatePath("/debts");
-  revalidatePath("/bills");
-  if (debt.debtPayment?.bucketId) revalidatePath(`/buckets/${debt.debtPayment.bucketId}`);
+  revalidateHousehold();
 }
 
 // Resolves a pending DebtAmountReview (see matchDebtPayments in
@@ -1642,8 +1600,7 @@ export async function confirmDebtAmountChanged(reviewId: string) {
   await syncDebtMinPaymentCents(review.debtPayment.debtId, review.observedAmountCents);
   await db.debtAmountReview.delete({ where: { id: reviewId } });
 
-  revalidatePath("/debts");
-  revalidatePath("/");
+  revalidateHousehold();
 }
 
 // Household says no, the minimum didn't change — this was just a
@@ -1666,8 +1623,7 @@ export async function declineDebtAmountChanged(reviewId: string) {
   }
   await db.debtAmountReview.delete({ where: { id: reviewId } });
 
-  revalidatePath("/debts");
-  revalidatePath("/");
+  revalidateHousehold();
 }
 
 // Household says yes, this manual REVOLVING debt's auto-derived $0 balance
@@ -1684,15 +1640,12 @@ export async function confirmDebtBalancePaidOff(reviewId: string) {
   await db.debt.update({
     where: { id: review.debtId },
     data: {
-      balanceCents: 0,
-      paidOffDate: nextPaidOffDate(review.debt.balanceCents, 0, review.debt.paidOffDate),
-      paidOffAmountCents: nextPaidOffAmountCents(review.debt.balanceCents, 0, review.debt.paidOffAmountCents),
+      ...debtBalanceUpdate(review.debt, 0),
     },
   });
   await db.debtBalanceReview.delete({ where: { id: reviewId } });
 
-  revalidatePath("/debts");
-  revalidatePath("/");
+  revalidateHousehold();
 }
 
 // Household says no, the real balance isn't $0 — the derived math was off
@@ -1709,8 +1662,7 @@ export async function declineDebtBalancePaidOff(reviewId: string) {
 
   await db.debtBalanceReview.delete({ where: { id: reviewId } });
 
-  revalidatePath("/debts");
-  revalidatePath("/");
+  revalidateHousehold();
 }
 
 export async function dismissBnplSuggestion(key: string) {
@@ -1739,10 +1691,7 @@ export async function dismissBnplSuggestion(key: string) {
   await releaseBnplCluster(session.user.householdId, key);
   // Rendered on /buckets now, not /debts (2026-08-16 move) — and the
   // dashboard's own AttentionLinkCard reads detectUnlinkedBnpl too.
-  revalidatePath("/debts");
-  revalidatePath("/buckets");
-  revalidatePath("/transactions");
-  revalidatePath("/");
+  revalidateHousehold();
 }
 
 export async function dismissMinPaymentWarning(debtId: string) {
@@ -1765,10 +1714,7 @@ export async function dismissMinPaymentWarning(debtId: string) {
     create: { householdId: session.user.householdId, kind: "MIN_PAYMENT_LOW", key },
     update: { createdAt: new Date() },
   });
-  revalidatePath("/debts");
-  revalidatePath("/settings/accounts");
-  revalidatePath("/settings");
-  revalidatePath("/");
+  revalidateHousehold();
 }
 
 export async function dismissNeedsSetupWarning(debtId: string) {
@@ -1800,10 +1746,7 @@ export async function dismissNeedsSetupWarning(debtId: string) {
     create: { householdId: session.user.householdId, kind: "DEBT_NEEDS_SETUP", key },
     update: { createdAt: new Date() },
   });
-  revalidatePath("/debts");
-  revalidatePath("/settings/accounts");
-  revalidatePath("/settings");
-  revalidatePath("/");
+  revalidateHousehold();
 }
 
 const payoffPlanSchema = z.object({
@@ -1857,9 +1800,7 @@ export async function updateHouseholdPayoffPlan(
     },
   });
 
-  revalidatePath("/debts");
-  revalidatePath("/buckets");
-  revalidatePath("/");
+  revalidateHousehold();
   return {};
 }
 
@@ -1896,9 +1837,7 @@ export async function setDebtPayoffOrder(orderedActiveDebtIds: string[]) {
     db.household.update({ where: { id: session.user.householdId }, data: { payoffOrder: "CUSTOM" } }),
   ]);
 
-  revalidatePath("/debts");
-  revalidatePath("/buckets");
-  revalidatePath("/");
+  revalidateHousehold();
 }
 
 // Same simple toggle shape as setAccountBudgetTracked
@@ -1915,10 +1854,7 @@ export async function setDebtIncludedInPayoffPlan(debtId: string, included: bool
   if (!belongsToHousehold(debt, session.user.householdId)) return;
 
   await db.debt.update({ where: { id: debtId }, data: { includeInPayoffPlan: included } });
-  revalidatePath("/debts");
-  revalidatePath("/settings/accounts");
-  revalidatePath("/buckets");
-  revalidatePath("/");
+  revalidateHousehold();
 }
 
 // The "not this one" half of the extra-payment to-do list. Only ever offered for a
@@ -1950,9 +1886,7 @@ export async function skipPayoffExtra(debtId: string, paycheckDateISO: string, a
     create: { householdId: session.user.householdId, debtId, paycheckDate, amountCents, isPayoff },
     update: { amountCents, isPayoff },
   });
-  revalidatePath("/debts");
-  revalidatePath("/buckets");
-  revalidatePath("/");
+  revalidateHousehold();
 }
 
 // Undoes a mis-click on skipPayoffExtra above.
@@ -1969,9 +1903,7 @@ export async function unskipPayoffExtra(debtId: string, paycheckDateISO: string)
   await db.payoffExtraSkip
     .delete({ where: { debtId_paycheckDate: { debtId, paycheckDate: new Date(paycheckDateISO) } } })
     .catch(() => {}); // already unskipped — nothing to do
-  revalidatePath("/debts");
-  revalidatePath("/buckets");
-  revalidatePath("/");
+  revalidateHousehold();
 }
 
 // The "skip it" half of a *covered* minimum — a payment bigger than the
@@ -1995,9 +1927,7 @@ export async function skipDebtMinimum(debtId: string, dueDateISO: string, amount
     create: { householdId: session.user.householdId, debtId, dueDate, amountCents },
     update: { amountCents },
   });
-  revalidatePath("/debts");
-  revalidatePath("/buckets");
-  revalidatePath("/");
+  revalidateHousehold();
 }
 
 // Undoes a mis-click on skipDebtMinimum above.
@@ -2013,9 +1943,7 @@ export async function unskipDebtMinimum(debtId: string, dueDateISO: string) {
   await db.debtMinimumSkip
     .delete({ where: { debtId_dueDate: { debtId, dueDate: new Date(dueDateISO) } } })
     .catch(() => {}); // already unskipped — nothing to do
-  revalidatePath("/debts");
-  revalidatePath("/buckets");
-  revalidatePath("/");
+  revalidateHousehold();
 }
 
 // Points a specific debt-payment transaction at one of the already-bucketed
@@ -2050,11 +1978,7 @@ export async function linkPaymentAccountedFor(paymentTransactionId: string, purc
       update: {},
     }),
   ]);
-  revalidatePath("/debts");
-  revalidatePath("/buckets");
-  revalidatePath("/");
-  if (payment.debtPayment?.bucketId) revalidatePath(`/buckets/${payment.debtPayment.bucketId}`);
-  if (purchase.bucketId) revalidatePath(`/buckets/${purchase.bucketId}`);
+  revalidateHousehold();
 }
 
 // The "X" on one linked purchase's "Reimbursed by X"-style ledger line
@@ -2071,10 +1995,7 @@ export async function unlinkPaymentAccountedFor(paymentTransactionId: string, pu
   if (!belongsToHousehold(payment, session.user.householdId)) return;
 
   await db.debtPaymentAccountedFor.deleteMany({ where: { paymentTransactionId, purchaseTransactionId } });
-  revalidatePath("/debts");
-  revalidatePath("/buckets");
-  revalidatePath("/");
-  if (payment.debtPayment?.bucketId) revalidatePath(`/buckets/${payment.debtPayment.bucketId}`);
+  revalidateHousehold();
 }
 
 // The explicit "no, just a payment" answer (Transaction.notAccountedFor) —
@@ -2095,10 +2016,7 @@ export async function markPaymentNotAccountedFor(paymentTransactionId: string) {
     db.transaction.update({ where: { id: paymentTransactionId }, data: { notAccountedFor: true } }),
     db.debtPaymentAccountedFor.deleteMany({ where: { paymentTransactionId } }),
   ]);
-  revalidatePath("/debts");
-  revalidatePath("/buckets");
-  revalidatePath("/");
-  if (payment.debtPayment?.bucketId) revalidatePath(`/buckets/${payment.debtPayment.bucketId}`);
+  revalidateHousehold();
 }
 
 // The "X" on a declined payment's "Just a payment" ledger line
@@ -2114,10 +2032,7 @@ export async function unmarkPaymentNotAccountedFor(paymentTransactionId: string)
   if (!belongsToHousehold(payment, session.user.householdId)) return;
 
   await db.transaction.update({ where: { id: paymentTransactionId }, data: { notAccountedFor: false } });
-  revalidatePath("/debts");
-  revalidatePath("/buckets");
-  revalidatePath("/");
-  if (payment.debtPayment?.bucketId) revalidatePath(`/buckets/${payment.debtPayment.bucketId}`);
+  revalidateHousehold();
 }
 
 // CARD/LOAN recategorization for an existing REVOLVING debt — see DebtKind's
@@ -2131,6 +2046,5 @@ export async function updateDebtKind(debtId: string, kind: "CARD" | "LOAN") {
   if (!belongsToHousehold(debt, session.user.householdId) || debt.debtType !== "REVOLVING") return;
 
   await db.debt.update({ where: { id: debtId }, data: { kind } });
-  revalidatePath("/debts");
-  revalidatePath("/settings/accounts");
+  revalidateHousehold();
 }

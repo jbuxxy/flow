@@ -1,11 +1,11 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireOwner } from "@/lib/access";
 import { db } from "@/lib/db";
 import { encrypt, decrypt } from "@/lib/crypto";
 import { verifyAiConfig } from "@/lib/ai-provider";
+import { revalidateHousehold } from "@/lib/revalidate";
 
 export type AiSettingsState = { error?: string };
 
@@ -48,16 +48,14 @@ export async function saveAiSettings(
     },
   });
 
-  revalidatePath("/settings/ai");
-  revalidatePath("/settings");
+  revalidateHousehold();
   return {};
 }
 
 export async function disconnectAiSettings() {
   const session = await requireOwner();
   await db.householdAiSettings.deleteMany({ where: { householdId: session.user.householdId } });
-  revalidatePath("/settings/ai");
-  revalidatePath("/settings");
+  revalidateHousehold();
 }
 
 // A household's manual "try again now" for a connection sitting in ERROR —
@@ -82,8 +80,7 @@ export async function retestAiConnection() {
       where: { householdId: session.user.householdId },
       data: { status: "ERROR", lastError: err instanceof Error ? err.message : "Stored key could not be decrypted." },
     });
-    revalidatePath("/settings/ai");
-    revalidatePath("/settings");
+    revalidateHousehold();
     return;
   }
 
@@ -93,6 +90,5 @@ export async function retestAiConnection() {
     data: { status: verifyError ? "ERROR" : "ACTIVE", lastError: verifyError },
   });
 
-  revalidatePath("/settings/ai");
-  revalidatePath("/settings");
+  revalidateHousehold();
 }

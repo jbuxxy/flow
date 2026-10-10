@@ -187,6 +187,22 @@ export function nextPaidOffAmountCents(
   return currentPaidOffAmountCents;
 }
 
+// The Debt fields a balance change writes, together: the new balance plus
+// paidOffDate / paidOffAmountCents per the transition rules above. Every
+// writer spreads this, so none can update the balance and forget one of the
+// paired fields again — matchInstallmentPayments used to write paidOffDate
+// without paidOffAmountCents (2026-10-09 review).
+export function debtBalanceUpdate(
+  debt: { balanceCents: number; paidOffDate: Date | null; paidOffAmountCents: number | null },
+  newBalanceCents: number,
+): { balanceCents: number; paidOffDate: Date | null; paidOffAmountCents: number | null } {
+  return {
+    balanceCents: newBalanceCents,
+    paidOffDate: nextPaidOffDate(debt.balanceCents, newBalanceCents, debt.paidOffDate),
+    paidOffAmountCents: nextPaidOffAmountCents(debt.balanceCents, newBalanceCents, debt.paidOffAmountCents),
+  };
+}
+
 // How close a traced payment's own date must be to a debt's paidOffDate to
 // be trusted as the payment that actually closed it.
 export const PAYOFF_ATTRIBUTION_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
@@ -235,6 +251,9 @@ export type PayoffResult = {
 };
 
 const MAX_MONTHS = 600; // 50-year safety cap against runaway simulations
+// How many months simulatePayoff takes from projectCyclePlan before its own
+// monthly loop — the window the Payment Calendar and payoff-plan lines show.
+const CYCLE_PLAN_SEED_MONTHS = 3;
 
 export function monthlyRateOf(aprBasisPoints: number): number {
   return aprBasisPoints / 10000 / 12;
@@ -691,6 +710,13 @@ export function simulatePayoff(
     // than the Payoff Calendar's own, correct projection (real report,
     // 2026-09-14: Amazon Card's Sep 3 payday, skipped, still counted here).
     skippedExtraPairs?: Set<string>;
+    // The rest of projectCyclePlan's inputs — only read for the seed months
+    // (see CYCLE_PLAN_SEED_MONTHS below): real due dates, extra already paid
+    // toward this cycle (the live balance already reflects it), and the
+    // freed-minimum rollover's lump-vs-split setting.
+    dueDateByDebtId?: Map<string, { date: Date; cadence: BillCadence }>;
+    extraPaidThisCycleByDebtId?: Map<string, number>;
+    rollFreedMinimumsSplit?: boolean;
   },
 ): PayoffResult {
   // UTC-midnight-anchored to the *local* calendar day (see todayAsUTCDate) —
@@ -777,6 +803,69 @@ export function simulatePayoff(
   // before), just no longer gates every OTHER debt's projected date.
   const simulationCanProgress = (d: WorkingDebt) => !d.ignoreMinimumPayment || isExtraEligible(d.id);
   const stillOwing = () => [...working.values()].some((d) => d.remaining > 0 && simulationCanProgress(d));
+
+  // The first months come straight from projectCyclePlan — the engine behind
+  // the Payment Calendar and every payoff-plan line — then this function's
+  // fast monthly loop carries on from its end balances. The two used to run
+  // independently, and every input projectCyclePlan honored that this loop
+  // didn't (real due dates, extra already posted this cycle, skips, the
+  // minimum already paid) had to be bolted on here one incident at a time;
+  // three were still missing, so the "Projected Payoff" chart and the
+  // calendar disagreed by a cycle (2026-10-09 review). Needs a pay schedule;
+  // without one the loop below runs from month 1 as before.
+  if (opts.income) {
+    const seed = projectCyclePlan(debts, {
+      order: opts.order,
+      rollFreedMinimums: opts.rollFreedMinimums,
+      rollFreedMinimumsSplit: opts.rollFreedMinimumsSplit,
+      extraPerPaycheckCents: opts.extraPerPaycheckCents,
+      income: opts.income,
+      monthsCount: Math.min(CYCLE_PLAN_SEED_MONTHS, monthCap),
+      startDate,
+      minimumSatisfiedThisCycleIds: opts.minimumSatisfiedThisCycleIds,
+      dueDateByDebtId: opts.dueDateByDebtId,
+      alreadyFreedMinimums: opts.alreadyFreedMinimums,
+      extraEligibleIds: opts.extraEligibleIds,
+      extraPaidThisCycleByDebtId: opts.extraPaidThisCycleByDebtId,
+      skippedExtraPairs: opts.skippedExtraPairs,
+    });
+    const recordMonth = () =>
+      timeline.push({
+        month,
+        totalRemainingCents: [...working.values()].reduce((s, d) => s + Math.max(d.remaining, 0), 0),
+        perDebtRemainingCents: Object.fromEntries([...working.entries()].map(([id, d]) => [id, Math.max(d.remaining, 0)])),
+      });
+    for (const planMonth of seed) {
+      const target = planMonth.monthKey - startMonthKey + 1;
+      if (target > monthCap) break;
+      // A month with no events at all (no payday, nothing due) changes nothing.
+      while (month < target - 1 && stillOwing()) {
+        month++;
+        recordMonth();
+      }
+      if (!stillOwing()) break;
+      month = target;
+      const tickMonthKey = startMonthKey + (month - 1);
+      for (const f of deferredFreedMinimums) {
+        if (!deferredFreedIdsAdded.has(f.id) && f.freedMonthKey! < tickMonthKey) {
+          freedMinimumsCents += f.amountCents;
+          deferredFreedIdsAdded.add(f.id);
+        }
+      }
+      totalInterestPaidCents += planMonth.interestCents;
+      for (const entry of planMonth.debts) {
+        const d = working.get(entry.debtId);
+        if (!d) continue;
+        const wasOwing = d.remaining > 0;
+        d.remaining = entry.endBalanceCents;
+        if (wasOwing && d.remaining === 0) {
+          if (!payoffMonth.has(d.id)) payoffMonth.set(d.id, month);
+          if (isExtraEligible(d.id)) freedMinimumsCents += billCadenceToMonthlyCents(d.minPayment, d.paymentCadence);
+        }
+      }
+      recordMonth();
+    }
+  }
 
   while (stillOwing() && month < monthCap) {
     month++;
@@ -966,6 +1055,9 @@ export type CyclePlanMonth = {
   monthKey: number;
   monthDate: Date;
   debts: CycleDebtEntry[];
+  // Interest charged across every debt this month — lets simulatePayoff
+  // seed its own totals from this engine's first months.
+  interestCents: number;
 };
 
 // Per-cycle (calendar month) breakdown of every attack-order debt's starting
@@ -1202,6 +1294,7 @@ export function projectCyclePlan(
   const newMonth = (monthKey: number, monthDate: Date): CyclePlanMonth => ({
     monthKey,
     monthDate,
+    interestCents: 0,
     debts: orderedIds.map((id) => ({
       debtId: id,
       startBalanceCents: working.get(id)!.remaining,
@@ -1285,8 +1378,11 @@ export function projectCyclePlan(
       const d = working.get(event.debtId);
       if (!d || d.remaining <= 0) continue;
       if (d.debtType !== "INSTALLMENT" && interestChargedMonthByDebtId.get(event.debtId) !== monthKey) {
-        const interestCents = Math.round(d.remaining * monthlyRateOf(d.aprBasisPoints));
+        // Same exemptions as simulatePayoff's tick (monthlyInterestCents): a
+        // no-minimum card is paid in full each statement and never compounds.
+        const interestCents = monthlyInterestCents(d.remaining, d);
         d.remaining += interestCents;
+        current.interestCents += interestCents;
         lastInterestByDebtId.set(event.debtId, interestCents);
         interestChargedMonthByDebtId.set(event.debtId, monthKey);
       }

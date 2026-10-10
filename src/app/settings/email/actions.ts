@@ -1,6 +1,5 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { requireFullAccess, belongsToHousehold } from "@/lib/access";
@@ -8,6 +7,7 @@ import { encrypt, decrypt } from "@/lib/crypto";
 import { verifyEmailConfig } from "@/lib/email-provider";
 import { runFullScan } from "@/lib/receipt-sync";
 import { applyBillNoticeMatch, dismissBillNoticeEmail } from "@/lib/bill-notice-sync";
+import { revalidateHousehold } from "@/lib/revalidate";
 
 // Any full-access member manages their OWN mailbox connection(s) (same bar
 // as Income — a Partner already sees the underlying transactions). Not
@@ -99,8 +99,7 @@ export async function connectEmail(
     });
   }
 
-  revalidatePath("/settings/email");
-  revalidatePath("/settings");
+  revalidateHousehold();
   return {};
 }
 
@@ -143,8 +142,7 @@ export async function disconnectEmail(connectionId: string) {
   // rather than a thrown NotFoundError — same ownership-scoped-in-the-where
   // convention as every other action here.
   await db.emailConnection.deleteMany({ where: { id: connectionId, userId: session.user.id } });
-  revalidatePath("/settings/email");
-  revalidatePath("/settings");
+  revalidateHousehold();
 }
 
 // A member's manual "try my connection again now" for a row sitting in
@@ -167,8 +165,7 @@ export async function retestEmailConnection(connectionId: string) {
         lastError: err instanceof Error ? err.message : "Stored password could not be decrypted.",
       },
     });
-    revalidatePath("/settings/email");
-    revalidatePath("/settings");
+    revalidateHousehold();
     return;
   }
 
@@ -183,8 +180,7 @@ export async function retestEmailConnection(connectionId: string) {
     data: { status: verifyError ? "ERROR" : "ACTIVE", lastError: verifyError },
   });
 
-  revalidatePath("/settings/email");
-  revalidatePath("/settings");
+  revalidateHousehold();
 }
 
 // Manual half of bill-notice matching (see matchBillNoticeAmounts,
@@ -207,9 +203,7 @@ export async function linkBillNoticeToBill(
 
   await applyBillNoticeMatch(notice, { type: "BILL", id: bill.id });
 
-  revalidatePath("/settings/email");
-  revalidatePath("/bills");
-  revalidatePath("/");
+  revalidateHousehold();
   return { ok: true };
 }
 
@@ -228,9 +222,7 @@ export async function linkBillNoticeToDebt(
 
   await applyBillNoticeMatch(notice, { type: "DEBT", id: debt.id });
 
-  revalidatePath("/settings/email");
-  revalidatePath("/debts");
-  revalidatePath("/");
+  revalidateHousehold();
   return { ok: true };
 }
 
@@ -243,5 +235,5 @@ export async function dismissBillNotice(noticeId: string): Promise<void> {
   if (!belongsToHousehold(notice, session.user.householdId)) return;
 
   await dismissBillNoticeEmail(noticeId);
-  revalidatePath("/settings/email");
+  revalidateHousehold();
 }

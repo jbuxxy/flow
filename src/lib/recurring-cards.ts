@@ -1,16 +1,17 @@
 import type { Prisma } from "@prisma/client";
 import { PAYMENT_RECEIPT_SELECT, paymentReceiptOf } from "@/lib/payment-receipt";
 import {
+  debtNeedsSetup,
   plannedExtraByDebtInPeriod,
   postedExtraNettedByDebt,
   getSkippedMinimumKeys,
   supersededPayoffExtraByDebtInPeriod,
   planExtraTargetsByDebt,
 } from "@/lib/debt-payments";
-import { coveredMinimumDates, ledgerMinimumCents } from "@/lib/minimum-ledger";
+import { coveredMinimumDates, ledgerMinimumCents, tracksMinimum } from "@/lib/minimum-ledger";
 import { ACCOUNTED_FOR_SELECT, accountedForDisplayList } from "@/lib/spend";
 import { confirmProjectedExtras, capAtPayoffCents } from "@/lib/debt-payoff";
-import { splitPlanExtraPayments, buildCycleSlots, slotBounds, cyclePaymentStatus } from "@/lib/cycle-slots";
+import { splitPlanExtraPayments, buildCycleSlots, slotBounds, cyclePaymentStatus, recentPaymentsWhere } from "@/lib/cycle-slots";
 import { skipShownOnBillRow } from "@/lib/recurring-bills";
 import { dueStatus } from "@/lib/date";
 import { serializePatternDates } from "@/lib/pattern-data";
@@ -31,6 +32,7 @@ export function billCardInclude() {
   return {
     category: { select: { name: true } },
     payments: {
+      where: recentPaymentsWhere(),
       orderBy: { occurredOn: "desc" },
       select: {
         id: true,
@@ -68,6 +70,8 @@ export function debtPaymentCardInclude() {
         debtType: true,
         purchaseDate: true,
         balanceCents: true,
+        termsConfirmed: true,
+        minPaymentCents: true,
         aprBasisPoints: true,
         paidOffDate: true,
         includeInPayoffPlan: true,
@@ -81,6 +85,7 @@ export function debtPaymentCardInclude() {
     },
     category: { select: { name: true } },
     payments: {
+      where: recentPaymentsWhere(),
       orderBy: { occurredOn: "desc" },
       select: {
         id: true,
@@ -258,7 +263,7 @@ export async function buildDebtPaymentCards(
         paidOff: p.debt.balanceCents <= 0,
         nextDueThisMonth: p.nextDueDate >= monthStart && p.nextDueDate < monthEnd,
         amountDueCents: p.amountDueCents,
-        minimumCents: p.debt.ignoreMinimumPayment ? 0 : p.amountCents,
+        minimumCents: tracksMinimum(p.debt, p) ? p.amountCents : 0,
       }),
       skippedDates: new Set(
         [...skippedMinimumKeys].flatMap((k) => (k.startsWith(`${p.debtId}:`) ? [k.slice(p.debtId.length + 1)] : [])),
@@ -318,7 +323,8 @@ export async function buildDebtPaymentCards(
       // alone only signals "needs setup" for a REVOLVING debt; an
       // INSTALLMENT/BNPL plan's rolling projection is expected to sit
       // unlocked between real payments, not flagged as needing attention.
-      needsAttention: (p.debt.debtType === "REVOLVING" && !p.dueDateLocked) || debtIdsWithPendingReview.has(p.debtId),
+      // The shared per-debt rule (debtSetupReason), not a partial copy of it.
+      needsAttention: debtNeedsSetup(p.debt, p.dueDateLocked, debtIdsWithPendingReview.has(p.debtId)),
       accountBudgetTracked: p.debt.account?.budgetTracked ?? false,
       bucketId: p.bucketId,
       paidOff: p.debt.balanceCents === 0,

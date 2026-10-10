@@ -12,8 +12,8 @@ import {
   type UpcomingBill,
 } from "@/lib/recurring-bills";
 import {
+  debtBalanceUpdate,
   capAtPayoffCents,
-  nextPaidOffDate,
   projectCyclePlan,
   debtsWithInsufficientMinimum,
   computeAttackOrder,
@@ -42,13 +42,15 @@ import {
   slotBounds,
   extraPaymentsBeyondSlots,
   splitPlanExtraPayments,
+  cycleDueDate,
+  recentPaymentsWhere,
 } from "@/lib/cycle-slots";
 import {
   extraTowardPrincipalCents,
   occurrenceSettledAfterWeek,
   parkedOccurrenceSettledLate,
 } from "@/lib/upcoming-bills-shared";
-import { coveredMinimumDates, ledgerMinimumCents, minimumOwedCents } from "@/lib/minimum-ledger";
+import { coveredMinimumDates, ledgerMinimumCents, minimumOwedCents, tracksMinimum } from "@/lib/minimum-ledger";
 import { allBnplKeywords, resolveBnplKeyword } from "@/lib/bnpl-detect";
 import { upsertMerchantRule } from "@/lib/merchant-rules";
 import { isGenericCardPaymentDescriptor } from "@/lib/debt-payment-pattern";
@@ -1192,6 +1194,7 @@ export async function matchInstallmentPayments(householdId: string): Promise<voi
           purchaseDate: true,
           balanceCents: true,
           paidOffDate: true,
+          paidOffAmountCents: true,
         },
       },
       payments: { select: { merchant: true } },
@@ -1212,6 +1215,7 @@ export async function matchInstallmentPayments(householdId: string): Promise<voi
     installmentsTotal: number | null;
     balanceCents: number;
     paidOffDate: Date | null;
+    paidOffAmountCents: number | null;
     nextDueDate: Date;
     lastPaidDate: Date | null;
     matchedAny: boolean;
@@ -1257,6 +1261,7 @@ export async function matchInstallmentPayments(householdId: string): Promise<voi
       installmentsTotal: dp.debt.installmentsTotal,
       balanceCents: dp.debt.balanceCents,
       paidOffDate: dp.debt.paidOffDate,
+      paidOffAmountCents: dp.debt.paidOffAmountCents,
       nextDueDate: dp.nextDueDate,
       lastPaidDate: dp.lastPaidDate,
       matchedAny: false,
@@ -1358,9 +1363,7 @@ export async function matchInstallmentPayments(householdId: string): Promise<voi
       progressed = true;
       s.matchedAny = true;
       s.installmentsRemaining -= 1;
-      const newBalanceCents = dp.amountCents * s.installmentsRemaining;
-      s.paidOffDate = nextPaidOffDate(s.balanceCents, newBalanceCents, s.paidOffDate);
-      s.balanceCents = newBalanceCents;
+      Object.assign(s, debtBalanceUpdate(s, dp.amountCents * s.installmentsRemaining));
       s.lastPaidDate = candidate.occurredOn;
       // Anchored to the real payment date just matched, not the previous
       // *scheduled* nextDueDate — a BNPL plan's first installment fires at
@@ -1424,8 +1427,17 @@ export async function matchInstallmentPayments(householdId: string): Promise<voi
       });
       await db.debt.update({
         where: { id: dp.debtId },
-        data: { installmentsRemaining: s.installmentsRemaining, balanceCents: s.balanceCents, paidOffDate: s.paidOffDate },
+        data: {
+          installmentsRemaining: s.installmentsRemaining,
+          balanceCents: s.balanceCents,
+          paidOffDate: s.paidOffDate,
+          paidOffAmountCents: s.paidOffAmountCents,
+        },
       });
+      // A plan's final matched installment is a payoff the household
+      // didn't enter by hand — same "Debt Paid Off!" push sync sends for a
+      // synced balance reaching $0 (it used to only ever come from there).
+      await notifyIfDebtJustPaidOff(dp.debtId, dp.debt.balanceCents, s.balanceCents);
     } else if (dueDateLocked !== dp.dueDateLocked) {
       await db.debtPayment.update({ where: { id: dp.id }, data: { dueDateLocked } });
     }
@@ -1650,24 +1662,15 @@ export async function getActiveInsufficientMinimumDebts(householdId: string): Pr
 // interest" warning — see getActiveInsufficientMinimumDebts above — so the
 // badge matches everything the /debts page itself would flag red.
 export async function hasDebtsNeedingAttention(householdId: string): Promise<boolean> {
-  const [unconfirmedDebt, pendingReview, insufficientMinimumDebts] = await Promise.all([
-    db.debt.findFirst({
-      where: {
-        householdId,
-        debtType: "REVOLVING",
-        OR: [
-          { termsConfirmed: false },
-          { debtPayment: null },
-          { debtPayment: { dueDateLocked: false } },
-          { balanceCents: { gt: 0 }, minPaymentCents: 0, ignoreMinimumPayment: false },
-        ],
-      },
-      select: { id: true },
-    }),
-    db.debtAmountReview.findFirst({ where: { householdId }, select: { id: true } }),
+  // The same lists /debts and the dashboard show — dismissals included. This
+  // used to re-encode debtSetupReason as its own query, which ignored
+  // dismissals (dismissing the setup banner left the Debts badge lit) and
+  // inactive trackers (2026-10-09 review).
+  const [needingSetup, insufficientMinimumDebts] = await Promise.all([
+    getActiveDebtsNeedingSetup(householdId),
     getActiveInsufficientMinimumDebts(householdId),
   ]);
-  return Boolean(unconfirmedDebt || pendingReview || insufficientMinimumDebts.length > 0);
+  return needingSetup.length > 0 || insufficientMinimumDebts.length > 0;
 }
 
 // The DebtPayment counterpart to getBillsThisWeek (recurring-bills.ts) —
@@ -1777,6 +1780,7 @@ export async function getDebtPaymentsThisWeek(householdId: string, weekOf: Date 
           name: true,
           debtType: true,
           balanceCents: true,
+          ignoreMinimumPayment: true,
           aprBasisPoints: true,
           includeInPayoffPlan: true,
           purchaseDate: true,
@@ -1787,7 +1791,7 @@ export async function getDebtPaymentsThisWeek(householdId: string, weekOf: Date 
           account: { select: { displayName: true, orgName: true } },
         },
       },
-      payments: { select: { amountCents: true, occurredOn: true } },
+      payments: { where: recentPaymentsWhere(), select: { amountCents: true, occurredOn: true } },
     },
   });
   // amountDueCents / cadence / nextDueDate come along via `include: { ... }`
@@ -1810,6 +1814,7 @@ export async function getDebtPaymentsThisWeek(householdId: string, weekOf: Date 
         installmentsRemaining: dp.debt.installmentsRemaining,
         balanceCents: dp.debt.balanceCents,
         paidOffDate: dp.debt.paidOffDate,
+        ignoreMinimumPayment: dp.debt.ignoreMinimumPayment,
       },
     ]),
   );
@@ -1930,7 +1935,7 @@ export async function getDebtPaymentsThisWeek(householdId: string, weekOf: Date 
       // see debtSetupReason) has no "over vs. under the minimum" to reason
       // about, so it never gets an extra tag — every payment on it is just
       // a payment.
-      const tracksMinimum = minimumCents > 0;
+      const tracksMinimumPayment = tracksMinimum(dp.debt, dp);
 
       const abs = (cents: number) => Math.abs(cents);
       const paymentsThisWeek = dp.payments
@@ -2003,7 +2008,7 @@ export async function getDebtPaymentsThisWeek(householdId: string, weekOf: Date 
         // cadence-back window).
         if (
           dueDateInWeek &&
-          tracksMinimum &&
+          tracksMinimumPayment &&
           dp.debt.balanceCents > 0 &&
           receivedCents >= owedThisWeekCents
         ) {
@@ -2014,7 +2019,7 @@ export async function getDebtPaymentsThisWeek(householdId: string, weekOf: Date 
         // own minimum, and anything earlier belongs to the occurrence before
         // it (see parkedOccurrenceSettledLate, real report 2026-10-05).
         if (
-          tracksMinimum &&
+          tracksMinimumPayment &&
           dp.debt.balanceCents > 0 &&
           parkedOccurrenceSettledLate({
             nextDueDate: dp.nextDueDate,
@@ -2138,7 +2143,7 @@ export async function getDebtPaymentsThisWeek(householdId: string, weekOf: Date 
       const settledAfterWeek =
         !isInstallment &&
         dueDateInWeek &&
-        tracksMinimum &&
+        tracksMinimumPayment &&
         occurrenceSettledAfterWeek({
           nextDueDate: dp.nextDueDate,
           weekEnd: end,
@@ -2148,7 +2153,7 @@ export async function getDebtPaymentsThisWeek(householdId: string, weekOf: Date 
       const minimumMet = isInstallment
         ? installmentDone || receivedCents > 0 || dp.nextDueDate >= end
         : dueDateInWeek
-          ? !tracksMinimum || receivedCents >= owedThisWeekCents || settledAfterWeek
+          ? !tracksMinimumPayment || receivedCents >= owedThisWeekCents || settledAfterWeek
           : dp.nextDueDate >= end
             ? true
             : (corrected?.cyclePaid ?? false) ||
@@ -2187,7 +2192,7 @@ export async function getDebtPaymentsThisWeek(householdId: string, weekOf: Date 
           ? 0
           : minimumCents
         : dueDateInWeek
-          ? tracksMinimum && !settledAfterWeek
+          ? tracksMinimumPayment && !settledAfterWeek
             ? owedThisWeekCents
             : 0
           : minimumMet
@@ -2226,7 +2231,7 @@ export async function getDebtPaymentsThisWeek(householdId: string, weekOf: Date 
       // report, 2026-09-21: Sam's Club Card showed "$316.58 Extra" — a prior
       // week's own already-reportable payment leaking into this week's badge).
       const extraCents = extraTowardPrincipalCents({
-        tracksMinimum,
+        tracksMinimum: tracksMinimumPayment,
         minimumMet,
         receivedThisCycleCents,
         rawReceivedCents,
@@ -2776,7 +2781,7 @@ const loadCyclePlanContext = cache(async function loadCyclePlanContext(household
         lastPaidDate: true,
         cycleRestartDueDate: true,
         createdAt: true,
-        payments: { select: { amountCents: true, occurredOn: true } },
+        payments: { where: recentPaymentsWhere(), select: { amountCents: true, occurredOn: true } },
       },
     }),
     getSkippedMinimumKeys(householdId, monthStart, monthEnd),
@@ -2792,6 +2797,7 @@ const loadCyclePlanContext = cache(async function loadCyclePlanContext(household
         installmentsRemaining: d.installmentsRemaining,
         balanceCents: d.balanceCents,
         paidOffDate: d.paidOffDate,
+        ignoreMinimumPayment: d.ignoreMinimumPayment,
       },
     ]),
   );
@@ -3379,6 +3385,7 @@ function correctedDueDateByDebtId(
       installmentsRemaining?: number | null;
       balanceCents?: number;
       paidOffDate?: Date | null;
+      ignoreMinimumPayment?: boolean;
     }
   >,
   // "debtId:YYYY-MM-DD" of every covered minimum the household skipped
@@ -3436,9 +3443,7 @@ function correctedDueDateByDebtId(
     // due date — a Sep-3 Klarna installment showing as "Sep 17" on This
     // Week's Bills, and projectCyclePlan skipping the Sep-3 minimum entirely
     // (real report, 2026-09-01: Klarna–Puma / Affirm–Dick's).
-    const firstUnpaid = slots.find((s) => s.payment === null);
-    const periodDate =
-      firstUnpaid?.date ?? (slots.length > 0 ? slots[slots.length - 1].date : p.nextDueDate);
+    const periodDate = cycleDueDate(slots, p.nextDueDate);
     // Real payments this cycle beyond the expected minimum slot(s) — what
     // projectCyclePlan's past-payday branch nets its display "pending extra"
     // line against, so a real synced extra payment isn't double-counted on
@@ -3452,7 +3457,7 @@ function correctedDueDateByDebtId(
       ...planExtraThisMonth,
       ...extraPaymentsBeyondSlots(extraPayments, paymentsAbs, monthStart, monthEnd, {
         paidOffDate: meta?.paidOffDate,
-        tracksMinimum: p.amountCents > 0,
+        tracksMinimum: tracksMinimum(meta ?? {}, p),
       }),
     ];
     const extraPaidCents = extraTxns.reduce((s, t) => s + t.amountCents, 0);
@@ -3819,7 +3824,7 @@ export async function getPaymentCalendarThisCycle(
       cadence: true,
       nextDueDate: true,
       lastPaidDate: true,
-      payments: { select: { amountCents: true, occurredOn: true } },
+      payments: { where: recentPaymentsWhere(), select: { amountCents: true, occurredOn: true } },
     },
   });
   // The one shared "is this bill's most recent skip still active" primitive

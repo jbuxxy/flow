@@ -1,7 +1,6 @@
 "use server";
 
 import { CLEARED_CLASSIFICATION } from "@/lib/classification-reset";
-import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { resolveCategoryId } from "@/lib/bill-category-resolve";
@@ -17,6 +16,7 @@ import { upsertMerchantRule } from "@/lib/merchant-rules";
 import { currentMonthOccurrenceOfDay, nextOccurrenceOfDay, parseDueDay } from "@/lib/date";
 import { currentPeriodKey, utcPeriodBounds } from "@/lib/period";
 import { suggestCategoryForMerchant } from "@/lib/ai";
+import { revalidateHousehold } from "@/lib/revalidate";
 
 const cadenceEnum = z.enum(["WEEKLY", "BIWEEKLY", "MONTHLY", "ANNUAL"]);
 
@@ -142,9 +142,7 @@ export async function updateBill(
     }
   }
 
-  revalidatePath("/");
-  revalidatePath("/buckets");
-  if (resolvedBucketId) revalidatePath(`/buckets/${resolvedBucketId}`);
+  revalidateHousehold();
   return {};
 }
 
@@ -184,8 +182,7 @@ export async function skipBillCycle(billId: string) {
       data: { nextDueDate: nextBillDueDate(bill.cadence, cycleDueDate, []) },
     }),
   ]);
-  revalidatePath("/");
-  if (bill.bucketId) revalidatePath(`/buckets/${bill.bucketId}`);
+  revalidateHousehold();
 }
 
 // Undoes a skip from skipBillCycle above — a change of mind, or the
@@ -210,8 +207,7 @@ export async function unskipBillCycle(billId: string) {
     db.billCycleSkip.delete({ where: { id: skip.id } }),
     db.recurringBill.update({ where: { id: billId }, data: { nextDueDate: skip.cycleDueDate } }),
   ]);
-  revalidatePath("/");
-  if (bill.bucketId) revalidatePath(`/buckets/${bill.bucketId}`);
+  revalidateHousehold();
 }
 
 // "Cancel" on a bill row. A bill with no payment *this calendar month* is a
@@ -242,9 +238,7 @@ export async function deleteBill(billId: string) {
     await db.recurringBill.delete({ where: { id: billId } });
   }
 
-  revalidatePath("/");
-  revalidatePath("/bills");
-  if (bill.bucketId) revalidatePath(`/buckets/${bill.bucketId}`);
+  revalidateHousehold();
 }
 
 const createBillFromTransactionSchema = z.object({
@@ -357,11 +351,7 @@ export async function createBillFromTransaction(
     );
   }
 
-  revalidatePath("/");
-  revalidatePath("/buckets");
-  revalidatePath("/transactions");
-  revalidatePath(`/buckets/${bill.bucketId}`);
-  if (transaction.bucketId && transaction.bucketId !== bill.bucketId) revalidatePath(`/buckets/${transaction.bucketId}`);
+  revalidateHousehold();
   return {};
 }
 
@@ -439,9 +429,7 @@ export async function acceptBillSuggestion(
     update: {},
   });
 
-  revalidatePath("/");
-  revalidatePath("/buckets");
-  if (resolvedBucketId) revalidatePath(`/buckets/${resolvedBucketId}`);
+  revalidateHousehold();
 }
 
 // Which bucket/debt page a dismissed suggestion was showing on isn't known
@@ -455,9 +443,7 @@ export async function dismissBillSuggestion(key: string) {
     create: { householdId: session.user.householdId, kind: "BILL", key },
     update: {},
   });
-  revalidatePath("/buckets", "layout");
-  revalidatePath("/debts");
-  revalidatePath("/");
+  revalidateHousehold();
 }
 
 const categoryNameSchema = z.string().trim().min(1).max(40);
@@ -492,8 +478,7 @@ export async function createBillCategory(bucketId: string, name: string): Promis
     data: { householdId: session.user.householdId, bucketId, name: nameParsed.data },
   });
 
-  revalidatePath("/buckets", "layout");
-  revalidatePath("/debts");
+  revalidateHousehold();
   return { category: { id: category.id, name: category.name } };
 }
 
@@ -526,10 +511,7 @@ export async function updateBillCategory(categoryId: string, name: string): Prom
 
   await db.billCategory.update({ where: { id: categoryId }, data: { name: nameParsed.data } });
 
-  revalidatePath("/buckets", "layout");
-  revalidatePath("/debts");
-  revalidatePath("/transactions");
-  revalidatePath("/income");
+  revalidateHousehold();
   return {};
 }
 
@@ -569,8 +551,7 @@ export async function deleteBillCategory(categoryId: string) {
   if (!belongsToHousehold(category, session.user.householdId)) return;
 
   await db.billCategory.delete({ where: { id: categoryId } });
-  revalidatePath("/buckets", "layout");
-  revalidatePath("/debts");
+  revalidateHousehold();
 }
 
 export async function dismissBillNeedsDueDateWarning(billId: string) {
@@ -587,8 +568,7 @@ export async function dismissBillNeedsDueDateWarning(billId: string) {
     create: { householdId: session.user.householdId, kind: "BILL_NEEDS_DUE_DATE", key: billId },
     update: { createdAt: new Date() },
   });
-  revalidatePath("/buckets", "layout");
-  revalidatePath("/");
+  revalidateHousehold();
 }
 
 // A second real charge belonging to a bill's payment that matchBillPayments
@@ -649,9 +629,7 @@ export async function attachExtraBillCharge(
     update: { amountCents: transaction.amountCents },
   });
 
-  revalidatePath("/transactions");
-  revalidatePath("/bills");
-  if (bill.bucketId) revalidatePath(`/buckets/${bill.bucketId}`);
+  revalidateHousehold();
   return {};
 }
 
@@ -681,11 +659,7 @@ export async function linkTransactionToExistingBill(
 
   await attachTransactionAsBillPayment(transactionId, bill, transaction);
 
-  revalidatePath("/");
-  revalidatePath("/buckets");
-  revalidatePath("/transactions");
-  revalidatePath("/bills");
-  if (bill.bucketId) revalidatePath(`/buckets/${bill.bucketId}`);
+  revalidateHousehold();
   return {};
 }
 
@@ -701,8 +675,7 @@ export async function confirmBillAmountChanged(reviewId: string): Promise<void> 
   await db.recurringBill.update({ where: { id: review.billId }, data: { amountCents: review.observedAmountCents } });
   await db.billAmountReview.delete({ where: { id: reviewId } });
 
-  revalidatePath("/bills");
-  revalidatePath("/");
+  revalidateHousehold();
 }
 
 // Household says no — the email was a wrong match, a one-off adjustment, or
@@ -716,6 +689,5 @@ export async function declineBillAmountChanged(reviewId: string): Promise<void> 
 
   await db.billAmountReview.delete({ where: { id: reviewId } });
 
-  revalidatePath("/bills");
-  revalidatePath("/");
+  revalidateHousehold();
 }

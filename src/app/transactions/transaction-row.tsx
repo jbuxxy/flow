@@ -17,13 +17,14 @@ import { PendingIcon } from "@/components/pending-icon";
 import { ReceiptDetailBlock } from "@/components/receipt-detail-block";
 import { deriveP2PDisplay, bankDescriptionFor } from "@/lib/transaction-display";
 import { SelectField } from "@/components/select-field";
+import { MoveTargetPicker } from "@/components/move-target-picker";
 import { MoneyInput } from "@/components/money-input";
 import { updateIncome, type IncomeFormState } from "@/app/income/actions";
 import { ReimbursementLinker, type ReimbursementCandidate } from "@/components/reimbursement-linker";
 import { P2P_DISCOVERY_KEYWORDS, isP2PMerchant } from "@/lib/p2p-keywords";
 import { CARD_PAYMENT_MERCHANT_PATTERN, debtNameMatchesMerchant } from "@/lib/debt-payment-pattern";
 import { looksLikeBnplMerchant } from "@/lib/bnpl-keywords";
-import { CategoryPicker, type CategoryOption } from "@/app/bills/category-picker";
+import { type CategoryOption } from "@/app/bills/category-picker";
 import { AmountRoutingToggle, MakeRuleToggle, suggestRoutingMax, type RoutingDirection } from "@/components/amount-routing-toggle";
 import { RowActions, type RowAction } from "@/components/row-actions";
 import { InlineSaveButton } from "@/components/inline-save-button";
@@ -1134,40 +1135,25 @@ export function TransactionRow({
           {isDebit && reclassifying && (
             <div className="flex flex-col gap-2 border-t border-blue-100 dark:border-neutral-800 pt-2">
               <div className="flex items-center gap-2">
-                <SelectField
-                  value={selection}
-                  onChange={setSelection}
-                  small
-                  searchable={false}
-                  options={[
-                    // RECURRING buckets are excluded here — a plain Move can
-                    // only ever set bucketId directly, which the server
-                    // rejects for a RECURRING bucket (see the guard in
-                    // reassignTransaction). Routing something into a bill
-                    // bucket goes through "Track as a recurring transaction"
-                    // (the CalendarClock icon above) instead, which creates a
-                    // real RecurringBill via TrackAsBillForm.
-                    ...(transaction.accountBudgetTracked
-                      ? buckets
-                          .filter((b) => b.trackingMode !== "RECURRING")
-                          .map((b) => ({ value: `bucket:${b.id}`, label: b.name, group: "Bucket" }))
-                      : []),
-                    ...trackedDebts.map((d) => ({ value: `debt:${d.id}`, label: d.name, group: "Debt Payment" })),
-                  ]}
-                  className="min-w-0 flex-1"
+                {/* RECURRING buckets are excluded here — a plain Move can
+                    only ever set bucketId directly, which the server rejects
+                    for a RECURRING bucket (see the guard in
+                    reassignTransaction). Routing something into a bill bucket
+                    goes through "Track as a recurring transaction" (the
+                    CalendarClock icon above) instead, which creates a real
+                    RecurringBill via TrackAsBillForm. */}
+                <MoveTargetPicker
+                  selection={selection}
+                  onSelectionChange={setSelection}
+                  buckets={
+                    transaction.accountBudgetTracked ? buckets.filter((b) => b.trackingMode !== "RECURRING") : []
+                  }
+                  debts={trackedDebts}
+                  categories={categories}
+                  categoryId={categoryId}
+                  onCategoryChange={setCategoryId}
+                  allowCategory={transaction.accountBudgetTracked}
                 />
-                {transaction.accountBudgetTracked && selection.startsWith("bucket:") && (
-                  <div className="w-32 shrink-0">
-                    <CategoryPicker
-                      key={selection}
-                      categories={categories.filter((c) => c.bucketId === selection.slice("bucket:".length))}
-                      defaultCategoryId={categoryId}
-                      bucketId={selection.slice("bucket:".length)}
-                      onSelect={setCategoryId}
-                      small
-                    />
-                  </div>
-                )}
                 <button
                   onClick={() =>
                     startTransition(async () => {

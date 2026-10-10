@@ -1,6 +1,5 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { belongsToHousehold, requireFullAccess } from "@/lib/access";
@@ -15,17 +14,9 @@ import { matchReimbursements, offsetSumByCreditId, type ReimbursementCandidate }
 import { linkReceipt, linkReceiptToPlan, linkReceiptToTransactionLegs } from "@/lib/receipt-sync";
 import { plausibleReceiptCharge, aliasKey, receiptSignMatches } from "@/lib/receipt-match";
 import { resolveCategoryId } from "@/lib/bill-category-resolve";
+import { revalidateHousehold } from "@/lib/revalidate";
 
 export type { ReimbursementCandidate };
-
-function revalidateLinkPaths(bucketId?: string | null) {
-  revalidatePath("/income");
-  revalidatePath("/buckets");
-  revalidatePath("/debts");
-  revalidatePath("/bills");
-  revalidatePath("/transactions");
-  if (bucketId) revalidatePath(`/buckets/${bucketId}`);
-}
 
 // The manual half of returns/reimbursements (the automatic half is
 // matchReimbursements, src/lib/reimbursements.ts, scoped to a
@@ -75,7 +66,7 @@ export async function linkReimbursement(creditTransactionId: string, debitTransa
   });
   // No longer ad hoc income — revoke any bucket top-ups it funded.
   await reconcileAdHocTopUps(session.user.householdId);
-  revalidateLinkPaths(debit.bucketId);
+  revalidateHousehold();
 }
 
 // The fallback for when a household knows a credit is a refund but can't
@@ -114,7 +105,7 @@ export async function linkReimbursementToMerchant(creditTransactionId: string, m
     },
   });
   await reconcileAdHocTopUps(session.user.householdId);
-  revalidateLinkPaths(bucket?.id);
+  revalidateHousehold();
 }
 
 export async function unlinkReimbursement(creditTransactionId: string) {
@@ -145,7 +136,7 @@ export async function unlinkReimbursement(creditTransactionId: string) {
       oneOff: false,
     },
   });
-  revalidateLinkPaths(credit.bucketId);
+  revalidateHousehold();
 }
 
 // The explicit "none of these" exit from the refund-matching flow — a
@@ -166,8 +157,7 @@ export async function dismissRefundReview(creditTransactionId: string, dismissed
     where: { id: creditTransactionId },
     data: { refundReviewDismissed: dismissed },
   });
-  revalidatePath("/transactions");
-  revalidatePath("/");
+  revalidateHousehold();
 }
 
 // The split counterpart of linkReimbursement — carve `amountCents` of a
@@ -224,7 +214,7 @@ export async function addTransactionOffset(
   // The carved-off slice no longer counts as income — trim any bucket
   // top-ups this credit funded down to what it still counts for.
   await reconcileAdHocTopUps(session.user.householdId);
-  revalidateLinkPaths(debit.bucketId);
+  revalidateHousehold();
   return { ok: true };
 }
 
@@ -238,7 +228,7 @@ export async function removeTransactionOffset(offsetId: string) {
   if (!belongsToHousehold(offset, session.user.householdId)) return;
 
   await db.transactionOffset.delete({ where: { id: offsetId } });
-  revalidateLinkPaths(offset.debit.bucketId);
+  revalidateHousehold();
 }
 
 // Fallback search behind the amount-match suggestions in ReimbursementLinker
@@ -641,7 +631,7 @@ export async function createPattern(
   }
   await matchReimbursements(session.user.householdId);
 
-  revalidateLinkPaths(result.data.bucketId);
+  revalidateHousehold();
   return {};
 }
 
@@ -667,7 +657,7 @@ export async function updatePattern(
   await matchPatternPayments(session.user.householdId, patternId);
   await matchReimbursements(session.user.householdId);
 
-  revalidateLinkPaths(result.data.bucketId ?? pattern.bucketId);
+  revalidateHousehold();
   return {};
 }
 
@@ -686,7 +676,7 @@ export async function deletePattern(patternId: string) {
   });
   await db.recurringPattern.delete({ where: { id: patternId } });
 
-  revalidateLinkPaths(pattern.bucketId);
+  revalidateHousehold();
 }
 
 // The scheduled-pattern counterpart to deleteBill (src/app/bills/actions.ts)
@@ -719,7 +709,7 @@ export async function cancelPattern(patternId: string) {
     await db.recurringPattern.delete({ where: { id: patternId } });
   }
 
-  revalidateLinkPaths(pattern.bucketId);
+  revalidateHousehold();
 }
 
 // The scheduled-pattern counterpart to skipBillCycle (src/app/bills/actions.ts)
@@ -741,7 +731,7 @@ export async function skipPatternCycle(patternId: string) {
     where: { id: patternId },
     data: { nextDueDate: nextBillDueDate(pattern.cadence, pattern.nextDueDate, []) },
   });
-  revalidateLinkPaths(pattern.bucketId);
+  revalidateHousehold();
 }
 
 // --- Pattern payment review (see PatternPaymentReview's schema comment —
@@ -774,7 +764,7 @@ export async function confirmPatternPaymentReview(reviewId: string) {
   });
   await db.patternPaymentReview.delete({ where: { id: reviewId } });
 
-  revalidateLinkPaths(review.pattern.bucketId);
+  revalidateHousehold();
 }
 
 // "No, just a payment" — clears the question without touching the
@@ -795,7 +785,7 @@ export async function declinePatternPaymentReview(reviewId: string) {
   if (!belongsToHousehold(review, session.user.householdId)) return;
 
   await db.patternPaymentReview.update({ where: { id: reviewId }, data: { declinedAt: new Date() } });
-  revalidatePath("/");
+  revalidateHousehold();
 }
 
 // --- Manual receipt linking (see src/lib/receipt-sync.ts) ---
@@ -835,7 +825,7 @@ export async function linkReceiptToTransaction(
   // instead of just making the row vanish.
   if (alreadyOnThisTxn && alreadyOnThisTxn.id !== receiptId) {
     await db.receipt.update({ where: { id: receiptId }, data: { matchState: "STALE" } });
-    revalidatePath("/settings/email");
+    revalidateHousehold();
     return {
       ok: false,
       error: "That charge already has a receipt — this looks like a duplicate email, so we set it aside.",
@@ -875,9 +865,7 @@ export async function linkReceiptToTransaction(
     });
   }
 
-  revalidatePath("/transactions");
-  revalidatePath("/settings/email");
-  if (transaction.bucketId) revalidatePath(`/buckets/${transaction.bucketId}`);
+  revalidateHousehold();
   return { ok: true };
 }
 
@@ -929,10 +917,9 @@ export async function linkReceiptToTransactions(
 
   await linkReceiptToTransactionLegs(receipt, transactionIds);
 
-  revalidatePath("/transactions");
-  revalidatePath("/settings/email");
+  revalidateHousehold();
   for (const t of transactions) {
-    if (t.bucketId) revalidatePath(`/buckets/${t.bucketId}`);
+    if (t.bucketId) revalidateHousehold();
   }
   return { ok: true };
 }
@@ -965,10 +952,7 @@ export async function linkReceiptToPlanAction(
   }
 
   await linkReceiptToPlan(receipt, debtId);
-  revalidatePath("/settings/email");
-  revalidatePath("/debts");
-  revalidatePath("/bills");
-  revalidatePath("/buckets");
+  revalidateHousehold();
   return { ok: true };
 }
 
@@ -979,6 +963,5 @@ export async function dismissReceipt(receiptId: string) {
   if (!belongsToHousehold(receipt, session.user.householdId)) return;
 
   await db.receipt.update({ where: { id: receiptId }, data: { matchState: "DISMISSED" } });
-  revalidatePath("/transactions");
-  revalidatePath("/settings/email");
+  revalidateHousehold();
 }
