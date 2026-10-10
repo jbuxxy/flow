@@ -6,7 +6,7 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { resolveCategoryId } from "@/lib/bill-category-resolve";
 import { belongsToHousehold, requireFullAccess } from "@/lib/access";
-import { parseDollarsToCents } from "@/lib/money";
+import { parseDollarsToCents, parseOptionalToleranceCents } from "@/lib/money";
 import {
   nextBillDueDate,
   attachTransactionAsExtraCharge,
@@ -14,22 +14,11 @@ import {
   isBillCycleSkipActive,
 } from "@/lib/recurring-bills";
 import { upsertMerchantRule } from "@/lib/merchant-rules";
-import { currentMonthOccurrenceOfDay, nextOccurrenceOfDay } from "@/lib/date";
+import { currentMonthOccurrenceOfDay, nextOccurrenceOfDay, parseDueDay } from "@/lib/date";
 import { currentPeriodKey, utcPeriodBounds } from "@/lib/period";
 import { suggestCategoryForMerchant } from "@/lib/ai";
 
 const cadenceEnum = z.enum(["WEEKLY", "BIWEEKLY", "MONTHLY", "ANNUAL"]);
-
-// A monthly bill's due date only needs a day-of-month (see
-// nextOccurrenceOfDay's doc comment, src/lib/date.ts) — but cadence here is
-// genuinely user-editable (weekly/biweekly/annual bills are real, unlike a
-// REVOLVING debt payment), so the day picker only replaces the full date
-// one when cadence is MONTHLY; nextDueDate still carries a real date for
-// the other cadences.
-function parseDueDay(dueDay: string): number | null {
-  const day = Number(dueDay);
-  return Number.isInteger(day) && day >= 1 && day <= 31 ? day : null;
-}
 
 const billSchema = z.object({
   name: z.string().trim().min(1).max(80),
@@ -45,12 +34,6 @@ const billSchema = z.object({
   bucketId: z.string().optional(),
 });
 
-function parseOptionalToleranceCents(tolerance: string | undefined): { ok: true; value: number | null } | { ok: false } {
-  if (!tolerance) return { ok: true, value: null };
-  const cents = parseDollarsToCents(tolerance);
-  if (cents === null || cents < 0) return { ok: false };
-  return { ok: true, value: cents };
-}
 
 export type BillFormState = { error?: string };
 

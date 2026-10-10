@@ -6,7 +6,7 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { canViewNetWorth, belongsToHousehold } from "@/lib/access";
-import { parseDollarsToCents } from "@/lib/money";
+import { parseDollarsToCents, parsePercentToBasisPoints } from "@/lib/money";
 import { todayAsUTCDate } from "@/lib/date";
 import {
   estimateVehicleValue,
@@ -441,15 +441,6 @@ const createLinkedDebtSchema = z.object({
   minPayment: z.string(),
 });
 
-// Percent input, tolerant of a trailing "%" — same parsing rule as
-// parseAprToBasisPoints in debts/actions.ts, duplicated here (3 lines,
-// deliberately not shared) rather than importing across features for it.
-function parseAprPercentToBasisPoints(apr: string): number | null {
-  const value = Number(apr.replace(/%/g, "").trim());
-  if (!Number.isFinite(value) || value < 0 || value > 100) return null;
-  return Math.round(value * 100);
-}
-
 export type CreateLinkedDebtState = { error?: string };
 
 // For a loan whose lender doesn't sync with SimpleFIN at all (Tesla
@@ -482,7 +473,7 @@ export async function createLinkedDebt(
 
   const balanceCents = parseDollarsToCents(parsed.data.balance);
   const minPaymentCents = parseDollarsToCents(parsed.data.minPayment);
-  const aprBasisPoints = parseAprPercentToBasisPoints(parsed.data.apr);
+  const aprBasisPoints = parsePercentToBasisPoints(parsed.data.apr);
   if (balanceCents === null || minPaymentCents === null || aprBasisPoints === null) {
     return { error: "Enter a valid balance, APR, and minimum payment." };
   }

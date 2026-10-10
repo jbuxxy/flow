@@ -1,5 +1,6 @@
 import { amountToleranceCents } from "@/lib/amount-tolerance";
 import { capAtPayoffCents } from "@/lib/debt-payoff";
+import { DAY_MS } from "@/lib/date";
 
 // Pure — no `db`. Decides how a debt's "This Month" ledger presents each
 // minimum-payment slot when a payment was made *ahead of* it that's bigger
@@ -35,7 +36,6 @@ export type MinimumLedgerEntry =
   | { kind: "covered"; date: Date; skipped: boolean };
 
 const CLAIM_LEAD_DAYS = 3;
-const DAY_MS = 86_400_000;
 
 export function resolveMinimumLedger(opts: {
   slots: { date: Date; payment: LedgerPayment | null }[];

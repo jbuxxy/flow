@@ -15,7 +15,7 @@
 //      has to actually resemble the receipt's party.
 
 import type { Prisma } from "@prisma/client";
-import { P2P_DISCOVERY_KEYWORDS } from "@/lib/p2p-keywords";
+import { P2P_DISCOVERY_KEYWORDS, p2pMerchantMatch } from "@/lib/p2p-keywords";
 import { nameSimilarity } from "@/lib/fuzzy-match";
 
 export type ReceiptMatchShape = {
@@ -44,8 +44,7 @@ export function isP2PReceipt(r: ReceiptMatchShape): boolean {
   return isPeerPayment(r);
 }
 
-const p2pMerchantOr = (): Prisma.TransactionWhereInput[] =>
-  P2P_DISCOVERY_KEYWORDS.map((k) => ({ merchant: { contains: k, mode: "insensitive" as const } }));
+const p2pMerchantOr = (): Prisma.TransactionWhereInput[] => p2pMerchantMatch().OR;
 
 // Coarse DB-side gate for the amount/date candidate query — a P2P receipt is
 // scoped to P2P-looking charges, everything else is scoped away from them.

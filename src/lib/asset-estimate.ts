@@ -8,7 +8,7 @@ import {
   type VehicleEstimateDetails,
   type HomeEstimateDetails,
 } from "@/lib/ai";
-import { fetchCryptoPriceUsd, type CryptoEstimateDetails } from "@/lib/crypto-lookup";
+import { type CryptoEstimateDetails, estimateCryptoValue } from "@/lib/crypto-lookup";
 import { isDemoHousehold } from "@/lib/demo";
 
 // No separate cron/worker process in this deployment (see
@@ -65,13 +65,13 @@ export async function refreshCryptoPrices(householdId: string): Promise<void> {
     const details = asset.estimateDetails as unknown as CryptoEstimateDetails | null;
     if (!details?.coinId || !details.quantity) continue;
 
-    const priceUsd = await fetchCryptoPriceUsd(details.coinId);
-    if (priceUsd === null) continue;
+    const estimate = await estimateCryptoValue(details);
+    if (!estimate) continue;
 
     await db.asset.update({
       where: { id: asset.id },
       data: {
-        valueCents: Math.round(priceUsd * details.quantity * 100),
+        valueCents: estimate.valueCents,
         asOfDate: todayAsUTCDate(), // @db.Date — local calendar day, not a raw UTC instant
         estimateUpdatedAt: new Date(),
         source: "LIVE_PRICE",

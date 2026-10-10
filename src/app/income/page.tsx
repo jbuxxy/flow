@@ -1,13 +1,11 @@
 import Link from "next/link";
 import { PAYMENT_RECEIPT_SELECT } from "@/lib/payment-receipt";
-import { redirect } from "next/navigation";
 import { Receipt } from "lucide-react";
-import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getIncomeSummary, getIncomeThisMonth, getAdHocIncomeThisMonth } from "@/lib/income";
 import { currentPeriodKey, utcPeriodBounds } from "@/lib/period";
 import { detectRecurringIncome } from "@/lib/income-detect";
-import { hasFullAccess } from "@/lib/access";
+import { requireFullAccess } from "@/lib/access";
 import { formatCents } from "@/lib/money";
 import { AppShell } from "@/components/app-shell";
 import { StatCard } from "@/components/stat-card";
@@ -25,9 +23,7 @@ import { AdHocIncomeCard } from "./ad-hoc-income-card";
 import { dismissUnlabeledP2PCredits } from "./actions";
 
 export default async function IncomePage() {
-  const session = await auth();
-  if (!session?.user) redirect("/login");
-  if (!hasFullAccess(session.user)) redirect("/");
+  const session = await requireFullAccess();
 
   const householdId = session.user.householdId;
   // UTC-bounded current calendar month — see utcPeriodBounds's own doc

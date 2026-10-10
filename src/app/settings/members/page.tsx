@@ -1,5 +1,4 @@
-import { redirect } from "next/navigation";
-import { auth } from "@/lib/auth";
+import { requireOwner } from "@/lib/access";
 import { db } from "@/lib/db";
 import { AppShell } from "@/components/app-shell";
 import { InviteForm } from "./invite-form";
@@ -7,11 +6,9 @@ import { MemberRow } from "./member-row";
 import { MembersUsageSynopsis } from "./members-usage-synopsis";
 
 export default async function MembersPage() {
-  const session = await auth();
-  if (!session?.user) redirect("/login");
   // Owner-only — adding/editing members is a management action, not
   // something a Partner (full-financials, non-owner) gets to do.
-  if (session.user.role !== "OWNER") redirect("/");
+  const session = await requireOwner();
 
   const rawMembers = await db.user.findMany({
     where: { householdId: session.user.householdId },

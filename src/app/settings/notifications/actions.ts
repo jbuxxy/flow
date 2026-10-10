@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import type { NotificationType } from "@prisma/client";
+import { belongsToHousehold } from "@/lib/access";
 
 export type UpdatePreferenceResult = { error?: string };
 
@@ -27,7 +28,7 @@ export async function updateNotificationPreference(
     where: { id: targetUserId },
     select: { householdId: true, notificationsLocked: true },
   });
-  if (!target || target.householdId !== session.user.householdId) {
+  if (!belongsToHousehold(target, session.user.householdId)) {
     return { error: "Not found." };
   }
   // An owner's lock on this member's master switch freezes every one of their
@@ -58,7 +59,7 @@ export async function setNotificationsEnabled(targetUserId: string, enabled: boo
     where: { id: targetUserId },
     select: { householdId: true, notificationsLocked: true },
   });
-  if (!target || target.householdId !== session.user.householdId) return { error: "Not found." };
+  if (!belongsToHousehold(target, session.user.householdId)) return { error: "Not found." };
   if (target.notificationsLocked && !isOwner) return { error: "Locked by the household owner." };
 
   await db.user.update({ where: { id: targetUserId }, data: { notificationsEnabled: enabled } });
@@ -75,7 +76,7 @@ export async function setNotificationsLocked(targetUserId: string, locked: boole
   if (session.user.id === targetUserId) return { error: "Your own notifications can't be locked." };
 
   const target = await db.user.findUnique({ where: { id: targetUserId }, select: { householdId: true } });
-  if (!target || target.householdId !== session.user.householdId) return { error: "Not found." };
+  if (!belongsToHousehold(target, session.user.householdId)) return { error: "Not found." };
 
   await db.user.update({ where: { id: targetUserId }, data: { notificationsLocked: locked } });
   revalidatePath("/settings/notifications");

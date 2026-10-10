@@ -1,11 +1,10 @@
 import { Sparkles } from "lucide-react";
-import { redirect, notFound } from "next/navigation";
-import { auth } from "@/lib/auth";
+import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import { getSavingsGoalsWithProgress, getGoalInsight, GOAL_LINKABLE_ACCOUNT_TYPES } from "@/lib/savings";
 import { formatCents } from "@/lib/money";
 import { formatDate } from "@/lib/date";
-import { hasFullAccess } from "@/lib/access";
+import { requireFullAccess, belongsToHousehold } from "@/lib/access";
 import { AppShell } from "@/components/app-shell";
 import { GoalProgressBar } from "@/components/goal-progress-bar";
 import { ContributeForm } from "./contribute-form";
@@ -19,13 +18,11 @@ export default async function GoalDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const session = await auth();
-  if (!session?.user) redirect("/login");
-  if (!hasFullAccess(session.user)) redirect("/");
+  const session = await requireFullAccess();
 
   const { id } = await params;
   const goal = await db.savingsGoal.findUnique({ where: { id } });
-  if (!goal || goal.householdId !== session.user.householdId) notFound();
+  if (!belongsToHousehold(goal, session.user.householdId)) notFound();
 
   const progress = (await getSavingsGoalsWithProgress(session.user.householdId)).find(
     (g) => g.id === goal.id,

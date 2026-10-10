@@ -1,14 +1,12 @@
-import { redirect } from "next/navigation";
 import { PAYMENT_RECEIPT_SELECT } from "@/lib/payment-receipt";
-import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { hasFullAccess } from "@/lib/access";
+import { requireFullAccess } from "@/lib/access";
 import { getLabelSuggestionsByMerchant } from "@/lib/transaction-labels";
 import { getReimbursementSuggestions } from "@/lib/reimbursements";
 import { budgetTrackedWhere } from "@/lib/budget-tracked";
 import { unlabeledP2PWhere } from "@/lib/p2p-transfers";
 import { getUnmatchedRefunds } from "@/lib/refund-match";
-import { P2P_DISCOVERY_KEYWORDS } from "@/lib/p2p-keywords";
+import { P2P_DISCOVERY_KEYWORDS, isP2PMerchant, p2pMerchantMatch } from "@/lib/p2p-keywords";
 import { allBnplKeywords } from "@/lib/bnpl-detect";
 import { CARD_PAYMENT_MERCHANT_CONTAINS_TERMS, LOAN_TRANSFER_CONTAINS_TERMS } from "@/lib/debt-payment-pattern";
 import { pickableDebtWhere } from "@/lib/debt-reassign";
@@ -29,6 +27,7 @@ import {
 import { TransactionFilters } from "./transaction-filters";
 import { TransactionRow, type ReceiptLineItem } from "./transaction-row";
 import type { Prisma } from "@prisma/client";
+import { parseAmountParamCents } from "@/lib/money";
 
 type ReceiptSuggestion = {
   id: string;
@@ -119,7 +118,7 @@ async function buildReceiptSuggestions(
   const claimed = new Set<string>();
   for (const t of needy) {
     const amount = Math.abs(t.amountCents);
-    const txnLooksP2P = P2P_DISCOVERY_KEYWORDS.some((k) => t.merchant.toLowerCase().includes(k));
+    const txnLooksP2P = isP2PMerchant(t.merchant);
     const match = receipts.find((r) => {
       if (claimed.has(r.id) || r.totalCents !== amount) return false;
       // A purchase receipt only ever attaches to a debit, a "you received"
@@ -225,7 +224,7 @@ function statusWhere(status: Status, householdId: string, bnplKeywords: string[]
         isIncome: false,
         isTransfer: false,
         amountCents: { gt: 0 },
-        NOT: { OR: P2P_DISCOVERY_KEYWORDS.map((k) => ({ merchant: { contains: k, mode: "insensitive" as const } })) },
+        NOT: p2pMerchantMatch(),
       };
     case "bucket":
       return { bucketId: { not: null } };
@@ -355,12 +354,6 @@ function statusWhere(status: Status, householdId: string, bnplKeywords: string[]
   }
 }
 
-function parseDollarsParam(param: string | undefined): number | undefined {
-  if (!param) return undefined;
-  const dollars = parseFloat(param);
-  return Number.isNaN(dollars) ? undefined : Math.round(dollars * 100);
-}
-
 // Amount is signed (debit positive, credit negative — see WORKING_ON.md),
 // but the filter fields are plain "$ min"/"$ max" with no direction of
 // their own, matching how every row displays its amount (always a bare
@@ -368,8 +361,8 @@ function parseDollarsParam(param: string | undefined): number | undefined {
 // on absolute value, mirrored across zero to cover both a debit and a
 // credit of the same magnitude.
 function amountRangeWhere(minParam: string | undefined, maxParam: string | undefined): Prisma.TransactionWhereInput {
-  const minCents = parseDollarsParam(minParam);
-  const maxCents = parseDollarsParam(maxParam);
+  const minCents = parseAmountParamCents(minParam);
+  const maxCents = parseAmountParamCents(maxParam);
   if (minCents === undefined && maxCents === undefined) return {};
   if (minCents === undefined) return { amountCents: { gte: -maxCents!, lte: maxCents! } };
   if (maxCents === undefined) {
@@ -428,9 +421,7 @@ export default async function TransactionsPage({
     allTime?: string;
   }>;
 }) {
-  const session = await auth();
-  if (!session?.user) redirect("/login");
-  if (!hasFullAccess(session.user)) redirect("/");
+  const session = await requireFullAccess();
 
   const params = await searchParams;
   const householdId = session.user.householdId;

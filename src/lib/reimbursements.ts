@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
-import { P2P_DISCOVERY_KEYWORDS } from "@/lib/p2p-keywords";
+import { isP2PMerchant } from "@/lib/p2p-keywords";
+import { DAY_MS } from "@/lib/date";
 
-const DAY_MS = 86_400_000;
 
 // A generic bank/card-network dispute-resolution credit never identifies the
 // real merchant it's paying back, the same shape of ambiguity P2P credit
@@ -22,7 +22,7 @@ const GENERIC_CREDIT_KEYWORDS = ["chargeback", "dispute", "provisional credit"];
 // receiptChargeScopeWhere out of receipt-match.ts.
 export function creditDoesNotIdentifyPayee(merchant: string): boolean {
   const m = merchant.trim().toLowerCase();
-  return P2P_DISCOVERY_KEYWORDS.some((k) => m.includes(k)) || GENERIC_CREDIT_KEYWORDS.some((k) => m.includes(k));
+  return isP2PMerchant(m) || GENERIC_CREDIT_KEYWORDS.some((k) => m.includes(k));
 }
 
 // Split-credit offsets (see TransactionOffset) — total cents carved off each

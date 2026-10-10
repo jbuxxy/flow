@@ -1,9 +1,7 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
-import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getSavingsGoalsWithProgress, getHouseholdSavingsCapacity, GOAL_LINKABLE_ACCOUNT_TYPES } from "@/lib/savings";
-import { hasFullAccess } from "@/lib/access";
+import { requireFullAccess } from "@/lib/access";
 import { formatCents } from "@/lib/money";
 import { AppShell } from "@/components/app-shell";
 import { StatCard } from "@/components/stat-card";
@@ -11,9 +9,7 @@ import { GoalProgressBar } from "@/components/goal-progress-bar";
 import { AddGoalForm } from "./add-goal-form";
 
 export default async function SavingsPage() {
-  const session = await auth();
-  if (!session?.user) redirect("/login");
-  if (!hasFullAccess(session.user)) redirect("/");
+  const session = await requireFullAccess();
 
   const [goals, accounts, capacity] = await Promise.all([
     getSavingsGoalsWithProgress(session.user.householdId),

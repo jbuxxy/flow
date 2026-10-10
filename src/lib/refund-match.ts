@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { currentWeekKey } from "@/lib/period";
+import { currentWeekKey, daysAgo } from "@/lib/period";
 import { budgetTrackedWhere } from "@/lib/budget-tracked";
 import { creditDoesNotIdentifyPayee } from "@/lib/reimbursements";
 
@@ -81,7 +81,7 @@ export async function tryAutoLinkRefund(
 // 2026-09-27, after a "Visa Chargeback Adjustment" credit found zero
 // same-merchant candidates (no purchase is ever literally named that) and
 // fell straight to being counted as income with no review at all.
-export async function findAmountOnlyRefundCandidates(
+async function findAmountOnlyRefundCandidates(
   householdId: string,
   amountCents: number,
   onOrBefore: Date,
@@ -139,7 +139,7 @@ export type UnmatchedRefund = {
 // other back down to a lone exact match, this queue drops the row on its
 // own the next time it's read, without needing a re-sync to notice.
 export async function getUnmatchedRefunds(householdId: string): Promise<UnmatchedRefund[]> {
-  const since = new Date(Date.now() - REFUND_MATCH_LOOKBACK_DAYS * 86_400_000);
+  const since = daysAgo(REFUND_MATCH_LOOKBACK_DAYS);
   const credits = await db.transaction.findMany({
     where: {
       householdId,
@@ -163,16 +163,68 @@ export async function getUnmatchedRefunds(householdId: string): Promise<Unmatche
     orderBy: { occurredOn: "desc" },
     select: { id: true, merchant: true, amountCents: true, occurredOn: true, createdAt: true },
   });
+  if (credits.length === 0) return [];
+
+  // Two batched queries covering every credit's window, split per credit in
+  // memory — this used to run one candidate query per credit, serially, on
+  // every dashboard load. Same rules as findRefundPurchaseCandidates /
+  // findAmountOnlyRefundCandidates: a generic (P2P/dispute-credit) merchant
+  // text never has same-merchant history to search, so it takes the
+  // amount-only fallback tryAutoLinkGenericCredit uses at sync time; a
+  // credit re-evaluated here (e.g. a second same-amount purchase landed
+  // after sync already tried once) is judged by the same rule that will have
+  // decided its isIncome/link state.
+  const lookbackMs = REFUND_MATCH_LOOKBACK_DAYS * 86_400_000;
+  const generic = credits.filter((c) => creditDoesNotIdentifyPayee(c.merchant));
+  const byMerchant = credits.filter((c) => !creditDoesNotIdentifyPayee(c.merchant));
+  const windowOf = (cs: typeof credits) => ({
+    gte: new Date(Math.min(...cs.map((c) => c.occurredOn.getTime())) - lookbackMs),
+    lte: new Date(Math.max(...cs.map((c) => c.occurredOn.getTime()))),
+  });
+  const candidateSelect = { id: true, amountCents: true, occurredOn: true, merchant: true } as const;
+  const [merchantRows, amountRows] = await Promise.all([
+    byMerchant.length > 0
+      ? db.transaction.findMany({
+          where: {
+            householdId,
+            amountCents: { gt: 0 },
+            occurredOn: windowOf(byMerchant),
+            reimbursedBy: { none: {} },
+            OR: [...new Set(byMerchant.map((c) => c.merchant))].map((m) => ({
+              merchant: { equals: m, mode: "insensitive" as const },
+            })),
+          },
+          orderBy: { occurredOn: "desc" },
+          select: candidateSelect,
+        })
+      : [],
+    generic.length > 0
+      ? db.transaction.findMany({
+          where: {
+            householdId,
+            amountCents: { in: [...new Set(generic.map((c) => Math.abs(c.amountCents)))] },
+            occurredOn: windowOf(generic),
+            reimbursedBy: { none: {} },
+          },
+          orderBy: { occurredOn: "desc" },
+          select: candidateSelect,
+        })
+      : [],
+  ]);
+
   const out: UnmatchedRefund[] = [];
   for (const credit of credits) {
-    // A generic (P2P/dispute-credit) merchant text never has same-merchant
-    // history to search — same amount-only fallback tryAutoLinkGenericCredit
-    // uses at sync time, so a credit re-evaluated here (e.g. a second
-    // same-amount purchase landed after sync already tried once) is judged
-    // by the same rule that will have decided its isIncome/link state.
-    const candidates = creditDoesNotIdentifyPayee(credit.merchant)
-      ? await findAmountOnlyRefundCandidates(householdId, Math.abs(credit.amountCents), credit.occurredOn)
-      : await findRefundPurchaseCandidates(householdId, credit.merchant, credit.occurredOn);
+    const since = credit.occurredOn.getTime() - lookbackMs;
+    const inWindow = (r: { occurredOn: Date }) =>
+      r.occurredOn.getTime() >= since && r.occurredOn.getTime() <= credit.occurredOn.getTime();
+    const isGeneric = creditDoesNotIdentifyPayee(credit.merchant);
+    const merchantKey = credit.merchant.toLowerCase();
+    const candidates: RefundCandidate[] = (isGeneric ? amountRows : merchantRows)
+      .filter((r) =>
+        inWindow(r) &&
+        (isGeneric ? r.amountCents === Math.abs(credit.amountCents) : r.merchant.toLowerCase() === merchantKey),
+      )
+      .map(({ id, amountCents, occurredOn }) => ({ id, amountCents, occurredOn }));
     if (candidates.length >= 2) out.push({ ...credit, candidates });
   }
   return out;

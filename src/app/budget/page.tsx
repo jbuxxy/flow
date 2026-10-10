@@ -1,6 +1,4 @@
-import { redirect } from "next/navigation";
-import { auth } from "@/lib/auth";
-import { hasFullAccess } from "@/lib/access";
+import { requireFullAccess } from "@/lib/access";
 import { currentPeriodKey } from "@/lib/period";
 import { periodLabel } from "@/lib/monthly-report";
 import {
@@ -13,9 +11,7 @@ import { AppShell } from "@/components/app-shell";
 import { BudgetAllocator } from "@/components/budget-allocator";
 
 export default async function BudgetPage() {
-  const session = await auth();
-  if (!session?.user) redirect("/login");
-  if (!hasFullAccess(session.user)) redirect("/");
+  const session = await requireFullAccess();
 
   // "Full financials" = owner. A non-owner full-access member (spouse) can see
   // the proposed plan but can't confirm, skip, or change a value — the

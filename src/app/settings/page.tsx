@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Users, Landmark, Sparkles, Database, House, Wallet, Bell, ChevronRight, CalendarDays, EyeOff, Mail, ScanFace } from "lucide-react";
+import { Users, Landmark, Sparkles, Database, House, Wallet, Bell, ChevronRight, CalendarDays, EyeOff, Mail, ScanFace, type LucideIcon } from "lucide-react";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { hasFullAccess } from "@/lib/access";
@@ -30,29 +30,29 @@ export default async function SettingsPage() {
   // Owner-only — adding/editing members is a management action, not
   // something a Partner (full-financials, non-owner) gets to do.
   const canManageMembers = isOwner;
+  const fullAccess = hasFullAccess(session.user);
   // Account Sync's row dot covers both a bank-connection problem and an
   // unconfirmed/misclassified debt — this page renders the same per-debt
   // "needs setup" rows /debts does, so a debt issue is just as fixable from
   // here (2026-08-19, matches app-shell.tsx's settingsNeedsAttention).
-  const [bankConnectionNeedsAttention, debtsNeedAttention] = hasFullAccess(session.user)
-    ? await Promise.all([
-        needsBankConnectionAttention(session.user.householdId),
-        hasDebtsNeedingAttention(session.user.householdId),
-      ])
-    : [false, false];
+  // Email: per-user, not per-household — each member's own mailbox
+  // connection. Only ever a configured-but-broken row (email is optional, so
+  // "not connected" is not an error and there's no attention badge, just red
+  // subtitle text).
+  const [bankConnectionNeedsAttention, debtsNeedAttention, aiNeedsAttention, emailConnectionError, hiddenItems, notifState] =
+    await Promise.all([
+      fullAccess ? needsBankConnectionAttention(session.user.householdId) : false,
+      fullAccess ? hasDebtsNeedingAttention(session.user.householdId) : false,
+      isOwner ? needsAiAttention(session.user.householdId) : false,
+      fullAccess ? emailConnectionHasError(session.user.id) : false,
+      isOwner ? getHiddenItems(session.user.householdId) : [],
+      db.user.findUnique({
+        where: { id: session.user.id },
+        select: { notificationsEnabled: true, notificationsLocked: true },
+      }),
+    ]);
   const bankNeedsAttention = bankConnectionNeedsAttention || debtsNeedAttention;
-  const aiNeedsAttention = isOwner ? await needsAiAttention(session.user.householdId) : false;
-  // Per-user, not per-household — each member's own mailbox connection. Only
-  // ever a configured-but-broken row (email is optional, so "not connected"
-  // is not an error and there's no attention badge, just red subtitle text).
-  const emailConnectionError = hasFullAccess(session.user)
-    ? await emailConnectionHasError(session.user.id)
-    : false;
-  const hiddenCount = isOwner ? (await getHiddenItems(session.user.householdId)).length : 0;
-  const notifState = await db.user.findUnique({
-    where: { id: session.user.id },
-    select: { notificationsEnabled: true, notificationsLocked: true },
-  });
+  const hiddenCount = hiddenItems.length;
 
   return (
     <AppShell title="Settings" user={session.user}>
@@ -68,250 +68,108 @@ export default async function SettingsPage() {
       <InstallAppCard />
 
       <div className="flex flex-col gap-2 lg:grid lg:grid-cols-2 lg:items-start xl:grid-cols-3">
-        <Link
+        <SettingsLink
           href="/settings/notifications"
-          className="flex items-center justify-between rounded-xl border border-blue-100 dark:border-neutral-800 p-4"
-        >
-          <span className="flex items-center gap-3">
-            <span className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-50 dark:bg-neutral-800 text-blue-900 dark:text-blue-300">
-              <Bell size={18} />
-            </span>
-            <span>
-              <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">Notification Preferences</p>
-              <p className="text-xs text-gray-500 dark:text-neutral-400">
-                {isOwner ? "Choose what each member gets notified about" : "Choose what you get notified about"}
-              </p>
-            </span>
-          </span>
-          <ChevronRight size={18} className="text-gray-400 dark:text-neutral-500" />
-        </Link>
-
-        <Link
+          icon={Bell}
+          title="Notification Preferences"
+          subtitle={isOwner ? "Choose what each member gets notified about" : "Choose what you get notified about"}
+        />
+        <SettingsLink
           href="/settings/security"
-          className="flex items-center justify-between rounded-xl border border-blue-100 dark:border-neutral-800 p-4"
-        >
-          <span className="flex items-center gap-3">
-            <span className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-50 dark:bg-neutral-800 text-blue-900 dark:text-blue-300">
-              <ScanFace size={18} />
-            </span>
-            <span>
-              <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">Sign-In & Security</p>
-              <p className="text-xs text-gray-500 dark:text-neutral-400">Sign in with a passkey instead of a password</p>
-            </span>
-          </span>
-          <ChevronRight size={18} className="text-gray-400 dark:text-neutral-500" />
-        </Link>
-
-        {hasFullAccess(session.user) && household && (
-          <Link
+          icon={ScanFace}
+          title="Sign-In & Security"
+          subtitle="Sign in with a passkey instead of a password"
+        />
+        {fullAccess && household && (
+          <SettingsLink
             href="/settings/income"
-            className="flex items-center justify-between rounded-xl border border-blue-100 dark:border-neutral-800 p-4"
-          >
-            <span className="flex items-center gap-3">
-              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-50 dark:bg-neutral-800 text-blue-900 dark:text-blue-300">
-                <Wallet size={18} />
-              </span>
-              <span>
-                <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                  Income for Budgeting
-                </p>
-                <p className="text-xs text-gray-500 dark:text-neutral-400">
-                  {INCOME_METHOD_LABEL[household.incomeCalcMethod] ?? household.incomeCalcMethod}
-                  {household.includeP2PInIncomeCalc ? " · P2P included" : ""}
-                </p>
-              </span>
-            </span>
-            <ChevronRight size={18} className="text-gray-400 dark:text-neutral-500" />
-          </Link>
+            icon={Wallet}
+            title="Income for Budgeting"
+            subtitle={`${INCOME_METHOD_LABEL[household.incomeCalcMethod] ?? household.incomeCalcMethod}${
+              household.includeP2PInIncomeCalc ? " · P2P included" : ""
+            }`}
+          />
         )}
-
-        {hasFullAccess(session.user) && household && (
-          <Link
+        {fullAccess && household && (
+          <SettingsLink
             href="/settings/household"
-            className="flex items-center justify-between rounded-xl border border-blue-100 dark:border-neutral-800 p-4"
-          >
-            <span className="flex items-center gap-3">
-              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-50 dark:bg-neutral-800 text-blue-900 dark:text-blue-300">
-                <House size={18} />
-              </span>
-              <span>
-                <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                  Household Profile
-                </p>
-                <p className="text-xs text-gray-500 dark:text-neutral-400">
-                  {GOAL_POSTURE_LABEL[household.goalPosture] ?? household.goalPosture} · {household.adultsCount}{" "}
-                  adult{household.adultsCount === 1 ? "" : "s"}
-                  {household.kidsCount > 0
-                    ? `, ${household.kidsCount} kid${household.kidsCount === 1 ? "" : "s"}`
-                    : ""}
-                </p>
-              </span>
-            </span>
-            <ChevronRight size={18} className="text-gray-400 dark:text-neutral-500" />
-          </Link>
+            icon={House}
+            title="Household Profile"
+            subtitle={`${GOAL_POSTURE_LABEL[household.goalPosture] ?? household.goalPosture} · ${household.adultsCount} adult${
+              household.adultsCount === 1 ? "" : "s"
+            }${household.kidsCount > 0 ? `, ${household.kidsCount} kid${household.kidsCount === 1 ? "" : "s"}` : ""}`}
+          />
         )}
-
         {canManageMembers && (
-          <Link
+          <SettingsLink
             href="/settings/members"
-            className="flex items-center justify-between rounded-xl border border-blue-100 dark:border-neutral-800 p-4"
-          >
-            <span className="flex items-center gap-3">
-              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-50 dark:bg-neutral-800 text-blue-900 dark:text-blue-300">
-                <Users size={18} />
-              </span>
-              <span>
-                <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                  Household Members
-                </p>
-                <p className="text-xs text-gray-500 dark:text-neutral-400">
-                  Invite your spouse or a kid, manage 2FA
-                </p>
-              </span>
-            </span>
-            <ChevronRight size={18} className="text-gray-400 dark:text-neutral-500" />
-          </Link>
+            icon={Users}
+            title="Household Members"
+            subtitle="Invite your spouse or a kid, manage 2FA"
+          />
         )}
-
-        {hasFullAccess(session.user) && (
-          <Link
+        {fullAccess && (
+          <SettingsLink
             href="/settings/accounts"
-            className="flex items-center justify-between rounded-xl border border-blue-100 dark:border-neutral-800 p-4"
-          >
-            <span className="flex items-center gap-3">
-              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-50 dark:bg-neutral-800 text-blue-900 dark:text-blue-300">
-                <Landmark size={18} />
-              </span>
-              <span>
-                <p className="flex items-center gap-1.5 text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                  Account Sync
-                  {bankNeedsAttention && (
-                    <span className="h-2 w-2 shrink-0 rounded-full bg-red-600" aria-label="Needs Attention" />
-                  )}
-                </p>
-                <p
-                  className={`text-xs ${bankNeedsAttention ? "text-red-600 dark:text-red-400" : "text-gray-500 dark:text-neutral-400"}`}
-                >
-                  {bankNeedsAttention
-                    ? "Needs Attention"
-                    : isOwner
-                      ? "Connect accounts, view sync status"
-                      : "View connected accounts"}
-                </p>
-              </span>
-            </span>
-            <ChevronRight size={18} className="text-gray-400 dark:text-neutral-500" />
-          </Link>
+            icon={Landmark}
+            title="Account Sync"
+            attention={bankNeedsAttention}
+            dot
+            subtitle={
+              bankNeedsAttention
+                ? "Needs Attention"
+                : isOwner
+                  ? "Connect accounts, view sync status"
+                  : "View connected accounts"
+            }
+          />
         )}
         {isOwner && (
-          <Link
+          <SettingsLink
             href="/settings/ai"
-            className="flex items-center justify-between rounded-xl border border-blue-100 dark:border-neutral-800 p-4"
-          >
-            <span className="flex items-center gap-3">
-              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-50 dark:bg-neutral-800 text-blue-900 dark:text-blue-300">
-                <Sparkles size={18} />
-              </span>
-              <span>
-                <p className="flex items-center gap-1.5 text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                  AI Features
-                  {aiNeedsAttention && (
-                    <span className="h-2 w-2 shrink-0 rounded-full bg-red-600" aria-label="Needs Attention" />
-                  )}
-                </p>
-                <p className={`text-xs ${aiNeedsAttention ? "text-red-600 dark:text-red-400" : "text-gray-500 dark:text-neutral-400"}`}>
-                  {aiNeedsAttention ? "Needs Attention" : "Configure your AI provider"}
-                </p>
-              </span>
-            </span>
-            <ChevronRight size={18} className="text-gray-400 dark:text-neutral-500" />
-          </Link>
+            icon={Sparkles}
+            title="AI Features"
+            attention={aiNeedsAttention}
+            dot
+            subtitle={aiNeedsAttention ? "Needs Attention" : "Configure your AI provider"}
+          />
         )}
-        {hasFullAccess(session.user) && (
-          <Link
+        {fullAccess && (
+          <SettingsLink
             href="/settings/email"
-            className="flex items-center justify-between rounded-xl border border-blue-100 dark:border-neutral-800 p-4"
-          >
-            <span className="flex items-center gap-3">
-              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-50 dark:bg-neutral-800 text-blue-900 dark:text-blue-300">
-                <Mail size={18} />
-              </span>
-              <span>
-                <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">Email Receipts</p>
-                <p
-                  className={`text-xs ${emailConnectionError ? "text-red-600 dark:text-red-400" : "text-gray-500 dark:text-neutral-400"}`}
-                >
-                  {emailConnectionError
-                    ? "Reconnect your inbox"
-                    : "Attach receipt detail from your inbox to charges"}
-                </p>
-              </span>
-            </span>
-            <ChevronRight size={18} className="text-gray-400 dark:text-neutral-500" />
-          </Link>
+            icon={Mail}
+            title="Email Receipts"
+            attention={emailConnectionError}
+            subtitle={emailConnectionError ? "Reconnect your inbox" : "Attach receipt detail from your inbox to charges"}
+          />
         )}
         {isOwner && (
-          <Link
+          <SettingsLink
             href="/settings/calendar-sync"
-            className="flex items-center justify-between rounded-xl border border-blue-100 dark:border-neutral-800 p-4"
-          >
-            <span className="flex items-center gap-3">
-              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-50 dark:bg-neutral-800 text-blue-900 dark:text-blue-300">
-                <CalendarDays size={18} />
-              </span>
-              <span>
-                <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">Calendar Sync</p>
-                <p className="text-xs text-gray-500 dark:text-neutral-400">
-                  Subscribe to the payment calendar from Google or Apple Calendar
-                </p>
-              </span>
-            </span>
-            <ChevronRight size={18} className="text-gray-400 dark:text-neutral-500" />
-          </Link>
+            icon={CalendarDays}
+            title="Calendar Sync"
+            subtitle="Subscribe to the payment calendar from Google or Apple Calendar"
+          />
         )}
         {isOwner && (
-          <Link
+          <SettingsLink
             href="/settings/database"
-            className="flex items-center justify-between rounded-xl border border-blue-100 dark:border-neutral-800 p-4"
-          >
-            <span className="flex items-center gap-3">
-              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-50 dark:bg-neutral-800 text-blue-900 dark:text-blue-300">
-                <Database size={18} />
-              </span>
-              <span>
-                <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">Database</p>
-                <p className="text-xs text-gray-500 dark:text-neutral-400">
-                  Export/backup, wipe financial data, restart setup
-                </p>
-              </span>
-            </span>
-            <ChevronRight size={18} className="text-gray-400 dark:text-neutral-500" />
-          </Link>
+            icon={Database}
+            title="Database"
+            subtitle="Export/backup, wipe financial data, restart setup"
+          />
         )}
         {isOwner && hiddenCount > 0 && (
-          <Link
+          <SettingsLink
             href="/settings/hidden"
-            className="flex items-center justify-between rounded-xl border border-blue-100 dark:border-neutral-800 p-4"
-          >
-            <span className="flex items-center gap-3">
-              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-50 dark:bg-neutral-800 text-blue-900 dark:text-blue-300">
-                <EyeOff size={18} />
-              </span>
-              <span>
-                <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                  Hidden Accounts &amp; Debts
-                </p>
-                <p className="text-xs text-gray-500 dark:text-neutral-400">
-                  {hiddenCount} {hiddenCount === 1 ? "item" : "items"} hidden — restore or permanently delete
-                </p>
-              </span>
-            </span>
-            <ChevronRight size={18} className="text-gray-400 dark:text-neutral-500" />
-          </Link>
+            icon={EyeOff}
+            title="Hidden Accounts & Debts"
+            subtitle={`${hiddenCount} ${hiddenCount === 1 ? "item" : "items"} hidden — restore or permanently delete`}
+          />
         )}
       </div>
 
-      {!canManageMembers && !hasFullAccess(session.user) && (
+      {!canManageMembers && !fullAccess && (
         <p className="text-sm text-gray-500 dark:text-neutral-400">
           Nothing to manage here yet — your account is scoped to buckets and
           budget only.
@@ -322,3 +180,45 @@ export default async function SettingsPage() {
     </AppShell>
   );
 }
+
+// One settings destination: icon, title, subtitle, chevron. `attention`
+// turns the subtitle red; `dot` also puts the red dot beside the title.
+function SettingsLink({
+  href,
+  icon: Icon,
+  title,
+  subtitle,
+  attention = false,
+  dot = false,
+}: {
+  href: string;
+  icon: LucideIcon;
+  title: string;
+  subtitle: string;
+  attention?: boolean;
+  dot?: boolean;
+}) {
+  return (
+    <Link
+      href={href}
+      className="flex items-center justify-between rounded-xl border border-blue-100 dark:border-neutral-800 p-4"
+    >
+      <span className="flex items-center gap-3">
+        <span className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-50 dark:bg-neutral-800 text-blue-900 dark:text-blue-300">
+          <Icon size={18} />
+        </span>
+        <span>
+          <p className="flex items-center gap-1.5 text-sm font-medium text-neutral-900 dark:text-neutral-100">
+            {title}
+            {dot && attention && <span className="h-2 w-2 shrink-0 rounded-full bg-red-600" aria-label="Needs Attention" />}
+          </p>
+          <p className={`text-xs ${attention ? "text-red-600 dark:text-red-400" : "text-gray-500 dark:text-neutral-400"}`}>
+            {subtitle}
+          </p>
+        </span>
+      </span>
+      <ChevronRight size={18} className="text-gray-400 dark:text-neutral-500" />
+    </Link>
+  );
+}
+

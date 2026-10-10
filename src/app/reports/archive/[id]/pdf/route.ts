@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { hasFullAccess } from "@/lib/access";
+import { hasFullAccess, belongsToHousehold } from "@/lib/access";
 import { db } from "@/lib/db";
 
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -10,7 +10,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
 
   const { id } = await params;
   const report = await db.report.findUnique({ where: { id }, select: { householdId: true, pdfBytes: true, periodKey: true } });
-  if (!report || report.householdId !== session.user.householdId || !report.pdfBytes) {
+  if (!belongsToHousehold(report, session.user.householdId) || !report.pdfBytes) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 

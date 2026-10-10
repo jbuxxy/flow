@@ -4,7 +4,7 @@ import { CheckCircle2, XCircle, TrendingUp, TrendingDown } from "lucide-react";
 import Link from "next/link";
 import { useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { formatCents } from "@/lib/money";
+import { formatCents, formatBasisPoints } from "@/lib/money";
 import { useCountUp } from "@/lib/use-count-up";
 import { DonutChart } from "@/components/donut-chart";
 import { LINE_SERIES_COLORS } from "@/lib/chart-colors";
@@ -493,13 +493,13 @@ export function ReportView({
                   {findings!.bigSurplusOpportunity.debtOption && (
                     <span>
                       {findings!.bigSurplusOpportunity.debtOption.name}:{" "}
-                      {(findings!.bigSurplusOpportunity.debtOption.aprBasisPoints / 100).toFixed(2)}% APR
+                      {formatBasisPoints(findings!.bigSurplusOpportunity.debtOption.aprBasisPoints)} APR
                     </span>
                   )}
                   {findings!.bigSurplusOpportunity.savingsOption && (
                     <span>
                       {findings!.bigSurplusOpportunity.savingsOption.name}:{" "}
-                      {(findings!.bigSurplusOpportunity.savingsOption.apyBasisPoints / 100).toFixed(2)}% APY
+                      {formatBasisPoints(findings!.bigSurplusOpportunity.savingsOption.apyBasisPoints)} APY
                     </span>
                   )}
                 </div>

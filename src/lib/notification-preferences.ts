@@ -1,13 +1,5 @@
 import type { NotificationType } from "@prisma/client";
-
-// Inlined rather than imported from src/lib/access.ts — that module also
-// exports requireOwner, which pulls in auth.ts -> password.ts -> the
-// Node-only @node-rs/argon2 native module. This file is imported by a
-// client component (member-notification-prefs.tsx) for its defaults table,
-// so it can't drag that whole chain into the browser bundle.
-function hasFullAccess(user: { role: string; dashboardScope: string }): boolean {
-  return user.role === "OWNER" || user.dashboardScope === "FULL";
-}
+import { hasFullAccess } from "@/lib/access-rules";
 
 // Groups the /settings/notifications grid into labeled sections, in display
 // order — CATEGORY_ORDER below is this same order, kept as a separate const

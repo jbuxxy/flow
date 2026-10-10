@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { TrendingUp, TrendingDown, Minus, Gauge, Receipt, PiggyBank, Landmark, Star, BanknoteArrowUp, CircleSlash } from "lucide-react";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
@@ -118,6 +119,36 @@ export default async function Home() {
   // is gated to isOwner below instead of canSeeFullFinancials, same as the
   // server actions themselves (requireOwner, src/lib/access.ts).
   const isOwner = session.user.role === "OWNER";
+  // The dashboard's attention signals (see the destructure further down)
+  // don't depend on anything the main batch below loads — started now so
+  // the two batches load concurrently instead of one after the other.
+  const attentionSignals = Promise.all([
+    isOwner ? detectUnlinkedBnpl(session.user.householdId) : [],
+    isOwner ? detectDebtPaymentSuggestions(session.user.householdId) : [],
+    detectMerchantBillSuggestions(session.user.householdId),
+    canSeeFullFinancials ? detectRecurringIncome(session.user.householdId) : [],
+    isOwner ? getActiveUntrackedLiabilityAccounts(session.user.householdId) : [],
+    // Minus the pending-minimum-change reason — the DebtAmountReviewCard
+    // below already asks that exact question with yes/no buttons.
+    isOwner
+      ? getActiveDebtsNeedingSetup(session.user.householdId).then((debts) =>
+          debts.filter((d) => d.reason !== PENDING_REVIEW_SETUP_REASON),
+        )
+      : [],
+    isOwner ? getActiveInsufficientMinimumDebts(session.user.householdId) : [],
+    canSeeFullFinancials ? needsBankConnectionAttention(session.user.householdId) : false,
+    getActiveBillsNeedingDueDate(session.user.householdId),
+    isOwner ? needsAiAttention(session.user.householdId) : false,
+    getActiveUncategorizedCount(session.user.householdId),
+    canSeeNetWorth ? getActiveStaleAssets(session.user.householdId) : [],
+    canSeeFullFinancials ? getActiveUnlabeledP2PTransfers(session.user.householdId, "DEBIT") : [],
+    canSeeFullFinancials ? getActiveUnlabeledP2PTransfers(session.user.householdId, "CREDIT") : [],
+    canSeeFullFinancials ? getReceiptsAwaitingMatchCount(session.user.householdId) : 0,
+    canSeeFullFinancials ? getUnmatchedRefunds(session.user.householdId) : [],
+  ]);
+  // Awaited below; this only keeps a failure while the main batch is still
+  // loading from being reported as an unhandled rejection.
+  attentionSignals.catch(() => {});
   const [
     buckets,
     netWorth,
@@ -193,8 +224,11 @@ export default async function Home() {
   // Snapshots used to be written only by /networth, so a week of not opening
   // that page left days missing and flattened these lines. Same getNetWorth
   // figure and same per-day upsert, so recording it here too just fills gaps.
-  if (netWorth) await recordNetWorthSnapshot(session.user.householdId, netWorth.netWorthCents);
-  const netWorthDaily = netWorth ? await getNetWorthDailyHistory(session.user.householdId, 40) : [];
+  const netWorthDaily = netWorth
+    ? await recordNetWorthSnapshot(session.user.householdId, netWorth.netWorthCents).then(() =>
+        getNetWorthDailyHistory(session.user.householdId, 40),
+      )
+    : [];
   const netWorthTodayKey = currentDateKey();
   const netWorthWeek = netWorth
     ? netWorthWindow(netWorthDaily, currentDateKey(daysAgo(7)), netWorthTodayKey, netWorth.netWorthCents)
@@ -213,7 +247,8 @@ export default async function Home() {
   // this app has no cron/worker process) so they fire the next time a
   // full-access member loads the dashboard after 7+ days have passed. See
   // checkAndSendGoalReminders, src/lib/savings.ts.
-  if (canSeeFullFinancials) await checkAndSendGoalReminders(session.user.householdId);
+  // after(): the pushes go out once the page has been sent, not ahead of it.
+  if (canSeeFullFinancials) after(() => checkAndSendGoalReminders(session.user.householdId));
 
   // The dashboard's "go do something" triage list (see AttentionLinkCard
   // below) — every signal already exists as a detector/boolean used
@@ -241,30 +276,7 @@ export default async function Home() {
     unlabeledP2PCredits,
     receiptsAwaitingMatch,
     unmatchedRefunds,
-  ] = await Promise.all([
-    isOwner ? detectUnlinkedBnpl(session.user.householdId) : [],
-    isOwner ? detectDebtPaymentSuggestions(session.user.householdId) : [],
-    detectMerchantBillSuggestions(session.user.householdId),
-    canSeeFullFinancials ? detectRecurringIncome(session.user.householdId) : [],
-    isOwner ? getActiveUntrackedLiabilityAccounts(session.user.householdId) : [],
-    // Minus the pending-minimum-change reason — the DebtAmountReviewCard
-    // below already asks that exact question with yes/no buttons.
-    isOwner
-      ? getActiveDebtsNeedingSetup(session.user.householdId).then((debts) =>
-          debts.filter((d) => d.reason !== PENDING_REVIEW_SETUP_REASON),
-        )
-      : [],
-    isOwner ? getActiveInsufficientMinimumDebts(session.user.householdId) : [],
-    canSeeFullFinancials ? needsBankConnectionAttention(session.user.householdId) : false,
-    getActiveBillsNeedingDueDate(session.user.householdId),
-    isOwner ? needsAiAttention(session.user.householdId) : false,
-    getActiveUncategorizedCount(session.user.householdId),
-    canSeeNetWorth ? getActiveStaleAssets(session.user.householdId) : [],
-    canSeeFullFinancials ? getActiveUnlabeledP2PTransfers(session.user.householdId, "DEBIT") : [],
-    canSeeFullFinancials ? getActiveUnlabeledP2PTransfers(session.user.householdId, "CREDIT") : [],
-    canSeeFullFinancials ? getReceiptsAwaitingMatchCount(session.user.householdId) : 0,
-    canSeeFullFinancials ? getUnmatchedRefunds(session.user.householdId) : [],
-  ]);
+  ] = await attentionSignals;
   const unlabeledP2PCount = unlabeledP2PDebits.length + unlabeledP2PCredits.length;
   const hasAnyAttention =
     bnplSuggestions.length > 0 ||
@@ -310,36 +322,35 @@ export default async function Home() {
   const lastWeekRangeLabel = weekRangeLabel(daysAgo(7));
   // Matches UpcomingBillsCard's own footer total (same helper).
   const extraToDebtThisWeekCents = dueThisWeek.reduce((sum, b) => sum + principalTowardDebtCents(b), 0);
-  const billsSummary = canSeeFullFinancials
-    ? await getUpcomingBillsSummary(session.user.householdId, dueThisWeek)
-    : null;
   // A skipped bill counts as settled here too — nothing's actually owed
   // either way, so a week with one shouldn't be permanently stuck unable to
   // dismiss (household request, 2026-09-14).
   const allPaidThisWeek = dueThisWeek.length > 0 && dueThisWeek.every((b) => b.paid || b.skipped);
-  const billsThisWeekDismissed =
-    canSeeFullFinancials && allPaidThisWeek && (await isBillsThisWeekDismissed(session.user.householdId));
-  const paidOffDismissed =
+  // Independent reads — one round trip instead of five in a row.
+  const [
+    billsSummary,
+    billsThisWeekDismissed,
+    paidOffDismissed,
+    receiptMatchDismissed,
+    refundMatchDismissed,
+    paydayDismissed,
+  ] = await Promise.all([
+    canSeeFullFinancials ? getUpcomingBillsSummary(session.user.householdId, dueThisWeek) : null,
+    canSeeFullFinancials && allPaidThisWeek && isBillsThisWeekDismissed(session.user.householdId),
     canSeeFullFinancials &&
-    paidOffDebts.length > 0 &&
-    (await isPaidOffThisWeekDismissed(
-      session.user.householdId,
-      paidOffDebts.map((d) => d.id),
-    ));
-  const receiptMatchDismissed =
-    canSeeFullFinancials &&
-    receiptsAwaitingMatch > 0 &&
-    (await isReceiptMatchReviewDismissed(session.user.householdId));
-  const refundMatchDismissed =
-    canSeeFullFinancials &&
-    unmatchedRefunds.length > 0 &&
-    (await isRefundMatchReviewDismissed(session.user.householdId));
-  const paydayDismissed =
+      paidOffDebts.length > 0 &&
+      isPaidOffThisWeekDismissed(
+        session.user.householdId,
+        paidOffDebts.map((d) => d.id),
+      ),
+    canSeeFullFinancials && receiptsAwaitingMatch > 0 && isReceiptMatchReviewDismissed(session.user.householdId),
+    canSeeFullFinancials && unmatchedRefunds.length > 0 && isRefundMatchReviewDismissed(session.user.householdId),
     recentPaydays.length > 0 &&
-    (await isPaydayDismissed(
-      session.user.householdId,
-      recentPaydays.map((p) => p.key),
-    ));
+      isPaydayDismissed(
+        session.user.householdId,
+        recentPaydays.map((p) => p.key),
+      ),
+  ]);
 
   // The "at a glance" row up top — each tile only ever pushed for data the
   // viewer is actually allowed to see, so a limited (non-full-access,

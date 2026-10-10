@@ -4,16 +4,9 @@ import { useState, useTransition } from "react";
 import { updateIncomeCalcMethod, setIncludeP2PInIncomeCalc, setAutoApplyAdHocIncomeToBuckets } from "../actions";
 import { SelectField } from "@/components/select-field";
 import { Switch } from "@/components/switch";
-import { showToast } from "@/lib/toast";
+import { withToast } from "@/lib/toast";
 
-async function saved(run: () => Promise<unknown>) {
-  try {
-    await run();
-    showToast("Settings Saved");
-  } catch {
-    showToast("Couldn’t Save", "error");
-  }
-}
+const saved = (run: () => Promise<unknown>) => withToast(run, "Settings Saved");
 
 type IncomeCalcMethod = "MONTHLY_AVERAGE" | "BIWEEKLY_CONSERVATIVE";
 

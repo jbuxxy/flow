@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { belongsToHousehold } from "@/lib/access-rules";
 export { pickMerchantRule, type RuleForPick } from "@/lib/merchant-rule-pick";
 
 // An amount-routing rule points a merchant at a bucket only for charges on
@@ -118,7 +119,7 @@ export async function deleteBoundedMerchantRule(
 ): Promise<{ merchant: string; bucketId: string | null } | null> {
   const rule = await db.merchantRule.findUnique({ where: { id } });
   // Guard: household-scoped, and never let this delete a base rule.
-  if (!rule || rule.householdId !== householdId || rule.amountMinCents == null) return null;
+  if (!belongsToHousehold(rule, householdId) || rule.amountMinCents == null) return null;
   await db.merchantRule.delete({ where: { id } });
   return { merchant: rule.merchant, bucketId: rule.bucketId };
 }

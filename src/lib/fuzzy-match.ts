@@ -9,15 +9,29 @@ function normalize(s: string): string {
     .trim();
 }
 
+// A name normalized once, for callers comparing one name against many (the
+// bill detector's all-pairs merchant merge) — nameSimilarity normalizes both
+// sides on every call.
+export type PreparedName = { norm: string; words: Set<string> };
+
+export function prepareName(s: string): PreparedName {
+  const norm = normalize(s);
+  return { norm, words: new Set(norm.split(" ").filter((w) => w.length > 2)) };
+}
+
 export function nameSimilarity(a: string, b: string): number {
-  const na = normalize(a);
-  const nb = normalize(b);
+  return preparedNameSimilarity(prepareName(a), prepareName(b));
+}
+
+export function preparedNameSimilarity(a: PreparedName, b: PreparedName): number {
+  const na = a.norm;
+  const nb = b.norm;
   if (!na || !nb) return 0;
   if (na === nb) return 1;
   if (na.includes(nb) || nb.includes(na)) return 0.8;
 
-  const wordsA = new Set(na.split(" ").filter((w) => w.length > 2));
-  const wordsB = new Set(nb.split(" ").filter((w) => w.length > 2));
+  const wordsA = a.words;
+  const wordsB = b.words;
   if (wordsA.size === 0 || wordsB.size === 0) return 0;
 
   // One name's whole word set contained in the other's, even out of order or

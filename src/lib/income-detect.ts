@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import type { PaycheckCadence } from "@prisma/client";
 import { addPaycheckCadence, inferSemiMonthlyDays } from "@/lib/income-calc";
+import { daysAgo } from "@/lib/period";
 
 export type IncomeSuggestion = {
   key: string;
@@ -46,7 +47,7 @@ export function classifyCadence(gaps: number[]): { cadence: PaycheckCadence; per
 // already flagged as income (see categorizeNewTransactions in
 // simplefin-sync.ts) that aren't yet tracked as an Income source.
 export async function detectRecurringIncome(householdId: string): Promise<IncomeSuggestion[]> {
-  const since = new Date(Date.now() - 100 * 24 * 60 * 60 * 1000);
+  const since = daysAgo(100);
   const txns = await db.transaction.findMany({
     where: { householdId, isIncome: true, oneOff: false, occurredOn: { gte: since } },
     orderBy: { occurredOn: "asc" },

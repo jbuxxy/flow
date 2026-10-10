@@ -6,18 +6,11 @@ import Link from "next/link";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Binoculars, Bookmark, CircleSlash, GripVertical, Link2, Link2Off, PartyPopper, Receipt, Repeat, Undo2, X } from "lucide-react";
-import { formatCents } from "@/lib/money";
-import { showToast } from "@/lib/toast";
+import { formatCents, formatBasisPoints } from "@/lib/money";
+import { withToast } from "@/lib/toast";
 import { formatDate, ordinal, dueDateProximity } from "@/lib/date";
 
-async function toasted(run: () => Promise<unknown>, message: string) {
-  try {
-    await run();
-    showToast(message);
-  } catch {
-    showToast("Something Went Wrong", "error");
-  }
-}
+const toasted = (run: () => Promise<unknown>, message: string) => withToast(run, message, "Something Went Wrong");
 import { pickPayoffPaymentTime, type PoolBreakdown } from "@/lib/debt-payoff";
 import { EntryLine } from "@/components/entry-line";
 import { InstallmentProgressBar } from "@/components/installment-progress-bar";
@@ -808,7 +801,7 @@ export function DebtRow({
       ) : (
         <>
           <p className="mt-0.5 text-xs text-gray-500 dark:text-neutral-400">
-            {(debt.aprBasisPoints / 100).toFixed(2)}% APR ·{" "}
+            {formatBasisPoints(debt.aprBasisPoints)} APR ·{" "}
             {!isInstallment && debt.ignoreMinimumPayment
               ? "No Minimum"
               : isInstallment

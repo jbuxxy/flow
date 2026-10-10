@@ -20,7 +20,7 @@ import { SelectField } from "@/components/select-field";
 import { MoneyInput } from "@/components/money-input";
 import { updateIncome, type IncomeFormState } from "@/app/income/actions";
 import { ReimbursementLinker, type ReimbursementCandidate } from "@/components/reimbursement-linker";
-import { P2P_DISCOVERY_KEYWORDS } from "@/lib/p2p-keywords";
+import { P2P_DISCOVERY_KEYWORDS, isP2PMerchant } from "@/lib/p2p-keywords";
 import { CARD_PAYMENT_MERCHANT_PATTERN, debtNameMatchesMerchant } from "@/lib/debt-payment-pattern";
 import { looksLikeBnplMerchant } from "@/lib/bnpl-keywords";
 import { CategoryPicker, type CategoryOption } from "@/app/bills/category-picker";
@@ -447,7 +447,7 @@ export function TransactionRow({
   // for it.
   const isDebit = transaction.amountCents > 0;
   const bankDescription = bankDescriptionFor(transaction);
-  const isP2P = P2P_DISCOVERY_KEYWORDS.some((k) => transaction.merchant.toLowerCase().includes(k));
+  const isP2P = isP2PMerchant(transaction.merchant);
   // A credit sync already recognized as refund-shaped (real spend history at
   // this exact merchant — see tryAutoLinkRefund/hasSpendHistory,
   // simplefin-sync.ts) and left isIncome:false specifically so it lands

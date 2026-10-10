@@ -1,8 +1,6 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { Archive } from "lucide-react";
-import { auth } from "@/lib/auth";
-import { hasFullAccess } from "@/lib/access";
+import { requireFullAccess } from "@/lib/access";
 import { AppShell } from "@/components/app-shell";
 import { getMonthReport, monthsAgoPeriodKey } from "@/lib/monthly-report";
 import { getOrCreateCurrentReport } from "@/lib/reports";
@@ -10,9 +8,7 @@ import { getPendingBudgetPlan } from "@/lib/budget-plan";
 import { ReportView } from "./report-view";
 
 export default async function ReportsPage() {
-  const session = await auth();
-  if (!session?.user) redirect("/login");
-  if (!hasFullAccess(session.user)) redirect("/");
+  const session = await requireFullAccess();
 
   const current = await getMonthReport(session.user.householdId, monthsAgoPeriodKey(1));
 

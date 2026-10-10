@@ -1,5 +1,5 @@
 import type { BillCadence, PaycheckCadence } from "@prisma/client";
-import { addPaycheckCadence, subtractPaycheckCadence } from "@/lib/income-calc";
+import { addPaycheckCadence, paychecksPerYear, subtractPaycheckCadence } from "@/lib/income-calc";
 import { stepCadence } from "@/lib/cadence-step";
 import { todayAsUTCDate } from "@/lib/date";
 
@@ -718,7 +718,7 @@ export function simulatePayoff(
   const paycheckDates = opts.income
     ? projectPaycheckDates(
         opts.income,
-        Math.ceil((MAX_MONTHS * paychecksPerYearOf(opts.income.cadence)) / 12) + 4,
+        Math.ceil((MAX_MONTHS * paychecksPerYear(opts.income.cadence)) / 12) + 4,
         mostRecentPaydayOnOrBefore(opts.income, startDate),
       )
     : null;
@@ -913,12 +913,6 @@ export function simulatePayoff(
     neverPaysOff,
     timeline,
   };
-}
-
-function paychecksPerYearOf(cadence: PaycheckCadence): number {
-  if (cadence === "MONTHLY") return 12;
-  if (cadence === "SEMI_MONTHLY") return 24;
-  return 26; // BIWEEKLY
 }
 
 export type CyclePaymentLine = {
@@ -1162,7 +1156,7 @@ export function projectCyclePlan(
   const paycheckAnchor = mostRecentPaydayOnOrBefore(opts.income, startDate);
   const paycheckDates = projectPaycheckDates(
     opts.income,
-    Math.ceil(((opts.monthsCount + 2) * paychecksPerYearOf(opts.income.cadence)) / 12) + 3,
+    Math.ceil(((opts.monthsCount + 2) * paychecksPerYear(opts.income.cadence)) / 12) + 3,
     paycheckAnchor,
   );
   const occurrencesNeeded = opts.monthsCount + 2;

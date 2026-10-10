@@ -4,7 +4,7 @@ import { currentPeriodKey, utcPeriodBounds, monthElapsedFraction, daysAgo } from
 import { occurrencesInPeriod } from "@/lib/cycle-slots";
 import { sendPushToBucketForType } from "@/lib/push";
 import { formatCents } from "@/lib/money";
-import { P2P_DISCOVERY_KEYWORDS } from "@/lib/p2p-keywords";
+import { p2pMerchantMatch } from "@/lib/p2p-keywords";
 import { currentPeriodBillWhere } from "@/lib/recurring-bills";
 import { isPayoffPlanEnabled } from "@/lib/debt-payments";
 import { SPEND_TX_SELECT, netSpendCents, ACCOUNTED_FOR_SELECT, accountedForCents } from "@/lib/spend";
@@ -54,7 +54,7 @@ export function uncategorizedTransactionWhere(householdId: string): Prisma.Trans
     // on these same three pages. Without this exclusion every P2P debit
     // double-counted: once here, once in the P2P card, for the same
     // transaction (real report, 2026-08-23).
-    NOT: { OR: P2P_DISCOVERY_KEYWORDS.map((k) => ({ merchant: { contains: k, mode: "insensitive" as const } })) },
+    NOT: p2pMerchantMatch(),
     occurredOn: { gte: daysAgo(UNCATEGORIZED_LOOKBACK_DAYS) },
     // A still-pending transaction's merchant/date are provisional (see
     // categorizeUncategorizedTransactions' own pending guard, simplefin-sync.ts)
@@ -71,7 +71,7 @@ export function uncategorizedTransactionWhere(householdId: string): Prisma.Trans
   };
 }
 
-export async function countUncategorizedTransactions(householdId: string): Promise<number> {
+async function countUncategorizedTransactions(householdId: string): Promise<number> {
   return db.transaction.count({ where: uncategorizedTransactionWhere(householdId) });
 }
 
@@ -422,15 +422,25 @@ export async function getBucketsWithProgress(
   // topUpCentsByBucketId has no dependency on the other three queries below
   // — folded into the same Promise.all instead of paying for it as its own
   // serial round-trip ahead of them (2026-09-14 code review).
-  const [topUpCentsByBucketId, buckets, unconfirmedBills, spentByBucketId] = await Promise.all([
+  // Retired one-time buckets (Bucket.retiredAt) are history, not a live
+  // bucket — off the dashboard, /buckets, and everything built on this.
+  const liveBucketWhere = {
+    householdId,
+    OR: [{ retiredAt: null }, ...(opts.includeBucketId ? [{ id: opts.includeBucketId }] : [])],
+  };
+  // A one-time-purchase bucket (excludedFromAllocation) tracks progress
+  // toward a target, not spend within a month — a $6k down payment paid as
+  // three $2k charges across three months should read 1/3 → 2/3 → done, not
+  // snap back to $0 each rollover. So its "spent" is every charge ever
+  // assigned to it, not just this period's (2026-09-10 household call). Plain
+  // transactions only — a one-time bucket never holds a tracked bill or debt
+  // payment, so spendByBucketInRange's debt-payment arm has nothing to add.
+  // Loaded in the same batch (same bucket filter plus excludedFromAllocation)
+  // rather than after it.
+  const [topUpCentsByBucketId, buckets, unconfirmedBills, spentByBucketId, oneTimeRows] = await Promise.all([
     getBucketTopUpCentsByBucketId(householdId, period),
     db.bucket.findMany({
-      // Retired one-time buckets (Bucket.retiredAt) are history, not a live
-      // bucket — off the dashboard, /buckets, and everything built on this.
-      where: {
-        householdId,
-        OR: [{ retiredAt: null }, ...(opts.includeBucketId ? [{ id: opts.includeBucketId }] : [])],
-      },
+      where: liveBucketWhere,
       orderBy: { sortOrder: "asc" },
       include: {
         // Only feeds the schedule-aware pace fraction (resolvePaceFraction)
@@ -455,21 +465,8 @@ export async function getBucketsWithProgress(
       select: { bucketId: true },
     }),
     spendByBucketInRange(householdId, utcStart, utcEnd),
-  ]);
-  const bucketIdsNeedingAttention = new Set(unconfirmedBills.map((b) => b.bucketId).filter((id) => id !== null));
-
-  // A one-time-purchase bucket (excludedFromAllocation) tracks progress
-  // toward a target, not spend within a month — a $6k down payment paid as
-  // three $2k charges across three months should read 1/3 → 2/3 → done, not
-  // snap back to $0 each rollover. So its "spent" is every charge ever
-  // assigned to it, not just this period's (2026-09-10 household call). Plain
-  // transactions only — a one-time bucket never holds a tracked bill or debt
-  // payment, so spendByBucketInRange's debt-payment arm has nothing to add.
-  const oneTimeBucketIds = buckets.filter((b) => b.excludedFromAllocation).map((b) => b.id);
-  const lifetimeSpentByBucketId = new Map<string, number>();
-  if (oneTimeBucketIds.length > 0) {
-    const rows = await db.bucket.findMany({
-      where: { id: { in: oneTimeBucketIds } },
+    db.bucket.findMany({
+      where: { ...liveBucketWhere, excludedFromAllocation: true },
       // Genuinely lifetime, unlike every other bucket's per-period query
       // above — no date filter is correct here (see the comment above). But
       // "no filter at all" also means nothing bounds it as a long-lived
@@ -477,9 +474,11 @@ export async function getBucketsWithProgress(
       // just a safety net against unbounded growth, not a real limit any
       // realistic one-time purchase should ever hit.
       select: { id: true, transactions: { select: SPEND_TX_SELECT, take: 2000 } },
-    });
-    for (const r of rows) lifetimeSpentByBucketId.set(r.id, netSpendCents(r.transactions));
-  }
+    }),
+  ]);
+  const bucketIdsNeedingAttention = new Set(unconfirmedBills.map((b) => b.bucketId).filter((id) => id !== null));
+
+  const lifetimeSpentByBucketId = new Map(oneTimeRows.map((r) => [r.id, netSpendCents(r.transactions)]));
 
   return buckets.map((b) => {
     const spentCents = b.excludedFromAllocation

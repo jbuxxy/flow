@@ -14,7 +14,7 @@
 // `chipActive` — selected-chip / entry-badge background + text
 export type FilterColor = { dot: string; bar: string; chipActive: string };
 
-export const FILTER_COLORS: FilterColor[] = [
+const FILTER_COLORS: FilterColor[] = [
   { dot: "bg-blue-500", bar: "border-l-blue-500!", chipActive: "bg-blue-100 text-blue-800 dark:bg-blue-950/50 dark:text-blue-300" },
   { dot: "bg-orange-500", bar: "border-l-orange-500!", chipActive: "bg-orange-100 text-orange-800 dark:bg-orange-950/50 dark:text-orange-300" },
   { dot: "bg-emerald-500", bar: "border-l-emerald-500!", chipActive: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300" },

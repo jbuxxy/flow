@@ -1,6 +1,6 @@
 import { CheckCircle2, Circle } from "lucide-react";
 import { formatCents } from "@/lib/money";
-import { formatISODate } from "@/lib/date";
+import { formatShortDate } from "@/lib/date";
 
 export type ExpectedIncomeEntry = {
   id: string;
@@ -10,10 +10,6 @@ export type ExpectedIncomeEntry = {
   receivedDate: string | null; // ISO date
   expectedDate: string; // ISO date
 };
-
-function formatShortDate(iso: string): string {
-  return formatISODate(iso, { month: "short", day: "numeric" });
-}
 
 // The Income counterpart to bills' ExpectedThisMonth — same shape, "still
 // expected" flipped to mean money coming in rather than going out.

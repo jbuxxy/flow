@@ -7,33 +7,13 @@ import type { PayoffResult } from "@/lib/debt-payoff";
 import { LINE_SERIES_COLORS, TOTAL_COLOR } from "@/lib/chart-colors";
 import { SwipeCarousel } from "@/components/swipe-carousel";
 import { ChartRiseReveal } from "@/components/chart-rise-reveal";
+import { formatCompact, niceTicks } from "@/lib/chart-axis";
 
 const WIDTH = 640;
 const HEIGHT = 220;
 const MARGIN = { top: 16, right: 12, bottom: 28, left: 52 };
 const PLOT_W = WIDTH - MARGIN.left - MARGIN.right;
 const PLOT_H = HEIGHT - MARGIN.top - MARGIN.bottom;
-
-function formatCompact(cents: number): string {
-  const dollars = cents / 100;
-  const abs = Math.abs(dollars);
-  if (abs >= 1_000_000) return `$${(abs / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1)}M`;
-  if (abs >= 1_000) return `$${Math.round(abs / 1_000)}K`;
-  return `$${Math.round(abs)}`;
-}
-
-function niceTicks(min: number, max: number, count = 4): number[] {
-  if (min === max) return [min];
-  const rawStep = (max - min) / count;
-  const magnitude = 10 ** Math.floor(Math.log10(rawStep));
-  const residual = rawStep / magnitude;
-  const step = (residual >= 5 ? 10 : residual >= 2 ? 5 : residual >= 1 ? 2 : 1) * magnitude;
-  const niceMin = Math.floor(min / step) * step;
-  const niceMax = Math.ceil(max / step) * step;
-  const ticks: number[] = [];
-  for (let v = niceMin; v <= niceMax + step / 2; v += step) ticks.push(Math.round(v));
-  return ticks;
-}
 
 const TOTAL_ID = "__total";
 

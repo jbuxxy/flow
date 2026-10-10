@@ -2,22 +2,15 @@
 
 import { useActionState, useRef, useState, useTransition } from "react";
 import { CreditCard, EyeOff, Pencil, PartyPopper, Receipt, Target, X } from "lucide-react";
-import { formatCents, parseDollarsToCents } from "@/lib/money";
+import { formatCents, parseDollarsToCents, formatBasisPoints } from "@/lib/money";
 import { formatDate, dayOfMonthUTC, ordinal, nextOccurrenceOfDay, currentMonthOccurrenceOfDay } from "@/lib/date";
 import { DayOfMonthPicker } from "@/components/day-of-month-picker";
 import { DebtLabelEditor } from "@/components/debt-label-editor";
 import { InlineSaveButton } from "@/components/inline-save-button";
 import { useActionToast } from "@/lib/use-action-toast";
-import { showToast } from "@/lib/toast";
+import { withToast } from "@/lib/toast";
 
-async function toasted(run: () => Promise<unknown>, message = "Saved") {
-  try {
-    await run();
-    showToast(message);
-  } catch {
-    showToast("Couldn’t Save", "error");
-  }
-}
+const toasted = withToast;
 import { InstallmentProgressBar } from "@/components/installment-progress-bar";
 import { ExpandableSummary } from "./expandable-summary";
 import { PlanReceiptSection, type PlanReceiptItem } from "@/components/plan-receipt-section";
@@ -709,7 +702,7 @@ export function ManualDebtEditor({
             </span>
           ) : (
             <span className="block text-xs text-gray-500 dark:text-neutral-400">
-              {(debt.aprBasisPoints / 100).toFixed(2)}% APR ·{" "}
+              {formatBasisPoints(debt.aprBasisPoints)} APR ·{" "}
               {!isInstallment && debt.ignoreMinimumPayment
                 ? "No Minimum"
                 : isInstallment

@@ -1,9 +1,11 @@
 import { db } from "@/lib/db";
 import { allBnplKeywords } from "@/lib/bnpl-detect";
-import { nextBillDueDate, amountToleranceCents } from "@/lib/recurring-bills";
-import { nameSimilarity } from "@/lib/fuzzy-match";
+import { nextBillDueDate } from "@/lib/recurring-bills";
+import { clusterByAmount } from "@/lib/amount-tolerance";
+import { prepareName, preparedNameSimilarity } from "@/lib/fuzzy-match";
 import { learnedKeywordsFor, checkForNewKeywords } from "@/lib/keyword-learning";
 import type { BillCadence } from "@prisma/client";
+import { DAY_MS } from "@/lib/date";
 
 export type BillSuggestion = {
   key: string;
@@ -28,7 +30,6 @@ export type BillSuggestion = {
   isCreditCard: boolean;
 };
 
-export const DAY_MS = 86_400_000;
 
 // Same shape as classifyCadence in income-detect.ts, but bills span a wider
 // range of real-world cadences (a weekly cleaning service, an annual domain
@@ -167,7 +168,7 @@ const SUBSCRIPTION_KIND = "SUBSCRIPTION";
 // confirmed (LearnedKeyword, kind:"SUBSCRIPTION") — same mechanism as
 // allBnplKeywords (src/lib/bnpl-detect.ts), see keyword-learning.ts for the
 // shared implementation both wrap.
-export async function allSubscriptionKeywords(householdId: string): Promise<string[]> {
+async function allSubscriptionKeywords(householdId: string): Promise<string[]> {
   return learnedKeywordsFor(householdId, SUBSCRIPTION_KIND, SUBSCRIPTION_KEYWORDS);
 }
 
@@ -266,12 +267,13 @@ export async function detectMerchantBillSuggestions(householdId: string): Promis
   // synced payment back to its bill despite statement-text drift.
   const merchantClusters: typeof txns[] = [];
   const consumed = new Set<string>();
+  const prepared = new Map([...exactGroups.keys()].map((k) => [k, prepareName(k)]));
   for (const key of exactGroups.keys()) {
     if (consumed.has(key)) continue;
     let combined = exactGroups.get(key)!;
     for (const other of exactGroups.keys()) {
       if (other === key || consumed.has(other)) continue;
-      if (nameSimilarity(key, other) >= NAME_SIMILARITY_THRESHOLD) {
+      if (preparedNameSimilarity(prepared.get(key)!, prepared.get(other)!) >= NAME_SIMILARITY_THRESHOLD) {
         combined = combined.concat(exactGroups.get(other)!);
         consumed.add(other);
       }
@@ -286,23 +288,6 @@ export async function detectMerchantBillSuggestions(householdId: string): Promis
   // Walmart+ fee is just noise inside hundreds of differently-priced
   // Walmart grocery runs, and the combined blob's transaction gaps — often
   // multiple times a week — never resemble any real bill cadence either).
-  // Greedy 1D clustering sorted by amount, same tolerance markBillPayments
-  // uses to match a bill to a slightly-off real charge.
-  function clusterByAmount(group: typeof txns): (typeof txns)[] {
-    const sorted = [...group].sort((a, b) => a.amountCents - b.amountCents);
-    const clusters: (typeof txns)[] = [];
-    for (const t of sorted) {
-      const current = clusters[clusters.length - 1];
-      const avg = current ? current.reduce((s, x) => s + x.amountCents, 0) / current.length : 0;
-      if (current && Math.abs(t.amountCents - avg) <= amountToleranceCents(avg)) {
-        current.push(t);
-      } else {
-        clusters.push([t]);
-      }
-    }
-    return clusters;
-  }
-
   const suggestions: BillSuggestion[] = [];
   for (const merchantCluster of merchantClusters) {
     for (const group of clusterByAmount(merchantCluster)) {

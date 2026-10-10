@@ -8,6 +8,7 @@ import { formatDate } from "@/lib/date";
 import { ChartRiseReveal } from "./chart-rise-reveal";
 import { ChartHoverTooltip, useChartHover } from "./chart-hover";
 import { useStoredBoolean } from "@/lib/use-stored-boolean";
+import { formatCompact } from "@/lib/chart-axis";
 
 // Fallback viewBox width used only for the very first paint, before the
 // ResizeObserver below (mirrors NetWorthMiniChart's own width/height state)
@@ -29,18 +30,8 @@ const PLOT_H = HEIGHT - MARGIN.top - MARGIN.bottom;
 // key, not per-period, since it's a display preference, not data.
 const SPLIT_VIEW_KEY = "flow:dashboard:spend-trend-split-view";
 
-// Compact axis tick text ($1K / $2K) — same idea as NetWorthTrendChart's own
-// formatCompact, just without the $M tier: a household's monthly spend never
-// gets there, and unlike that chart's y-axis (net worth, which can go
-// negative), this one's min is pinned at 0.
-function formatCompact(cents: number): string {
-  const dollars = cents / 100;
-  if (dollars >= 1_000) return `$${Math.round(dollars / 1_000)}K`;
-  return `$${Math.round(dollars)}`;
-}
-
 // ~3 evenly-spaced, round-number ticks (1/2/5 x a power of 10, same idea as
-// NetWorthTrendChart's own niceTicks) from 0 up to — but never past — a
+// chart-axis.ts's niceTicks) from 0 up to — but never past — a
 // given ceiling. Unlike that chart's version, this doesn't get to round the
 // *max* itself up to the next nice number: the axis top is fixed by the
 // caller (household request, 2026-09-06 — pinned a set amount above last

@@ -57,14 +57,6 @@ export async function sendPushToUser(userId: string, payload: PushPayload) {
   );
 }
 
-export async function sendPushToHousehold(householdId: string, payload: PushPayload) {
-  const users = await db.user.findMany({
-    where: { householdId },
-    select: { id: true },
-  });
-  await Promise.all(users.map((u) => sendPushToUser(u.id, payload)));
-}
-
 type PrefCheckedUser = { id: string; role: string; dashboardScope: string };
 
 // Filters `users` down to whoever's own NotificationPreference for `type` is
@@ -87,7 +79,7 @@ async function filterByNotificationPreference<T extends PrefCheckedUser>(
   return users.filter((u) => prefByUser.get(u.id) ?? defaultNotificationEnabled(u, type));
 }
 
-// Same as sendPushToHousehold, but skips anyone who's opted out of this
+// Every household member, minus anyone who's opted out of this
 // NotificationType — see defaultNotificationEnabled for what "no explicit
 // choice yet" resolves to per recipient.
 export async function sendPushToHouseholdForType(

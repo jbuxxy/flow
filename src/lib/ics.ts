@@ -58,7 +58,8 @@ export function foldLine(line: string): string {
   return lines.join("\r\n ");
 }
 
-function ymd(date: Date): string {
+// "20261023" — the UTC calendar day in iCalendar's DATE form.
+export function ymd(date: Date): string {
   const y = date.getUTCFullYear();
   const m = String(date.getUTCMonth() + 1).padStart(2, "0");
   const d = String(date.getUTCDate()).padStart(2, "0");

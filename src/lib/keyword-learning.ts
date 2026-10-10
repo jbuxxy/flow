@@ -1,7 +1,8 @@
 import { db } from "@/lib/db";
 import { getHouseholdAiConfig } from "@/lib/ai-provider";
 import { suggestKeywordMatches, type KeywordCheckContext } from "@/lib/ai";
-import { amountToleranceCents } from "@/lib/recurring-bills";
+import { clusterByAmount } from "@/lib/amount-tolerance";
+import { daysAgo } from "@/lib/period";
 
 // The generic mechanism behind every hardcoded, slow-moving brand-keyword
 // list in the app (BNPL_KEYWORDS, SUBSCRIPTION_KEYWORDS, ...) — layers a
@@ -20,26 +21,6 @@ import { amountToleranceCents } from "@/lib/recurring-bills";
 export async function learnedKeywordsFor(householdId: string, kind: string, staticList: string[]): Promise<string[]> {
   const learned = await db.learnedKeyword.findMany({ where: { householdId, kind }, select: { keyword: true } });
   return [...staticList, ...learned.map((k) => k.keyword)];
-}
-
-// Same greedy 1D amount-clustering used independently in bnpl-detect.ts and
-// bill-detect.ts (see either one's own comment) — a third small copy here
-// rather than a shared import, consistent with how those two already don't
-// share their own richer versions with each other; this one only needs the
-// two fields below.
-function clusterByAmount<T extends { amountCents: number }>(group: T[]): T[][] {
-  const sorted = [...group].sort((a, b) => a.amountCents - b.amountCents);
-  const clusters: T[][] = [];
-  for (const t of sorted) {
-    const current = clusters[clusters.length - 1];
-    const avg = current ? current.reduce((s, x) => s + x.amountCents, 0) / current.length : 0;
-    if (current && Math.abs(t.amountCents - avg) <= amountToleranceCents(avg)) {
-      current.push(t);
-    } else {
-      clusters.push([t]);
-    }
-  }
-  return clusters;
 }
 
 // Finds recurring, still-uncategorized merchants that don't match any known
@@ -61,7 +42,7 @@ export async function checkForNewKeywords(
   if (!config) return; // no AI connected — nothing to ask, same as every other AI-optional pass
 
   const keywords = await learnedKeywordsFor(householdId, kind, staticList);
-  const since = new Date(Date.now() - 120 * 24 * 60 * 60 * 1000);
+  const since = daysAgo(120);
   const [txns, checked] = await Promise.all([
     db.transaction.findMany({
       where: {

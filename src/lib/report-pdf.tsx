@@ -1,5 +1,6 @@
 import { Document, Page, Text, View, StyleSheet, renderToBuffer } from "@react-pdf/renderer";
 import { formatCents } from "@/lib/money";
+import { periodLabel } from "@/lib/period";
 import { GOAL_POSTURE_LABEL } from "@/lib/goal-posture";
 import type { ReportFindings } from "@/lib/ai";
 import type { Report } from "@prisma/client";
@@ -37,9 +38,7 @@ const styles = StyleSheet.create({
 });
 
 function periodTitle(report: Report): string {
-  if (report.type === "STARTUP") return "Startup Report";
-  const [y, m] = report.periodKey.split("-").map(Number);
-  return new Date(y, m - 1, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  return report.type === "STARTUP" ? "Startup Report" : periodLabel(report.periodKey);
 }
 
 export async function renderReportPdf(report: Report): Promise<Buffer> {

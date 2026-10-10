@@ -1,38 +1,23 @@
 import Link from "next/link";
-import { PAYMENT_RECEIPT_SELECT, paymentReceiptOf } from "@/lib/payment-receipt";
-import { redirect } from "next/navigation";
-import { auth } from "@/lib/auth";
+import { PAYMENT_RECEIPT_SELECT } from "@/lib/payment-receipt";
 import { db } from "@/lib/db";
-import { hasFullAccess } from "@/lib/access";
-import {
-  getAccountedForSuggestions,
-  plannedExtraByDebtInPeriod,
-  postedExtraNettedByDebt,
-  getSkippedMinimumKeys,
-  supersededPayoffExtraByDebtInPeriod,
-  planExtraTargetsByDebt,
-} from "@/lib/debt-payments";
-import { coveredMinimumDates, ledgerMinimumCents } from "@/lib/minimum-ledger";
-import { ACCOUNTED_FOR_SELECT, accountedForCents, accountedForDisplayList } from "@/lib/spend";
-import { confirmProjectedExtras, capAtPayoffCents } from "@/lib/debt-payoff";
+import { requireFullAccess } from "@/lib/access";
+import { getAccountedForSuggestions } from "@/lib/debt-payments";
+import { accountedForCents } from "@/lib/spend";
 import { currentPeriodKey, utcPeriodBounds } from "@/lib/period";
-import { splitPlanExtraPayments, buildCycleSlots, slotBounds, cyclePaymentStatus } from "@/lib/cycle-slots";
 import {
   currentPeriodBillWhere,
   getActiveBillCycleSkips,
   getPendingBillAmountReviews,
-  skipShownOnBillRow,
 } from "@/lib/recurring-bills";
 import { pickableDebtWhere } from "@/lib/debt-reassign";
 import { ensureBucketIcons } from "@/lib/bucket-icons-sync";
 import { AppShell } from "@/components/app-shell";
 import { BillAmountReviewCard } from "@/components/bill-amount-review-card";
-import { type BillData } from "./bill-row";
-import { dueStatus } from "@/lib/date";
-import { type DebtPaymentWithName } from "@/app/debts/debt-payment-card";
 import { type PatternData, serializePatternDates } from "@/lib/pattern-data";
 import { currentPeriodPatternWhere } from "@/lib/pattern-match";
 import { RecurringList } from "./recurring-list";
+import { billCardInclude, buildBillCards, buildDebtPaymentCards, debtPaymentCardInclude } from "@/lib/recurring-cards";
 import { RecurringSortProvider, RecurringSortControl } from "./recurring-sort";
 
 // The household-wide "everything recurring" list (2026-08-23) — every
@@ -52,15 +37,18 @@ import { RecurringSortProvider, RecurringSortControl } from "./recurring-sort";
 // splitting the gate per-section isn't worth it for a page whose whole
 // point is showing everything in one place.
 export default async function RecurringPage() {
-  const session = await auth();
-  if (!session?.user) redirect("/login");
-  if (!hasFullAccess(session.user)) redirect("/");
+  const session = await requireFullAccess();
 
   const householdId = session.user.householdId;
-  await ensureBucketIcons(householdId);
-  const pendingBillAmountReviews = await getPendingBillAmountReviews(householdId);
+  // "This cycle" is the real current calendar month (household correction,
+  // 2026-08-25 — see debt-row.tsx's CycleMinimum comment). UTC bounds —
+  // nextDueDate/occurredOn on a bill/pattern's own ledger are `@db.Date`
+  // (UTC midnight), see utcPeriodBounds's own comment.
+  const { start: utcMonthStart, end: utcMonthEnd } = utcPeriodBounds(currentPeriodKey());
 
-  const [buckets, rawDebts, categories, bills, debtPayments, patterns, pendingReviews] =
+  // Before the batch — the bucket query below reads the icons it backfills.
+  await ensureBucketIcons(householdId);
+  const [buckets, rawDebts, categories, bills, debtPayments, patterns, pendingReviews, pendingBillAmountReviews] =
     await Promise.all([
       db.bucket.findMany({
         where: { householdId },
@@ -78,71 +66,12 @@ export default async function RecurringPage() {
       db.recurringBill.findMany({
         where: { householdId, ...currentPeriodBillWhere() },
         orderBy: { nextDueDate: "asc" },
-        include: {
-          category: { select: { name: true } },
-          payments: {
-            orderBy: { occurredOn: "desc" },
-            select: {
-              id: true,
-              amountCents: true,
-              occurredOn: true,
-              pending: true,
-              reimbursedBy: { select: { id: true, merchant: true, amountCents: true, occurredOn: true } },
-              ...PAYMENT_RECEIPT_SELECT,
-            },
-          },
-          // CREDIT patterns pinned to this bill (countsAsIncome:false,
-          // billId set) — shown inline on the bill's own row below, same as
-          // every bucket's own page, not duplicated into the transfers
-          // section further down.
-          reimbursementPatterns: {
-            where: currentPeriodPatternWhere(),
-            orderBy: { label: "asc" },
-            // No category relation — a bill-pinned reimbursement never
-            // carries its own; the parent bill's own category (already
-            // selected above) is what its construction site below uses.
-            include: {
-              transactions: { orderBy: { occurredOn: "desc" }, select: { id: true, amountCents: true, occurredOn: true, pending: true, ...PAYMENT_RECEIPT_SELECT } },
-            },
-          },
-        },
+        include: billCardInclude(),
       }),
       db.debtPayment.findMany({
         where: { householdId, active: true, hiddenFromBucket: false },
         orderBy: { nextDueDate: "asc" },
-        include: {
-          debt: {
-            select: {
-              name: true,
-              label: true,
-              source: true,
-              debtType: true,
-              purchaseDate: true,
-              balanceCents: true,
-              aprBasisPoints: true,
-              paidOffDate: true,
-              includeInPayoffPlan: true,
-              ignoreMinimumPayment: true,
-              installmentsTotal: true,
-              installmentsRemaining: true,
-              receiptItems: true,
-              receiptTotalCents: true,
-              account: { select: { name: true, orgName: true, displayName: true, budgetTracked: true } },
-            },
-          },
-          category: { select: { name: true } },
-          payments: {
-            orderBy: { occurredOn: "desc" },
-            select: {
-              id: true,
-              amountCents: true,
-              occurredOn: true,
-              pending: true,
-              notAccountedFor: true,
-              ...ACCOUNTED_FOR_SELECT,
-            },
-          },
-        },
+        include: debtPaymentCardInclude(),
       }),
       db.recurringPattern.findMany({
         where: { householdId, ...currentPeriodPatternWhere() },
@@ -158,17 +87,24 @@ export default async function RecurringPage() {
         where: { householdId },
         select: { debtPayment: { select: { debtId: true } } },
       }),
+      getPendingBillAmountReviews(householdId),
     ]);
 
   const debts = rawDebts.map((d) => ({ ...d, name: d.account?.displayName ?? d.name }));
   const debtOptions = debts.map((d) => ({ id: d.id, name: d.name }));
   const debtIdsWithPendingReview = new Set(pendingReviews.map((r) => r.debtPayment.debtId));
 
+  // Only this month's payments: the ledger rows that show these suggestions
+  // are this month's (buildDebtPaymentCards), and asking for every payment
+  // ever made ran one query per historical payment on every load.
   const accountedForCandidates = debtPayments
     .filter((p) => p.debt.account?.budgetTracked)
     .flatMap((p) =>
       p.payments
-        .filter((t) => !t.notAccountedFor && accountedForCents(t) < Math.abs(t.amountCents))
+        .filter(
+          (t) =>
+            t.occurredOn >= utcMonthStart && !t.notAccountedFor && accountedForCents(t) < Math.abs(t.amountCents),
+        )
         .map((t) => ({
           id: t.id,
           debtId: p.debtId,
@@ -177,242 +113,26 @@ export default async function RecurringPage() {
           alreadyLinkedCents: accountedForCents(t),
         })),
     );
-  const accountedForSuggestions = await getAccountedForSuggestions(householdId, accountedForCandidates);
-  const activeBillSkips = await getActiveBillCycleSkips(householdId, bills);
+  const [accountedForSuggestions, activeBillSkips] = await Promise.all([
+    getAccountedForSuggestions(householdId, accountedForCandidates),
+    getActiveBillCycleSkips(householdId, bills),
+  ]);
 
-  // "This cycle" is the real current calendar month (household correction,
-  // 2026-08-25 — see debt-row.tsx's CycleMinimum comment). UTC bounds —
-  // nextDueDate/occurredOn on a bill/pattern's own ledger are `@db.Date`
-  // (UTC midnight), see utcPeriodBounds's own comment. Declared up front —
-  // billData's own cyclePaid/currentCyclePayments (below) and the
-  // debtPaymentCards/plannedExtraLinesByDebtId further down all need it.
-  const { start: utcMonthStart, end: utcMonthEnd } = utcPeriodBounds(currentPeriodKey());
-
-  const billData: BillData[] = bills.map((b) => {
-    const paymentsAbs = b.payments.map((p) => ({
-      id: p.id,
-      amountCents: p.amountCents,
-      occurredOn: p.occurredOn,
-      pending: p.pending,
-      reimbursedBy: p.reimbursedBy,
-      receipt: paymentReceiptOf(p),
-    }));
-    const { cyclePaid, currentCyclePayments } = cyclePaymentStatus(
-      b.nextDueDate,
-      b.cadence,
-      paymentsAbs,
-      utcMonthStart,
-      utcMonthEnd,
-      slotBounds(utcMonthStart, { trackerCreatedAt: b.createdAt }),
-    );
-    const toDisplay = (p: (typeof paymentsAbs)[number]) => ({
-      id: p.id,
-      amountCents: p.amountCents,
-      occurredOn: p.occurredOn.toISOString().slice(0, 10),
-      pending: p.pending,
-      receipt: p.receipt,
-      reimbursedBy: p.reimbursedBy.map((r) => ({
-        id: r.id,
-        merchant: r.merchant,
-        amountCents: r.amountCents,
-        occurredOn: r.occurredOn.toISOString().slice(0, 10),
-      })),
-    });
-    return {
-      id: b.id,
-      name: b.name,
-      merchant: b.merchant,
-      amountCents: b.amountCents,
-      toleranceCents: b.toleranceCents,
-      cadence: b.cadence,
-      categoryId: b.categoryId,
-      categoryName: b.category?.name ?? null,
-      nextDueDate: b.nextDueDate.toISOString().slice(0, 10),
-      dueStatus: dueStatus(b.nextDueDate.toISOString().slice(0, 10)),
-      lastPaidDate: b.lastPaidDate ? b.lastPaidDate.toISOString().slice(0, 10) : null,
-      dueDateLocked: b.dueDateLocked,
-      bucketId: b.bucketId,
-      canceled: !b.active,
-      payments: paymentsAbs.map(toDisplay),
-      cyclePaid,
-      currentCyclePayments: currentCyclePayments.map(toDisplay),
-      skippedCycleDueDate:
-        skipShownOnBillRow(activeBillSkips.get(b.id), utcMonthStart)?.toISOString().slice(0, 10) ?? null,
-      reimbursementPatterns: b.reimbursementPatterns.map((p) => ({
-        id: p.id,
-        label: p.label,
-        direction: p.direction,
-        channelKeyword: p.channelKeyword,
-        amountMinCents: p.amountMinCents,
-        amountMaxCents: p.amountMaxCents,
-        dayOfMonthStart: p.dayOfMonthStart,
-        dayOfMonthEnd: p.dayOfMonthEnd,
-        weekdays: p.weekdays,
-        bucketId: p.bucketId,
-        bucketName: null,
-        debtId: p.debtId,
-        debtName: null,
-        countsAsIncome: p.countsAsIncome,
-        billId: p.billId,
-        billName: b.name,
-        categoryId: p.categoryId,
-        // The bill's own category, not the pattern's own — a bill-pinned
-        // reimbursement never carries a separate one (household feedback,
-        // 2026-09-11).
-        categoryName: b.category?.name ?? null,
-        counterpartyName: p.counterpartyName,
-        noteKeywords: p.noteKeywords,
-        cadence: p.cadence,
-        toleranceCents: p.toleranceCents,
-        dueDateLocked: p.dueDateLocked,
-        active: p.active,
-        ...serializePatternDates(p, utcMonthStart, utcMonthEnd),
-      })),
-    };
-  });
+  const billData = buildBillCards(bills, activeBillSkips, utcMonthStart, utcMonthEnd);
 
   const bucketById = new Map(buckets.map((b) => [b.id, b]));
 
-  // utcMonthStart/utcMonthEnd declared above, alongside billData.
   // Dated payoff-plan extra lines this month, per debt — the projected emerald
   // EntryLines the card renders in its ledger (see DebtPaymentData.projectedExtras).
   // Paired with the superseded-payoff adjustment (one query each, both keyed
   // by debtId) — see confirmProjectedExtras where they meet.
-  const [plannedExtraLinesByDebtId, supersededPayoffExtraByDebtId, skippedMinimumKeys, postedExtraNettedByDebtId] = await Promise.all([
-    plannedExtraByDebtInPeriod(householdId, utcMonthStart, utcMonthEnd),
-    supersededPayoffExtraByDebtInPeriod(householdId, utcMonthStart, utcMonthEnd),
-    getSkippedMinimumKeys(householdId, utcMonthStart, utcMonthEnd),
-    postedExtraNettedByDebt(householdId),
-  ]);
-
-  const planExtrasByDebtId = await planExtraTargetsByDebt(householdId, utcMonthStart, utcMonthEnd);
-  const debtPaymentCards: DebtPaymentWithName[] = debtPayments.map((p) => {
-    // A card/loan payment can post on the debt's own liability account as a
-    // negative credit (see filterDebtPaymentTwins, debt-payments.ts) — this
-    // ledger always shows "amount paid," never the account-native sign.
-    const paymentsAbs = p.payments.map((t) => ({
-      id: t.id,
-      amountCents: Math.abs(t.amountCents),
-      occurredOn: t.occurredOn,
-      pending: t.pending,
-      notAccountedFor: t.notAccountedFor,
-      accountedForBy: accountedForDisplayList(t),
-    }));
-    // See slotBounds: INSTALLMENT keeps a hard purchase-date floor; a
-    // REVOLVING tracker's real occurrences all count, only an *unpaid*
-    // pre-createdAt one is hidden as a phantom (a real pre-createdAt payment
-    // still reads "Minimum … — paid").
-    // A paid payoff-plan extra (matched to its payday's planned figure) never
-    // fills the minimum slot — see splitPlanExtraPayments (cycle-slots.ts).
-    const { planExtraPayments, rest: slotPayments } = splitPlanExtraPayments(
-      paymentsAbs,
-      planExtrasByDebtId.get(p.debtId) ?? [],
-    );
-    let { slots, extraPayments } = buildCycleSlots(
-      p.nextDueDate,
-      p.cadence,
-      utcMonthStart,
-      utcMonthEnd,
-      slotPayments,
-      slotBounds(utcMonthStart, {
-        debtType: p.debt.debtType,
-        purchaseDate: p.debt.purchaseDate,
-        trackerCreatedAt: p.createdAt,
-        cadence: p.cadence,
-        nextDueDate: p.nextDueDate,
-        lastPaidDate: p.lastPaidDate,
-        installmentsRemaining: p.debt.installmentsRemaining,
-        cycleRestartDueDate: p.cycleRestartDueDate,
-      }),
-    );
-    // Minimums an earlier, bigger payment already covered — still listed as
-    // expected payments until skipped (resolveMinimumLedger). Computed before
-    // the no-minimum fold below empties `slots`.
-    const coveredMinimums = coveredMinimumDates({
-      slots,
-      extraPayments,
-      minimumCents: ledgerMinimumCents({
-        paidOff: p.debt.balanceCents <= 0,
-        nextDueThisMonth: p.nextDueDate >= utcMonthStart && p.nextDueDate < utcMonthEnd,
-        amountDueCents: p.amountDueCents,
-        minimumCents: p.debt.ignoreMinimumPayment ? 0 : p.amountCents,
-      }),
-      skippedDates: new Set(
-        [...skippedMinimumKeys].flatMap((k) => (k.startsWith(`${p.debtId}:`) ? [k.slice(p.debtId.length + 1)] : [])),
-      ),
-    }).map((d) => d.toISOString().slice(0, 10));
-    extraPayments = [
-      ...planExtraPayments.filter((t) => t.occurredOn >= utcMonthStart && t.occurredOn < utcMonthEnd),
-      ...extraPayments,
-    ].sort((a, b) => a.occurredOn.getTime() - b.occurredOn.getTime());
-    // No-minimum card: fold every paired payment into the flat list so the
-    // ledger never shows a "Minimum $0.00" line (same as debts/page.tsx).
-    if (p.debt.ignoreMinimumPayment) {
-      extraPayments = [...slots.flatMap((s) => (s.payment ? [s.payment] : [])), ...extraPayments].sort(
-        (a, b) => a.occurredOn.getTime() - b.occurredOn.getTime(),
-      );
-      slots = [];
-    }
-    const toISO = (t: (typeof paymentsAbs)[number]) => ({ ...t, occurredOn: t.occurredOn.toISOString().slice(0, 10) });
-    // `confirmed` per projected extra: consume this month's real extra-payment
-    // total oldest-projected-line-first, minus whatever already went toward a
-    // payoff target the live plan has since dropped. Shared with
-    // buckets/[id]/page.tsx and payoff-planner.tsx — see confirmProjectedExtras.
-    const projectedExtras = confirmProjectedExtras(
-      plannedExtraLinesByDebtId.get(p.debtId) ?? [],
-      extraPayments.reduce((s, t) => s + t.amountCents, 0),
-      supersededPayoffExtraByDebtId.get(p.debtId) ?? 0,
-      postedExtraNettedByDebtId.get(p.debtId) ?? 0,
-    );
-
-    return {
-      id: p.id,
-      debtName: p.debt.account?.displayName ?? p.debt.name,
-      // The account's own raw synced name and its institution name
-      // (Account.orgName) — distinct from displayName above (a household's
-      // own rename), both re-synced from the bank on every sync so neither
-      // is lost to a rename. Logo matching alone searches these, and only
-      // reaches for orgName as a last resort (see debtLogoSearchText's own
-      // comment) — orgName isn't reliably accurate on its own (household
-      // report, 2026-09-14: it named a real Discover card "Capital One",
-      // producing a false second brand icon when searched unconditionally).
-      // Never shown as text.
-      accountRawName: p.debt.account?.name ?? null,
-      accountOrgName: p.debt.account?.orgName ?? null,
-      debtLabel: p.debt.label,
-      balanceCents: p.debt.balanceCents,
-      amountCents: p.amountCents,
-      dueLineCents: capAtPayoffCents(p.amountCents, p.debt),
-      toleranceCents: p.toleranceCents,
-      cadence: p.cadence,
-      categoryId: p.categoryId,
-      categoryName: p.category?.name ?? null,
-      nextDueDate: p.nextDueDate.toISOString().slice(0, 10),
-      nextDueThisMonth: p.nextDueDate >= utcMonthStart && p.nextDueDate < utcMonthEnd,
-      lastPaidDate: p.lastPaidDate ? p.lastPaidDate.toISOString().slice(0, 10) : null,
-      dueDateLocked: p.dueDateLocked,
-      // See the identical fix/comment in buckets/[id]/page.tsx — dueDateLocked
-      // alone only signals "needs setup" for a REVOLVING debt; an
-      // INSTALLMENT/BNPL plan's rolling projection is expected to sit
-      // unlocked between real payments, not flagged as needing attention.
-      needsAttention: (p.debt.debtType === "REVOLVING" && !p.dueDateLocked) || debtIdsWithPendingReview.has(p.debtId),
-      accountBudgetTracked: p.debt.account?.budgetTracked ?? false,
-      bucketId: p.bucketId,
-      paidOff: p.debt.balanceCents === 0,
-      paidOffDate: p.debt.paidOffDate ? p.debt.paidOffDate.toISOString().slice(0, 10) : null,
-      linked: p.debt.source === "SIMPLEFIN",
-      includeInPayoffPlan: p.debt.includeInPayoffPlan,
-      ignoreMinimumPayment: p.debt.ignoreMinimumPayment,
-      installmentsTotal: p.debt.installmentsTotal,
-      installmentsRemaining: p.debt.installmentsRemaining,
-      debtReceiptItems: (p.debt.receiptItems as DebtPaymentWithName["debtReceiptItems"]) ?? null,
-      debtReceiptTotalCents: p.debt.receiptTotalCents,
-      slots: slots.map((s) => ({ date: s.date.toISOString().slice(0, 10), payment: s.payment ? toISO(s.payment) : null })),
-      extraPayments: extraPayments.map(toISO),
-      projectedExtras,
-      coveredMinimums,
-    };
-  });
+  const debtPaymentCards = await buildDebtPaymentCards(
+    householdId,
+    debtPayments,
+    debtIdsWithPendingReview,
+    utcMonthStart,
+    utcMonthEnd,
+  );
   // Paid-off debts sink to the bottom regardless of the chosen sort order —
   // RecurringList handles that tiering (and the due-date/A–Z choice) on the
   // client, same as payoff-planner.tsx's own paid-off tier on /debts.

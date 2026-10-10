@@ -1,14 +1,11 @@
-import { redirect } from "next/navigation";
-import { auth } from "@/lib/auth";
+import { requireOwner } from "@/lib/access";
 import { db } from "@/lib/db";
 import { AppShell } from "@/components/app-shell";
 import { AiSettingsPanel } from "./ai-settings-panel";
 import { AiUsageSynopsis } from "./ai-usage-synopsis";
 
 export default async function AiSettingsPage() {
-  const session = await auth();
-  if (!session?.user) redirect("/login");
-  if (session.user.role !== "OWNER") redirect("/");
+  const session = await requireOwner();
 
   const existing = await db.householdAiSettings.findUnique({
     where: { householdId: session.user.householdId },

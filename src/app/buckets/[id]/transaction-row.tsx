@@ -16,7 +16,7 @@ import { SelectField } from "@/components/select-field";
 import { ReimbursementLinker, type ReimbursementCandidate } from "@/components/reimbursement-linker";
 import { CategoryPicker, type CategoryOption } from "@/app/bills/category-picker";
 import { AmountRoutingToggle, MakeRuleToggle, suggestRoutingMax, type RoutingDirection } from "@/components/amount-routing-toggle";
-import { P2P_DISCOVERY_KEYWORDS } from "@/lib/p2p-keywords";
+import { isP2PMerchant } from "@/lib/p2p-keywords";
 import { useEntryFilter } from "@/components/bucket-entry-filter";
 import { RowActions } from "@/components/row-actions";
 
@@ -137,7 +137,7 @@ export function TransactionRow({
     transaction.label,
     labelSuggestions,
   );
-  const isP2P = P2P_DISCOVERY_KEYWORDS.some((k) => transaction.merchant.toLowerCase().includes(k));
+  const isP2P = isP2PMerchant(transaction.merchant);
 
   const { p2pApp, p2pTitle, displayMerchant, logoMerchant } = deriveP2PDisplay(transaction);
 

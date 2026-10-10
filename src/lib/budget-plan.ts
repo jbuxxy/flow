@@ -24,7 +24,7 @@ import {
   type MerchantAmountRuleSummary,
 } from "@/lib/budget-merchant-routes";
 import { reassignTransactionsForMerchant } from "@/lib/merchant-rule-reassign";
-import { P2P_DISCOVERY_KEYWORDS } from "@/lib/p2p-keywords";
+import { isP2PMerchant } from "@/lib/p2p-keywords";
 import { isDemoHousehold } from "@/lib/demo";
 import { capAtPayoffCents } from "@/lib/debt-payoff";
 import { generateBudgetPlanRedraft, type ReportFindings, type MonthSummary } from "@/lib/ai";
@@ -701,7 +701,7 @@ export async function assembleBudgetPlanInputs(
 
 // How the last few CONFIRMED plans actually turned out, per bucket — planned
 // cap vs real spend. Only months that are actually complete.
-export async function getRecentBudgetPlanOutcomes(
+async function getRecentBudgetPlanOutcomes(
   householdId: string,
 ): Promise<BudgetPlanInputs["priorPlanOutcomes"]> {
   const nowKey = currentPeriodKey();
@@ -1566,7 +1566,7 @@ export async function confirmBudgetPlan(
       if (
         merchant &&
         nb.trackingMode !== "RECURRING" &&
-        !P2P_DISCOVERY_KEYWORDS.some((k) => merchant.toLowerCase().includes(k))
+        !isP2PMerchant(merchant)
       ) {
         const idea = storedIdeas.get(nb.name);
         if (!idea?.routeMovesNothing) {

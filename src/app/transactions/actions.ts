@@ -235,7 +235,7 @@ export async function removeTransactionOffset(offsetId: string) {
     where: { id: offsetId },
     include: { debit: { select: { bucketId: true } } },
   });
-  if (!offset || offset.householdId !== session.user.householdId) return;
+  if (!belongsToHousehold(offset, session.user.householdId)) return;
 
   await db.transactionOffset.delete({ where: { id: offsetId } });
   revalidateLinkPaths(offset.debit.bucketId);
@@ -440,12 +440,12 @@ async function resolveTarget(
   const [kind, id] = target.split(":");
   if (kind === "bucket" && id) {
     const bucket = await db.bucket.findUnique({ where: { id } });
-    if (!bucket || bucket.householdId !== householdId) return { error: "Bucket not found." };
+    if (!belongsToHousehold(bucket, householdId)) return { error: "Bucket not found." };
     return { bucketId: bucket.id, debtId: null };
   }
   if (kind === "debt" && id) {
     const debt = await db.debt.findUnique({ where: { id } });
-    if (!debt || debt.householdId !== householdId) return { error: "Debt not found." };
+    if (!belongsToHousehold(debt, householdId)) return { error: "Debt not found." };
     return { bucketId: null, debtId: debt.id };
   }
   return { bucketId: null, debtId: null };
@@ -550,7 +550,7 @@ async function parseCommon(householdId: string, formData: FormData) {
   let billId: string | null = null;
   if (parsed.data.direction === "CREDIT" && !countsAsIncome && parsed.data.billId) {
     const bill = await db.recurringBill.findUnique({ where: { id: parsed.data.billId } });
-    if (!bill || bill.householdId !== householdId) return { error: "Bill not found." } as const;
+    if (!belongsToHousehold(bill, householdId)) return { error: "Bill not found." } as const;
     billId = bill.id;
   }
 

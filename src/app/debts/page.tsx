@@ -1,9 +1,7 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { Settings } from "lucide-react";
-import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { hasFullAccess } from "@/lib/access";
+import { requireFullAccess } from "@/lib/access";
 import type { PayoffOrder } from "@/lib/debt-payoff";
 import { AppShell } from "@/components/app-shell";
 import { nameSimilarity } from "@/lib/fuzzy-match";
@@ -33,9 +31,7 @@ import { NeedsSetupWarning } from "./needs-setup-warning";
 import type { CycleMinimum } from "./debt-row";
 
 export default async function DebtsPage() {
-  const session = await auth();
-  if (!session?.user) redirect("/login");
-  if (!hasFullAccess(session.user)) redirect("/");
+  const session = await requireFullAccess();
   // /debts itself stays readable (view-only) for a full-access non-owner —
   // 2026-08-21 household decision — but every one of these three "go fix a
   // debt" nudges resolves through a debt-editing action that's now
@@ -89,7 +85,6 @@ export default async function DebtsPage() {
       isOwner ? getPendingDebtBalanceReviews(session.user.householdId) : Promise.resolve([]),
       getPayoffExtraSkipRows(session.user.householdId),
     ]);
-  const debtsNeedingSetup = isOwner ? await getActiveDebtsNeedingSetup(session.user.householdId) : [];
   // Prefer a linked account's friendly nickname (set in
   // /settings/accounts) over the raw one-time-copied Debt.name — see
   // WORKING_ON.md's 2026-08-15 account-settings consolidation entry.
@@ -106,32 +101,69 @@ export default async function DebtsPage() {
     name: d.account?.displayName ?? d.name,
   }));
 
-  const debtPayments = await db.debtPayment.findMany({
-    where: { householdId: session.user.householdId, debtId: { in: debts.map((d) => d.id) }, active: true },
-    select: {
-      id: true,
-      debtId: true,
-      amountCents: true,
-      amountDueCents: true,
-      cadence: true,
-      nextDueDate: true,
-      lastPaidDate: true,
-      cycleRestartDueDate: true,
-      dueDateLocked: true,
-      createdAt: true,
-      payments: { select: { id: true, amountCents: true, occurredOn: true, pending: true } },
-    },
-  });
+  const { start: monthStart, end: monthEnd } = utcPeriodBounds(currentPeriodKey());
+  // UTC start of the previous calendar month — [lastMonthStart, monthStart) is
+  // "last month," feeding the Payoff Calendar's look-back page (see
+  // CycleMinimum.lastMonthPayments).
+  const lastMonthStart = new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() - 1, 1));
 
-  // A REVOLVING debt "needs setup" — badged on its row and (see
-  // app-shell.tsx) the Debts nav tab — until a human has confirmed its
-  // terms and due date, or if a payment's asking to confirm a minimum
-  // change. INSTALLMENT/BNPL debts never carry a DebtPayment at all, so
-  // they're never flagged.
-  const pendingReviews = await db.debtAmountReview.findMany({
-    where: { householdId: session.user.householdId },
-    select: { debtPayment: { select: { debtId: true } } },
-  });
+  // Every read below depends only on the debt list — one round trip, not
+  // eight in a row.
+  const [
+    debtsNeedingSetup,
+    debtPayments,
+    pendingReviews,
+    debtPatterns,
+    rawPayoffSnapshots,
+    supersededPayoffExtra,
+    minimumSkipRows,
+    planExtrasByDebtId,
+  ] = await Promise.all([
+    isOwner ? getActiveDebtsNeedingSetup(session.user.householdId) : [],
+    db.debtPayment.findMany({
+      where: { householdId: session.user.householdId, debtId: { in: debts.map((d) => d.id) }, active: true },
+      select: {
+        id: true,
+        debtId: true,
+        amountCents: true,
+        amountDueCents: true,
+        cadence: true,
+        nextDueDate: true,
+        lastPaidDate: true,
+        cycleRestartDueDate: true,
+        dueDateLocked: true,
+        createdAt: true,
+        payments: { select: { id: true, amountCents: true, occurredOn: true, pending: true } },
+      },
+    }),
+    // A REVOLVING debt "needs setup" — badged on its row and (see
+    // app-shell.tsx) the Debts nav tab — until a human has confirmed its
+    // terms and due date, or if a payment's asking to confirm a minimum
+    // change. INSTALLMENT/BNPL debts never carry a DebtPayment at all, so
+    // they're never flagged.
+    db.debtAmountReview.findMany({
+      where: { householdId: session.user.householdId },
+      select: { debtPayment: { select: { debtId: true } } },
+    }),
+    db.recurringPattern.findMany({
+      where: { householdId: session.user.householdId, direction: "DEBIT", debtId: { in: debts.map((d) => d.id) } },
+      select: { debtId: true },
+    }),
+    db.payoffExtraSnapshot.findMany({
+      where: { householdId: session.user.householdId, isPayoff: true, dueDate: { gte: lastMonthStart, lt: monthEnd } },
+      select: { debtId: true, dueDate: true, amountCents: true },
+      // See payoffSnapshots below for why this is ordered.
+      orderBy: { weekStart: "asc" },
+    }),
+    supersededPayoffExtraByDebtInPeriod(session.user.householdId, monthStart, monthEnd),
+    db.debtMinimumSkip.findMany({
+      where: { householdId: session.user.householdId, dueDate: { gte: lastMonthStart, lt: monthEnd } },
+      select: { debtId: true, dueDate: true },
+    }),
+    // Planned payoff-plan extras for this month and last (the Last Month
+    // list page uses the same split) — see splitPlanExtraPayments.
+    planExtraTargetsByDebt(session.user.householdId, lastMonthStart, monthEnd),
+  ]);
   const debtIdsWithPendingReview = new Set(pendingReviews.map((r) => r.debtPayment.debtId));
 
   const debtPaymentByDebtId = new Map(debtPayments.map((p) => [p.debtId, p]));
@@ -141,10 +173,6 @@ export default async function DebtsPage() {
   // a bucket-targeted pattern shows on its bucket's page — DebtRow gets a
   // compact count+link instead, editing happens via the Repeat badge on
   // one of the debt's own matched transactions (/transactions).
-  const debtPatterns = await db.recurringPattern.findMany({
-    where: { householdId: session.user.householdId, direction: "DEBIT", debtId: { in: debts.map((d) => d.id) } },
-    select: { debtId: true },
-  });
   const patternCountByDebtId = new Map<string, number>();
   for (const p of debtPatterns) {
     if (!p.debtId) continue;
@@ -179,28 +207,16 @@ export default async function DebtsPage() {
     if (best) suggestedAccountByDebtId.set(d.id, { id: best.id, name: best.name });
   }
 
-  const { start: monthStart, end: monthEnd } = utcPeriodBounds(currentPeriodKey());
-  // UTC start of the previous calendar month — [lastMonthStart, monthStart) is
-  // "last month," feeding the Payoff Calendar's look-back page (see
-  // CycleMinimum.lastMonthPayments).
-  const lastMonthStart = new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() - 1, 1));
   // Every isPayoff PayoffExtraSnapshot row landing in this month or last —
   // PayoffPlanner's own calendar prefers this over Debt.paidOffDate for a
   // balance-only payoff's fallback line (see its own comment): the plan's
   // recorded expected date, not whenever a balance sync happened to notice.
-  const payoffSnapshots = (
-    await db.payoffExtraSnapshot.findMany({
-      where: { householdId: session.user.householdId, isPayoff: true, dueDate: { gte: lastMonthStart, lt: monthEnd } },
-      select: { debtId: true, dueDate: true, amountCents: true },
-      // A debt whose balance comes back after a projected payoff (paid off,
-      // then restored) can leave more than one isPayoff row in the same
-      // month — the pre-restoration projection plus the plan's current one.
-      // Ordered ascending so the Map builds below (last write wins, keyed by
-      // debtId/debtId+month) always keep the most recent projection, never
-      // whichever the DB happened to return last.
-      orderBy: { weekStart: "asc" },
-    })
-  ).map((s) => ({ debtId: s.debtId, dueDate: s.dueDate.toISOString().slice(0, 10), amountCents: s.amountCents }));
+  // A debt whose balance comes back after a projected payoff (paid off,
+  // then restored) can leave more than one isPayoff row in the same month —
+  // the pre-restoration projection plus the plan's current one. The query
+  // above orders them ascending so the Map builds below (last write wins,
+  // keyed by debtId/debtId+month) always keep the most recent projection.
+  const payoffSnapshots = rawPayoffSnapshots.map((s) => ({ debtId: s.debtId, dueDate: s.dueDate.toISOString().slice(0, 10), amountCents: s.amountCents }));
 
   // Per-debt real extra money this month that already retired a payoff target
   // the live plan has since dropped — subtracted before PayoffPlanner walks
@@ -209,18 +225,12 @@ export default async function DebtsPage() {
   // server-side (the snapshot rows' weekStart never crosses to the client) and
   // shipped down as a plain Record, same as payoffSnapshots above. See
   // supersededPayoffExtraCents, src/lib/debt-payoff.ts.
-  const supersededPayoffExtraByDebtId = Object.fromEntries(
-    await supersededPayoffExtraByDebtInPeriod(session.user.householdId, monthStart, monthEnd),
-  );
+  const supersededPayoffExtraByDebtId = Object.fromEntries(supersededPayoffExtra);
 
   // Household-skipped covered minimums this month (DebtMinimumSkip) — keyed
   // per debt as ISO due dates for DebtRow's ledger (resolveMinimumLedger).
   // Last month's too, for the Payoff Calendar's "Last Month" list page
   // (lastMonthCycleMinimum below).
-  const minimumSkipRows = await db.debtMinimumSkip.findMany({
-    where: { householdId: session.user.householdId, dueDate: { gte: lastMonthStart, lt: monthEnd } },
-    select: { debtId: true, dueDate: true },
-  });
   const skippedMinimumDatesByDebtId = new Map<string, string[]>();
   const lastMonthSkippedMinimumDatesByDebtId = new Map<string, string[]>();
   for (const r of minimumSkipRows) {
@@ -230,9 +240,6 @@ export default async function DebtsPage() {
     byDebt.set(r.debtId, list);
   }
 
-  // Planned payoff-plan extras for this month and last (the Last Month list
-  // page uses the same split) — see splitPlanExtraPayments.
-  const planExtrasByDebtId = await planExtraTargetsByDebt(session.user.householdId, lastMonthStart, monthEnd);
 
   const plannerDebts: PlannerDebt[] = debts.map((d) => {
     const payment = debtPaymentByDebtId.get(d.id);

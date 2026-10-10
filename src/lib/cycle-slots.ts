@@ -2,8 +2,8 @@ import type { BillCadence } from "@prisma/client";
 import { subtractCadence } from "@/lib/recurring-bills";
 import { stepCadence } from "@/lib/cadence-step";
 import { MATCH_WINDOW_DAYS } from "@/lib/bill-match-window";
+import { DAY_MS } from "@/lib/date";
 
-const DAY_MS = 86_400_000;
 
 // Pure cadence<->calendar-month math, shared by every "This cycle" ledger
 // display (RecurringBill/DebtPayment alike) — no `db` import, so it's safe

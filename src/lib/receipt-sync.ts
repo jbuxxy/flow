@@ -38,7 +38,7 @@ import {
   refundItemsMatch,
 } from "@/lib/receipt-match";
 import { bnplPlanMatchesReceipt } from "@/lib/bnpl-plan-match";
-import { currentWeekKey } from "@/lib/period";
+import { currentWeekKey, daysAgo } from "@/lib/period";
 import { extractReceipts, type ParsedReceipt, type ParsedReceiptLineItem } from "@/lib/ai";
 import { matchBillNoticeAmounts, purgeStaleBillNotices } from "@/lib/bill-notice-sync";
 
@@ -639,7 +639,7 @@ async function refundAccountScope(householdId: string, receipt: Receipt): Promis
 // replaced by its posted charge (a new row), which a link would orphan; the
 // next sync retries (retryRefundPurchaseLinks). Never overrides a link
 // that's already set.
-export async function linkRefundToPurchase(receipt: Receipt, creditId: string): Promise<"linked" | "waiting" | "none"> {
+async function linkRefundToPurchase(receipt: Receipt, creditId: string): Promise<"linked" | "waiting" | "none"> {
   const credit = await db.transaction.findUnique({
     where: { id: creditId },
     select: { id: true, householdId: true, merchant: true, amountCents: true, occurredOn: true, reimbursesTransactionId: true },
@@ -694,7 +694,7 @@ async function retryRefundPurchaseLinks(householdId: string): Promise<void> {
       matchState: "MATCHED",
       transactionId: { not: null },
       transaction: { reimbursesTransactionId: null },
-      receivedAt: { gte: new Date(Date.now() - 30 * 86_400_000) },
+      receivedAt: { gte: daysAgo(30) },
     },
   });
   for (const r of receipts) await linkRefundToPurchase(r, r.transactionId!);

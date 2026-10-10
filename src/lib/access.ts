@@ -1,33 +1,8 @@
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
+import { belongsToHousehold, hasFullAccess } from "@/lib/access-rules";
 
-// OWNER always has full access regardless of dashboardScope (that field only
-// applies to invited members) — see the DashboardScope comment in schema.prisma.
-export function hasFullAccess(user: { role: string; dashboardScope: string }): boolean {
-  return user.role === "OWNER" || user.dashboardScope === "FULL";
-}
-
-// Non-owner full-access members can view (read-only) that accounts are
-// connected, and still see credit card/loan balances — those double as Debt
-// tracking (already visible to full-access members via the now-read-only
-// /debts, see requireOwner below) so showing them again here leaks nothing
-// new. Every other account type (CHECKING/SAVINGS, but also INVESTMENT/
-// OTHER — a synced brokerage or crypto-exchange account is exactly the
-// "amount in an asset account" a non-owner is never supposed to see,
-// 2026-08-21 household decision) stays owner-only, same bar as net worth.
-export function canViewAccountBalance(
-  user: { role: string },
-  accountType: string,
-): boolean {
-  if (user.role === "OWNER") return true;
-  return accountType === "CREDIT_CARD" || accountType === "LOAN";
-}
-
-// Net worth (retirement/home/vehicle equity) stays owner-only — hidden even
-// from otherwise-full-access non-owner members.
-export function canViewNetWorth(user: { role: string }): boolean {
-  return user.role === "OWNER";
-}
+export { belongsToHousehold, canViewAccountBalance, canViewNetWorth, hasFullAccess } from "@/lib/access-rules";
 
 // Shared server-action guard for anything owner-only — was previously
 // duplicated locally in settings/accounts/actions.ts; now also used by
@@ -61,18 +36,6 @@ export async function requireFullAccess() {
   if (!session?.user) redirect("/login");
   if (!hasFullAccess(session.user)) redirect("/");
   return session;
-}
-
-// The other half of the ownership boilerplate repeated across every
-// actions.ts: fetch a record, then check it actually belongs to the caller's
-// household before doing anything with it. `belongsToHousehold` is for the
-// common "fetch then silently no-op if not owned" call sites — collapses
-// `!x || x.householdId !== householdId` to one call and narrows the type.
-export function belongsToHousehold<T extends { householdId: string } | null | undefined>(
-  record: T,
-  householdId: string,
-): record is NonNullable<T> {
-  return record != null && record.householdId === householdId;
 }
 
 // For the fetch-or-throw call sites (generalizes the pattern that used to be

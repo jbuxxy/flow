@@ -9,7 +9,7 @@ import { useRef, useState } from "react";
 // exactly, like a 2.625% mortgage, awkward: no mid-string editing, and the
 // value is always rebuilt from the right). Only the trailing "%" and
 // rounding to 2 decimals — the server's real storage precision, see
-// parseAprToBasisPoints — are normalized, and only on blur, so a value
+// parsePercentToBasisPoints (money.ts) — are normalized, and only on blur, so a value
 // typed with more precision (2.625) still round-trips through Number()
 // correctly if the form submits before blur fires (e.g. Enter-to-submit).
 export function PercentInput({

@@ -1,3 +1,6 @@
+// Milliseconds in a day — UTC calendar-day math throughout this app.
+export const DAY_MS = 86_400_000;
+
 // A "@db.Date" field (or any value that only ever means a calendar day, no
 // time-of-day — occurredOn, asOfDate, a due/payoff date) is stored as UTC
 // midnight. Formatting it with the viewer's local timezone can shift the
@@ -114,7 +117,7 @@ export function dayCountStatus(
   // midnight, ~7h off a UTC-midnight target here (TZ=America/Denver), which
   // Math.round could tip to the wrong day ("Due in 6 days" vs 7).
   const today = todayAsUTCDate();
-  const daysUntil = Math.round((targetDate.getTime() - today.getTime()) / 86_400_000);
+  const daysUntil = Math.round((targetDate.getTime() - today.getTime()) / DAY_MS);
 
   if (daysUntil < 0) return { label: copy.overdue(-daysUntil), className: colors.overdue };
   if (daysUntil === 0) return { label: copy.today, className: colors.today };
@@ -184,7 +187,7 @@ export function dueStatus(nextDueDate: string): { label: string; className: stri
 // bill/debt rows and the /debts payoff ledger.
 export function dueDateProximity(targetDate: Date): { label: string; textClassName: string } {
   const today = todayAsUTCDate();
-  const daysUntil = Math.round((targetDate.getTime() - today.getTime()) / 86_400_000);
+  const daysUntil = Math.round((targetDate.getTime() - today.getTime()) / DAY_MS);
   if (daysUntil < 0) {
     return {
       label: `Overdue by ${-daysUntil} day${daysUntil === -1 ? "" : "s"}`,
@@ -212,3 +215,16 @@ export function dueDateProximity(targetDate: Date): { label: string; textClassNa
 export function dayOfMonthUTC(isoDate: string): number {
   return new Date(isoDate).getUTCDate();
 }
+
+// A form's day-of-month field ("1"–"31") -> the day, or null when it isn't
+// one. Feeds nextOccurrenceOfDay for every monthly due-date picker.
+export function parseDueDay(dueDay: string): number | null {
+  const day = Number(dueDay);
+  return Number.isInteger(day) && day >= 1 && day <= 31 ? day : null;
+}
+
+// "Oct 23" for an ISO date string.
+export function formatShortDate(iso: string): string {
+  return formatISODate(iso, { month: "short", day: "numeric" });
+}
+

@@ -61,7 +61,7 @@ export function bnplPlanTotalMatches(originalCents: number, receiptTotalCents: n
   return Math.abs(originalCents - receiptTotalCents) <= Math.max(Math.round(receiptTotalCents * 0.01), 100);
 }
 
-export function bnplPlanNameResemblesParty(planName: string, party: string): boolean {
+function bnplPlanNameResemblesParty(planName: string, party: string): boolean {
   return nameSimilarity(bnplPlanMerchantName(planName), party) >= 0.6;
 }
 

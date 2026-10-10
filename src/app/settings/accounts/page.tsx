@@ -1,12 +1,10 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { PartyPopper, EyeOff, Target, Landmark, PiggyBank, CreditCard, Wallet, Binoculars } from "lucide-react";
 import { buildBnplSchedule } from "@/lib/bnpl-schedule";
-import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { formatCents } from "@/lib/money";
+import { formatCents, formatBasisPoints } from "@/lib/money";
 import { formatDate, ordinal } from "@/lib/date";
-import { hasFullAccess, canViewAccountBalance } from "@/lib/access";
+import { canViewAccountBalance, requireFullAccess } from "@/lib/access";
 import { getUntrackedLiabilityAccounts } from "@/lib/untracked-liabilities";
 import { getHiddenItems } from "@/lib/hidden-items";
 import {
@@ -59,10 +57,26 @@ const SYNC_MODE_LABEL: Record<SyncMode, string> = {
   BALANCE_ONLY: "Balance Only",
 };
 
+const CASH_TYPES: AccountType[] = ["CHECKING", "SAVINGS"];
+
+// What an account's "Net Worth" tile says it counts as.
+function netWorthStatusLabel(
+  a: { accountType: AccountType; excludedFromNetWorth: boolean },
+  asset: { name: string } | null | undefined,
+  goal: { name: string } | null | undefined,
+  debt: unknown,
+): string {
+  if (CASH_TYPES.includes(a.accountType)) return a.excludedFromNetWorth ? "Not Counted" : "Counted";
+  if (a.accountType === "INVESTMENT") {
+    if (asset) return `Asset · ${asset.name}`;
+    return goal ? `Goal · ${goal.name}` : "Not Tracked";
+  }
+  if (a.accountType === "CREDIT_CARD" || a.accountType === "LOAN") return debt ? "Counted as Debt" : "Not Tracked";
+  return "—";
+}
+
 export default async function AccountsSettingsPage() {
-  const session = await auth();
-  if (!session?.user) redirect("/login");
-  if (!hasFullAccess(session.user)) redirect("/");
+  const session = await requireFullAccess();
 
   const isOwner = session.user.role === "OWNER";
   const householdId = session.user.householdId;
@@ -244,7 +258,7 @@ export default async function AccountsSettingsPage() {
     const isPaidOff = d.balanceCents === 0;
     return (
       <DetailGrid>
-        <DetailTile label="APR" value={`${(d.aprBasisPoints / 100).toFixed(2)}%`} />
+        <DetailTile label="APR" value={`${formatBasisPoints(d.aprBasisPoints)}`} />
         <DetailTile
           label="Minimum"
           value={d.ignoreMinimumPayment ? "No Minimum" : `${formatCents(d.minPaymentCents)}/mo`}
@@ -311,7 +325,7 @@ export default async function AccountsSettingsPage() {
           <DetailTile label="Cadence" value={cadenceLabel(dp?.cadence)} />
           <DetailTile label="Paid So Far" value={formatCents(paidCents)} tone="good" />
           <DetailTile label="Remaining" value={formatCents(d.balanceCents)} tone={d.balanceCents > 0 ? "bad" : "good"} />
-          <DetailTile label="APR" value={`${(d.aprBasisPoints / 100).toFixed(2)}%`} />
+          <DetailTile label="APR" value={`${formatBasisPoints(d.aprBasisPoints)}`} />
           <DetailTile
             label="Payoff Plan"
             value={d.includeInPayoffPlan ? "Included" : "Not Included"}
@@ -419,7 +433,6 @@ export default async function AccountsSettingsPage() {
   const assetByAccountId = new Map(assets.map((a) => [a.accountId!, a]));
   const goalByAccountId = new Map(goals.map((g) => [g.accountId!, g]));
   const untrackedByAccountId = new Map(untrackedLiabilities.map((a) => [a.id, a]));
-  const CASH_TYPES: AccountType[] = ["CHECKING", "SAVINGS"];
   const showApy = (t: AccountType) => t !== "CREDIT_CARD" && t !== "LOAN";
   // One entry per line (see simplefin-sync.ts) — a per-institution auth
   // problem doesn't flip the whole connection to status ERROR, so this list
@@ -563,7 +576,7 @@ export default async function AccountsSettingsPage() {
                     ? null
                     : setupReason
                       ? `Needs Setup — ${setupReason}`
-                      : `${(debt.aprBasisPoints / 100).toFixed(2)}% APR · ${
+                      : `${formatBasisPoints(debt.aprBasisPoints)} APR · ${
                           debt.ignoreMinimumPayment ? "No Minimum" : `${formatCents(debt.minPaymentCents)}/mo`
                         } · Due on the ${ordinal(dueDay!)}`;
                   const debtNeedsSetupNow = Boolean(setupReason);
@@ -860,23 +873,7 @@ export default async function AccountsSettingsPage() {
                             />
                             <DetailTile
                               label="Net Worth"
-                              value={
-                                CASH_TYPES.includes(a.accountType)
-                                  ? a.excludedFromNetWorth
-                                    ? "Not Counted"
-                                    : "Counted"
-                                  : a.accountType === "INVESTMENT"
-                                    ? asset
-                                      ? `Asset · ${asset.name}`
-                                      : goal
-                                        ? `Goal · ${goal.name}`
-                                        : "Not Tracked"
-                                    : a.accountType === "CREDIT_CARD" || a.accountType === "LOAN"
-                                      ? debt
-                                        ? "Counted as Debt"
-                                        : "Not Tracked"
-                                      : "—"
-                              }
+                              value={netWorthStatusLabel(a, asset, goal, debt)}
                               tone={
                                 isCashAsset || isInvestmentAsset || isInvestmentGoal || isTrackedDebt
                                   ? "good"
@@ -888,7 +885,7 @@ export default async function AccountsSettingsPage() {
                             {showApy(a.accountType) && (
                               <DetailTile
                                 label="APY"
-                                value={a.apyBasisPoints != null ? `${(a.apyBasisPoints / 100).toFixed(2)}%` : "—"}
+                                value={a.apyBasisPoints != null ? formatBasisPoints(a.apyBasisPoints) : "—"}
                                 tone={a.apyBasisPoints != null ? "good" : "muted"}
                               />
                             )}
@@ -896,11 +893,7 @@ export default async function AccountsSettingsPage() {
                             {a.displayName && a.displayName !== a.name && <DetailTile label="Bank Name" value={a.name} wide />}
                           </DetailGrid>
                         </DetailSection>
-                        {debt && (
-                          <>
-                            <DetailSection title="Debt Terms">{debtTermsTiles(debt, debtPayment)}</DetailSection>
-                          </>
-                        )}
+                        {debt && <DetailSection title="Debt Terms">{debtTermsTiles(debt, debtPayment)}</DetailSection>}
                         {showBalance && (
                           <DetailSection title="Recent Activity">
                             <ActivityList items={activityByAccountId.get(a.id) ?? []} empty="No Transactions Yet." signFlip />

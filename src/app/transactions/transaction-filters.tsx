@@ -5,11 +5,8 @@ import { useRouter } from "next/navigation";
 import { Filter, FilterX, Search, X } from "lucide-react";
 import { SelectField } from "@/components/select-field";
 import { MoneyInput } from "@/components/money-input";
+import { parseAmountParamCents } from "@/lib/money";
 
-function dollarsToCents(v: string): number | undefined {
-  const n = parseFloat(v);
-  return Number.isFinite(n) ? Math.round(n * 100) : undefined;
-}
 
 type AccountOption = { id: string; name: string; orgName: string | null; displayName: string | null; budgetTracked: boolean };
 
@@ -345,7 +342,7 @@ export function TransactionFilters({
           ].map((f) => (
             <MoneyInput
               key={`${f.label}-${amountKey}`}
-              defaultCents={dollarsToCents(f.initial)}
+              defaultCents={parseAmountParamCents(f.initial)}
               onValueChange={f.set}
               placeholder={f.placeholder}
               aria-label={f.label}

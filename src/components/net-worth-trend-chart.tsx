@@ -8,6 +8,7 @@ import { useChartHover, ChartHoverTooltip } from "@/components/chart-hover";
 import { SwipeCarousel } from "@/components/swipe-carousel";
 import { ChartRiseReveal } from "@/components/chart-rise-reveal";
 import type { NetWorthMonthlyPoint } from "@/lib/networth-history";
+import { formatCompact, niceTicks } from "@/lib/chart-axis";
 
 const WIDTH = 640;
 const HEIGHT = 200;
@@ -17,33 +18,6 @@ const PLOT_H = HEIGHT - MARGIN.top - MARGIN.bottom;
 
 function monthLabel(periodKey: string, opts: Intl.DateTimeFormatOptions): string {
   return formatDate(new Date(`${periodKey}-01T00:00:00Z`), opts);
-}
-
-// Compact axis tick text ($1.2M / $800K) — formatCents' full "$1,234.56" is
-// too wide to repeat 4-5 times up a 52px-wide axis gutter.
-function formatCompact(cents: number): string {
-  const dollars = cents / 100;
-  const sign = dollars < 0 ? "-" : "";
-  const abs = Math.abs(dollars);
-  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1)}M`;
-  if (abs >= 1_000) return `${sign}$${Math.round(abs / 1_000)}K`;
-  return `${sign}$${Math.round(abs)}`;
-}
-
-// ~4 evenly-spaced, round-number ticks spanning [min, max] — the classic
-// "nice numbers" step (1/2/5 × a power of 10), so an axis reads 0 / 200K /
-// 400K rather than whatever the raw min/max happen to be.
-function niceTicks(min: number, max: number, count = 4): number[] {
-  if (min === max) return [min];
-  const rawStep = (max - min) / count;
-  const magnitude = 10 ** Math.floor(Math.log10(rawStep));
-  const residual = rawStep / magnitude;
-  const step = (residual >= 5 ? 10 : residual >= 2 ? 5 : residual >= 1 ? 2 : 1) * magnitude;
-  const niceMin = Math.floor(min / step) * step;
-  const niceMax = Math.ceil(max / step) * step;
-  const ticks: number[] = [];
-  for (let v = niceMin; v <= niceMax + step / 2; v += step) ticks.push(Math.round(v));
-  return ticks;
 }
 
 type ChartPoint = { x: number; periodKey: string; cents: number };

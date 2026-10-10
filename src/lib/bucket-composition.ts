@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { daysAgo } from "@/lib/period";
-import { P2P_DISCOVERY_KEYWORDS } from "@/lib/p2p-keywords";
+import { isP2PMerchant } from "@/lib/p2p-keywords";
 import { budgetTrackedWhere } from "@/lib/budget-tracked";
 import type { BucketComposition, MerchantDigestEntry } from "@/lib/budget-plan";
 
@@ -128,7 +128,7 @@ export async function buildBucketAndMerchantDigest(householdId: string): Promise
   for (const t of txns) {
     const merchant = t.merchant.trim();
     if (!merchant) continue;
-    if (P2P_DISCOVERY_KEYWORDS.some((k) => merchant.toLowerCase().includes(k))) continue;
+    if (isP2PMerchant(merchant)) continue;
     if (t.bucketId && excludeFromBucketHistory(bucketMode.get(t.bucketId), t.bill?.cadence)) continue;
     denominator += 1;
 

@@ -6,12 +6,12 @@ import { z } from "zod";
 import type { Prisma } from "@prisma/client";
 import { requireOwner, belongsToHousehold } from "@/lib/access";
 import { db } from "@/lib/db";
-import { parseDollarsToCents } from "@/lib/money";
+import { parseDollarsToCents, parseOptionalToleranceCents, parsePercentToBasisPoints } from "@/lib/money";
 import { reassignTransactionsForDebt } from "@/lib/debt-reassign";
 import { nextPaidOffDate, nextPaidOffAmountCents } from "@/lib/debt-payoff";
 import { nextBillDueDate } from "@/lib/recurring-bills";
 import { upsertMerchantRule } from "@/lib/merchant-rules";
-import { nextOccurrenceOfDay, currentMonthOccurrenceOfDay, todayAsUTCDate } from "@/lib/date";
+import { nextOccurrenceOfDay, currentMonthOccurrenceOfDay, todayAsUTCDate, parseDueDay } from "@/lib/date";
 import { currentPeriodKey, utcPeriodBounds } from "@/lib/period";
 import { releaseBnplCluster, allBnplKeywords, resolveBnplKeyword } from "@/lib/bnpl-detect";
 import {
@@ -27,16 +27,6 @@ import {
 } from "@/lib/debt-payments";
 
 const cadenceEnum = z.enum(["WEEKLY", "BIWEEKLY", "MONTHLY", "ANNUAL"]);
-
-// A card/loan's recurring due date only ever needs a day-of-month (see
-// nextOccurrenceOfDay's doc comment, src/lib/date.ts) — every REVOLVING
-// due-date entry point below is implicitly MONTHLY (upsertDebtPayment always
-// hardcodes cadence: "MONTHLY" for a new tracker), so there's no cadence to
-// branch on here the way updateDebtPayment/updateBill below have to.
-function parseDueDay(dueDay: string): number | null {
-  const day = Number(dueDay);
-  return Number.isInteger(day) && day >= 1 && day <= 31 ? day : null;
-}
 
 // A "YYYY-MM-DD" first-due-date from the add-debt form -> the tracker's
 // nextDueDate. Whatever the household picked IS the first cycle (see
@@ -116,12 +106,6 @@ const installmentSchema = baseSchema.extend({
 // transaction flow, src/app/buckets/[id]/add-debt-modal.tsx) auto-select
 // the debt it just created via this same action.
 export type DebtFormState = { error?: string; debtId?: string };
-
-function parseAprToBasisPoints(apr: string): number | null {
-  const value = Number(apr.replace(/%/g, "").trim());
-  if (!Number.isFinite(value) || value < 0 || value > 100) return null;
-  return Math.round(value * 100);
-}
 
 // "Payment 3 of 12" -> 10 payments still owed (this one plus the 9 after
 // it) -> balance is just that many payments' worth, since BNPL installment
@@ -368,7 +352,7 @@ export async function createDebt(
     });
     if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
 
-    const aprBasisPoints = parseAprToBasisPoints(parsed.data.apr);
+    const aprBasisPoints = parsePercentToBasisPoints(parsed.data.apr);
     const paymentCents = parseDollarsToCents(parsed.data.paymentAmount);
     if (aprBasisPoints === null || paymentCents === null || paymentCents === 0) {
       return { error: "Enter valid APR and payment amount." };
@@ -440,7 +424,7 @@ export async function createDebt(
     });
     if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
 
-    const aprBasisPoints = parseAprToBasisPoints(parsed.data.apr);
+    const aprBasisPoints = parsePercentToBasisPoints(parsed.data.apr);
     const balanceCents = parseDollarsToCents(parsed.data.balance);
     const minPaymentCents = parseDollarsToCents(parsed.data.minPayment);
     if (aprBasisPoints === null || balanceCents === null || minPaymentCents === null) {
@@ -620,7 +604,7 @@ export async function updateDebtTerms(
   });
   if (!parsed.success) return { error: "Invalid input" };
 
-  const aprBasisPoints = parseAprToBasisPoints(parsed.data.apr);
+  const aprBasisPoints = parsePercentToBasisPoints(parsed.data.apr);
   const ignoreMinimumPayment = Boolean(parsed.data.ignoreMinimum);
   // No real minimum to enter once ignoreMinimumPayment is checked — forced
   // to 0 server-side (the field is disabled and omitted from the submit
@@ -813,7 +797,7 @@ export async function updateInstallmentTerms(
     return { error: "Current payment can't be past the total number of payments." };
   }
 
-  const aprBasisPoints = parseAprToBasisPoints(parsed.data.apr);
+  const aprBasisPoints = parsePercentToBasisPoints(parsed.data.apr);
   const paymentCents = parseDollarsToCents(parsed.data.paymentAmount);
   if (aprBasisPoints === null || paymentCents === null || paymentCents === 0) {
     return { error: "Enter a valid APR and payment amount." };
@@ -1039,7 +1023,7 @@ export async function trackAccountAsDebt(
   });
   if (!parsed.success) return { error: "Invalid input" };
 
-  const aprBasisPoints = parseAprToBasisPoints(parsed.data.apr);
+  const aprBasisPoints = parsePercentToBasisPoints(parsed.data.apr);
   const minPaymentCents = parseDollarsToCents(parsed.data.minPayment);
   if (aprBasisPoints === null || minPaymentCents === null) {
     return { error: "Enter a valid APR and minimum payment." };
@@ -1088,12 +1072,6 @@ export async function trackAccountAsDebt(
   return {};
 }
 
-function parseOptionalToleranceCents(tolerance: string | undefined): { ok: true; value: number | null } | { ok: false } {
-  if (!tolerance) return { ok: true, value: null };
-  const cents = parseDollarsToCents(tolerance);
-  if (cents === null || cents < 0) return { ok: false };
-  return { ok: true, value: cents };
-}
 
 export type DebtPaymentFormState = { error?: string };
 
@@ -1161,7 +1139,7 @@ export async function updateSyncedDebtTerms(
   });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
 
-  const aprBasisPoints = parseAprToBasisPoints(parsed.data.apr);
+  const aprBasisPoints = parsePercentToBasisPoints(parsed.data.apr);
   const ignoreMinimumPayment = Boolean(parsed.data.ignoreMinimum);
   // $0 is a legitimate minimum payment — a card sitting at a $0 balance
   // genuinely owes nothing (real incident, 2026-08-15: this blocked setting
@@ -1943,47 +1921,7 @@ export async function setDebtIncludedInPayoffPlan(debtId: string, included: bool
   revalidatePath("/");
 }
 
-// The extra-payment half of the "this cycle" checklist on /debts — the
-// minimum-payment half already has DebtPayment.lastPaidDate/
-// markDebtPaymentPaid; this is the new piece for the projected extra
-// allocation, which has no DB-backed tracker of its own (see
-// projectPaymentCalendar, src/lib/debt-payoff.ts). Upsert makes a double
-// "confirm" click idempotent — @@unique([debtId, paycheckDate]) on the
-// model does the rest (a new paycheck date always starts unconfirmed).
-export async function confirmPayoffExtraPayment(debtId: string, paycheckDateISO: string, amountCents: number) {
-  const session = await requireOwner();
-
-  const debt = await db.debt.findUnique({ where: { id: debtId } });
-  if (!belongsToHousehold(debt, session.user.householdId)) return;
-
-  const paycheckDate = new Date(paycheckDateISO);
-  await db.payoffExtraConfirmation.upsert({
-    where: { debtId_paycheckDate: { debtId, paycheckDate } },
-    create: { householdId: session.user.householdId, debtId, paycheckDate, amountCents },
-    update: { amountCents },
-  });
-  revalidatePath("/debts");
-  revalidatePath("/buckets");
-  revalidatePath("/");
-}
-
-// Undoes a mis-click on confirmPayoffExtraPayment above.
-export async function unconfirmPayoffExtraPayment(debtId: string, paycheckDateISO: string) {
-  const session = await requireOwner();
-
-  const debt = await db.debt.findUnique({ where: { id: debtId } });
-  if (!belongsToHousehold(debt, session.user.householdId)) return;
-
-  await db.payoffExtraConfirmation
-    .delete({ where: { debtId_paycheckDate: { debtId, paycheckDate: new Date(paycheckDateISO) } } })
-    .catch(() => {}); // already unconfirmed — nothing to do
-  revalidatePath("/debts");
-  revalidatePath("/buckets");
-  revalidatePath("/");
-}
-
-// The "not this one" half of the extra-payment to-do list — the opposite
-// lean from confirmPayoffExtraPayment above. Only ever offered for a
+// The "not this one" half of the extra-payment to-do list. Only ever offered for a
 // "pending" line (this cycle's own payday, per projectCyclePlan's
 // past-payday branch in src/lib/debt-payoff.ts) — that payday's extra is
 // otherwise assumed to go through on schedule, same as any future payday

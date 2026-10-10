@@ -3,7 +3,7 @@ import { monthlyEquivalentCents, addPaycheckCadence } from "@/lib/income-calc";
 import { currentPeriodKey, utcPeriodBounds } from "@/lib/period";
 import { offsetSumByCreditId, countedIncomeCents } from "@/lib/reimbursements";
 import { detectRecurringIncome } from "@/lib/income-detect";
-import { todayAsUTCDate } from "@/lib/date";
+import { DAY_MS, todayAsUTCDate } from "@/lib/date";
 import { MAX_CATCHUP_CYCLES } from "@/lib/recurring-bills";
 import { MATCH_WINDOW_DAYS, catchupCycleWindow, fastForwardCycleDate } from "@/lib/bill-match-window";
 import type { IncomeSchedule } from "@/lib/debt-payoff";
@@ -315,7 +315,6 @@ export async function getAdHocIncomeForPeriod(householdId: string, periodKey: st
   return { entries, totalCents: entries.reduce((sum, e) => sum + e.amountCents, 0) };
 }
 
-const DAY_MS = 86_400_000;
 
 // The Income counterpart to matchBillPayments (recurring-bills.ts): runs
 // every sync, right after categorization. Only ever matches a tracked

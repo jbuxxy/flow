@@ -4,14 +4,12 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { requireFullAccess } from "@/lib/access";
+import { requireFullAccess, requireOwned } from "@/lib/access";
 import { parseDollarsToCents } from "@/lib/money";
 import { checkAndSendGoalAlerts, goalSavedCents, resolveGoalAccountLink } from "@/lib/savings";
 
-async function requireGoalInHousehold(goalId: string, householdId: string) {
-  const goal = await db.savingsGoal.findUnique({ where: { id: goalId } });
-  if (!goal || goal.householdId !== householdId) throw new Error("Not found");
-  return goal;
+function requireGoalInHousehold(goalId: string, householdId: string) {
+  return requireOwned(db.savingsGoal.findUnique({ where: { id: goalId } }), householdId);
 }
 
 const contributeSchema = z.object({

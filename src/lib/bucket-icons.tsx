@@ -185,7 +185,7 @@ export function keywordIconKey(name: string): BucketIconKey | null {
   return null;
 }
 
-export function iconFromKey(key: string | null | undefined): LucideIcon | null {
+function iconFromKey(key: string | null | undefined): LucideIcon | null {
   return key && key in BUCKET_ICONS ? BUCKET_ICONS[key as BucketIconKey] : null;
 }
 

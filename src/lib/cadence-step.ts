@@ -1,4 +1,5 @@
 import type { BillCadence } from "@prisma/client";
+import { DAY_MS } from "@/lib/date";
 
 // The one cadence step every bill, debt-payment, paycheck and BNPL schedule
 // walks with. Pure and client-safe (type-only Prisma import), so server
@@ -15,7 +16,6 @@ import type { BillCadence } from "@prisma/client";
 // UTC arithmetic throughout: these are `@db.Date` values, UTC midnight for a
 // calendar day (src/lib/date.ts). Any time-of-day on the input is kept.
 
-const DAY_MS = 86_400_000;
 
 function daysInUtcMonth(year: number, monthIndex0: number): number {
   return new Date(Date.UTC(year, monthIndex0 + 1, 0)).getUTCDate();

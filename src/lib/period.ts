@@ -94,3 +94,14 @@ export function currentWeekKey(date = new Date()): string {
   const d = String(start.getUTCDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
 }
+
+// "October 2026" for a "YYYY-MM" period key.
+export function periodLabel(periodKey: string): string {
+  const { start } = periodBounds(periodKey);
+  return start.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+}
+
+export function monthsAgoPeriodKey(monthsAgo: number, from = new Date()): string {
+  return currentPeriodKey(new Date(from.getFullYear(), from.getMonth() - monthsAgo, 1));
+}
+

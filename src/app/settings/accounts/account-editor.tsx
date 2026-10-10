@@ -18,7 +18,7 @@ import {
 } from "@/app/debts/actions";
 import { InlineSaveButton } from "@/components/inline-save-button";
 import { useActionToast } from "@/lib/use-action-toast";
-import { showToast } from "@/lib/toast";
+import { withToast } from "@/lib/toast";
 import { MoneyInput } from "@/components/money-input";
 import { PercentInput } from "@/components/percent-input";
 import { DayOfMonthPicker } from "@/components/day-of-month-picker";
@@ -31,14 +31,7 @@ const initialState: RenameAccountState = {};
 const initialTermsState: UpdateSyncedDebtTermsState = {};
 const initialApyState: UpdateAccountApyState = {};
 
-async function toasted(run: () => Promise<unknown>, message = "Saved") {
-  try {
-    await run();
-    showToast(message);
-  } catch {
-    showToast("Couldn’t Save", "error");
-  }
-}
+const toasted = withToast;
 
 // A linked debt's rate/payment/due-date, carried through unedited on every
 // save (2026-08-16) — the form below only surfaces the three fields a

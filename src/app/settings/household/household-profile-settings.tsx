@@ -4,16 +4,9 @@ import { useState, useTransition } from "react";
 import { updateGoalPosture, updateHouseholdSize } from "../actions";
 import { SelectField } from "@/components/select-field";
 import { GOAL_POSTURE_OPTIONS } from "@/lib/goal-posture";
-import { showToast } from "@/lib/toast";
+import { withToast } from "@/lib/toast";
 
-async function saved(run: () => Promise<unknown>) {
-  try {
-    await run();
-    showToast("Settings Saved");
-  } catch {
-    showToast("Couldn’t Save", "error");
-  }
-}
+const saved = (run: () => Promise<unknown>) => withToast(run, "Settings Saved");
 
 type HouseholdGoalPosture = "DEBT_PAYDOWN" | "SAVINGS_FOCUSED" | "BALANCED";
 

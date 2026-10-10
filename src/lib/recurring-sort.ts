@@ -39,7 +39,7 @@ export function patternDueDay(p: { nextDueDate: string | null; dayOfMonthStart: 
   return dueDayOf(p.nextDueDate) ?? p.dayOfMonthStart ?? null;
 }
 
-export function compareRecurring(a: RecurringSortable, b: RecurringSortable, order: RecurringSortOrder): number {
+function compareRecurring(a: RecurringSortable, b: RecurringSortable, order: RecurringSortOrder): number {
   if (a.sinks !== b.sinks) return a.sinks ? 1 : -1;
   const byName = a.sortName.localeCompare(b.sortName);
   if (order === "alphabetical") return byName;

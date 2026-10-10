@@ -1,41 +1,32 @@
 import { redirect, notFound } from "next/navigation";
-import { PAYMENT_RECEIPT_SELECT, paymentReceiptOf } from "@/lib/payment-receipt";
+import { PAYMENT_RECEIPT_SELECT } from "@/lib/payment-receipt";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getBucketsWithProgress } from "@/lib/buckets";
-import { currentPeriodBillWhere, getActiveBillCycleSkips, skipShownOnBillRow } from "@/lib/recurring-bills";
+import { currentPeriodBillWhere, getActiveBillCycleSkips } from "@/lib/recurring-bills";
 import {
   spendEntriesFrom,
   spendMerchantKey,
   ACCOUNTED_FOR_SELECT,
   accountedForCents,
-  accountedForDisplayList,
 } from "@/lib/spend";
 import { currentPeriodKey, utcPeriodBounds } from "@/lib/period";
-import { splitPlanExtraPayments, buildCycleSlots, occurrencesInPeriod, slotBounds, cyclePaymentStatus } from "@/lib/cycle-slots";
+import { occurrencesInPeriod } from "@/lib/cycle-slots";
 import { getLabelSuggestionsByMerchant } from "@/lib/transaction-labels";
 import { getReimbursementSuggestions } from "@/lib/reimbursements";
 import {
   getAccountedForSuggestions,
   isPayoffPlanEnabled,
-  plannedExtraByDebtInPeriod,
-  postedExtraNettedByDebt,
-  getSkippedMinimumKeys,
-  supersededPayoffExtraByDebtInPeriod,
-  planExtraTargetsByDebt,
 } from "@/lib/debt-payments";
-import { coveredMinimumDates, ledgerMinimumCents } from "@/lib/minimum-ledger";
-import { confirmProjectedExtras, capAtPayoffCents } from "@/lib/debt-payoff";
 import { pickableDebtWhere } from "@/lib/debt-reassign";
 import { AppShell } from "@/components/app-shell";
 import { ensureBucketIcons } from "@/lib/bucket-icons-sync";
+import { billCardInclude, buildBillCards, buildDebtPaymentCards, debtPaymentCardInclude } from "@/lib/recurring-cards";
 import { BucketProgressBar } from "@/components/bucket-progress-bar";
 import { SwipeCarousel } from "@/components/swipe-carousel";
 import { SinglesList, type SinglesRow } from "./singles-list";
 import type { ReceiptLineItem } from "@/app/transactions/transaction-row";
 import { BucketBillsSection } from "./bucket-bills-section";
-import { dueStatus } from "@/lib/date";
-import type { DebtPaymentWithName } from "@/app/debts/debt-payment-card";
 import { spendBreakdownCards, spendBreakdownLabelOrder, type SpendEntry } from "./bucket-spend-breakdown";
 import { serializePatternDates, type PatternData } from "@/lib/pattern-data";
 import { currentPeriodPatternWhere } from "@/lib/pattern-match";
@@ -44,6 +35,7 @@ import { BucketTitleSettings } from "./bucket-title-settings";
 import type { BucketAlertOverridesByUser } from "./bucket-settings-form";
 import type { BucketAlertOverrideType } from "./actions";
 import { defaultNotificationEnabled } from "@/lib/notification-preferences";
+import { belongsToHousehold } from "@/lib/access";
 
 export default async function BucketDetailPage({
   params,
@@ -58,7 +50,7 @@ export default async function BucketDetailPage({
   // this household) so the row loaded just below carries a fresh icon key.
   await ensureBucketIcons(session.user.householdId);
   const bucket = await db.bucket.findUnique({ where: { id } });
-  if (!bucket || bucket.householdId !== session.user.householdId) notFound();
+  if (!belongsToHousehold(bucket, session.user.householdId)) notFound();
 
   const isOwner = session.user.role === "OWNER";
   // Every household member (for the owner-only per-bucket alert "Notify"
@@ -187,35 +179,7 @@ export default async function BucketDetailPage({
       db.recurringBill.findMany({
         where: { householdId: session.user.householdId, bucketId: bucket.id, ...currentPeriodBillWhere() },
         orderBy: { nextDueDate: "asc" },
-        include: {
-          category: { select: { name: true } },
-          payments: {
-            orderBy: { occurredOn: "desc" },
-            select: {
-              id: true,
-              amountCents: true,
-              occurredOn: true,
-              pending: true,
-              reimbursedBy: { select: { id: true, merchant: true, amountCents: true, occurredOn: true } },
-              ...PAYMENT_RECEIPT_SELECT,
-            },
-          },
-          // CREDIT patterns pinned to this bill (countsAsIncome:false,
-          // billId set — see the RecurringPattern schema comment and
-          // matchReimbursements, src/lib/reimbursements.ts) — shown inline
-          // on the bill's own row, the only page a reimbursement pattern
-          // has any real connection to.
-          reimbursementPatterns: {
-            where: currentPeriodPatternWhere(),
-            orderBy: { label: "asc" },
-            // No category relation — a bill-pinned reimbursement never
-            // carries its own; the parent bill's own category (already
-            // selected above) is what its construction site below uses.
-            include: {
-              transactions: { orderBy: { occurredOn: "desc" }, select: { id: true, amountCents: true, occurredOn: true, pending: true, ...PAYMENT_RECEIPT_SELECT } },
-            },
-          },
-        },
+        include: billCardInclude(),
       }),
       // Purely a display grouping (see the schema comment on
       // DebtPayment.bucketId) — a debt payment assigned to this bucket
@@ -228,39 +192,7 @@ export default async function BucketDetailPage({
         // re-check that on its own.
         where: { householdId: session.user.householdId, bucketId: bucket.id, active: true, hiddenFromBucket: false },
         orderBy: { nextDueDate: "asc" },
-        include: {
-          debt: {
-            select: {
-              name: true,
-              label: true,
-              source: true,
-              debtType: true,
-              purchaseDate: true,
-              balanceCents: true,
-              aprBasisPoints: true,
-              paidOffDate: true,
-              includeInPayoffPlan: true,
-              ignoreMinimumPayment: true,
-              installmentsTotal: true,
-              installmentsRemaining: true,
-              receiptItems: true,
-              receiptTotalCents: true,
-              account: { select: { name: true, orgName: true, displayName: true, budgetTracked: true } },
-            },
-          },
-          category: { select: { name: true } },
-          payments: {
-            orderBy: { occurredOn: "desc" },
-            select: {
-              id: true,
-              amountCents: true,
-              occurredOn: true,
-              pending: true,
-              notAccountedFor: true,
-              ...ACCOUNTED_FOR_SELECT,
-            },
-          },
-        },
+        include: debtPaymentCardInclude(),
       }),
       // Recurring P2P activity (weekly training, monthly dance/preschool —
       // amount range + optional weekday/day-of-month hints, see
@@ -368,7 +300,8 @@ export default async function BucketDetailPage({
     .filter((p) => p.debt.account?.budgetTracked)
     .flatMap((p) =>
       p.payments
-        .filter((t) => !t.notAccountedFor && accountedForCents(t) < Math.abs(t.amountCents))
+        // This month's only — see the identical bound on bills/page.tsx.
+        .filter((t) => t.occurredOn >= start && !t.notAccountedFor && accountedForCents(t) < Math.abs(t.amountCents))
         .map((t) => ({
           id: t.id,
           debtId: p.debtId,
@@ -405,87 +338,7 @@ export default async function BucketDetailPage({
   // currently selected (see the schema comment on BillCategory.bucketId).
   const bucketCategories = categories.filter((c) => c.bucketId === bucket.id);
 
-  const mappedBills = bills.map((b) => {
-    const paymentsAbs = b.payments.map((p) => ({
-      id: p.id,
-      amountCents: p.amountCents,
-      occurredOn: p.occurredOn,
-      pending: p.pending,
-      reimbursedBy: p.reimbursedBy,
-      receipt: paymentReceiptOf(p),
-    }));
-    const { cyclePaid, currentCyclePayments } = cyclePaymentStatus(
-      b.nextDueDate,
-      b.cadence,
-      paymentsAbs,
-      start,
-      end,
-      slotBounds(start, { trackerCreatedAt: b.createdAt }),
-    );
-    const toDisplay = (p: (typeof paymentsAbs)[number]) => ({
-      id: p.id,
-      amountCents: p.amountCents,
-      occurredOn: p.occurredOn.toISOString().slice(0, 10),
-      pending: p.pending,
-      receipt: p.receipt,
-      reimbursedBy: p.reimbursedBy.map((r) => ({
-        id: r.id,
-        merchant: r.merchant,
-        amountCents: r.amountCents,
-        occurredOn: r.occurredOn.toISOString().slice(0, 10),
-      })),
-    });
-    return {
-      id: b.id,
-      name: b.name,
-      merchant: b.merchant,
-      amountCents: b.amountCents,
-      toleranceCents: b.toleranceCents,
-      cadence: b.cadence,
-      categoryId: b.categoryId,
-      categoryName: b.category?.name ?? null,
-      nextDueDate: b.nextDueDate.toISOString().slice(0, 10),
-      dueStatus: dueStatus(b.nextDueDate.toISOString().slice(0, 10)),
-      lastPaidDate: b.lastPaidDate ? b.lastPaidDate.toISOString().slice(0, 10) : null,
-      dueDateLocked: b.dueDateLocked,
-      bucketId: b.bucketId,
-      canceled: !b.active,
-      payments: paymentsAbs.map(toDisplay),
-      cyclePaid,
-      currentCyclePayments: currentCyclePayments.map(toDisplay),
-      skippedCycleDueDate: skipShownOnBillRow(activeBillSkips.get(b.id), start)?.toISOString().slice(0, 10) ?? null,
-      reimbursementPatterns: b.reimbursementPatterns.map((p) => ({
-        id: p.id,
-        label: p.label,
-        direction: p.direction,
-        channelKeyword: p.channelKeyword,
-        amountMinCents: p.amountMinCents,
-        amountMaxCents: p.amountMaxCents,
-        dayOfMonthStart: p.dayOfMonthStart,
-        dayOfMonthEnd: p.dayOfMonthEnd,
-        weekdays: p.weekdays,
-        bucketId: p.bucketId,
-        bucketName: null,
-        debtId: p.debtId,
-        debtName: null,
-        countsAsIncome: p.countsAsIncome,
-        billId: p.billId,
-        billName: b.name,
-        categoryId: p.categoryId,
-        // The bill's own category, not the pattern's own — a bill-pinned
-        // reimbursement never carries a separate one (household feedback,
-        // 2026-09-11).
-        categoryName: b.category?.name ?? null,
-        counterpartyName: p.counterpartyName,
-        noteKeywords: p.noteKeywords,
-        cadence: p.cadence,
-        toleranceCents: p.toleranceCents,
-        dueDateLocked: p.dueDateLocked,
-        active: p.active,
-        ...serializePatternDates(p, start, end),
-      })),
-    };
-  });
+  const mappedBills = buildBillCards(bills, activeBillSkips, start, end);
 
   // "This cycle" is the real current calendar month (household correction,
   // 2026-08-25 — see debt-row.tsx's CycleMinimum comment), computed via the
@@ -503,147 +356,13 @@ export default async function BucketDetailPage({
   // via plannedExtraCentsByDebtInRange (spendByBucketInRange, src/lib/buckets.ts).
   // Paired with the superseded-payoff adjustment below (one query each, both
   // keyed by debtId) — see confirmProjectedExtras where they meet.
-  const [plannedExtraLinesByDebtId, supersededPayoffExtraByDebtId, skippedMinimumKeys, postedExtraNettedByDebtId] = await Promise.all([
-    plannedExtraByDebtInPeriod(session.user.householdId, utcMonthStart, utcMonthEnd),
-    supersededPayoffExtraByDebtInPeriod(session.user.householdId, utcMonthStart, utcMonthEnd),
-    getSkippedMinimumKeys(session.user.householdId, utcMonthStart, utcMonthEnd),
-    postedExtraNettedByDebt(session.user.householdId),
-  ]);
-
-  const planExtrasByDebtId = await planExtraTargetsByDebt(session.user.householdId, utcMonthStart, utcMonthEnd);
-  const mappedDebtPayments = debtPayments.map((p) => {
-    // A card/loan payment can post on the debt's own liability account as a
-    // negative credit (see filterDebtPaymentTwins, debt-payments.ts) — this
-    // ledger always shows "amount paid," never the account-native sign.
-    const paymentsAbs = p.payments.map((t) => ({
-      id: t.id,
-      amountCents: Math.abs(t.amountCents),
-      occurredOn: t.occurredOn,
-      pending: t.pending,
-      notAccountedFor: t.notAccountedFor,
-      accountedForBy: accountedForDisplayList(t),
-    }));
-    // See slotBounds (cycle-slots.ts): INSTALLMENT keeps a hard purchase-date
-    // floor so a phantom pre-purchase slot never steals the real payment
-    // positionally (Klarna–Puma, BIWEEKLY); a REVOLVING tracker's occurrences
-    // are all real, only an *unpaid* pre-createdAt one is hidden as a
-    // phantom, while a real pre-createdAt payment still reads "Minimum … —
-    // paid" instead of vanishing.
-    // A paid payoff-plan extra (matched to its payday's planned figure) never
-    // fills the minimum slot — see splitPlanExtraPayments (cycle-slots.ts).
-    const { planExtraPayments, rest: slotPayments } = splitPlanExtraPayments(
-      paymentsAbs,
-      planExtrasByDebtId.get(p.debtId) ?? [],
-    );
-    let { slots, extraPayments } = buildCycleSlots(
-      p.nextDueDate,
-      p.cadence,
-      utcMonthStart,
-      utcMonthEnd,
-      slotPayments,
-      slotBounds(utcMonthStart, {
-        debtType: p.debt.debtType,
-        purchaseDate: p.debt.purchaseDate,
-        trackerCreatedAt: p.createdAt,
-        cadence: p.cadence,
-        nextDueDate: p.nextDueDate,
-        lastPaidDate: p.lastPaidDate,
-        installmentsRemaining: p.debt.installmentsRemaining,
-        cycleRestartDueDate: p.cycleRestartDueDate,
-      }),
-    );
-    // Minimums an earlier, bigger payment already covered — still listed as
-    // expected payments until skipped (resolveMinimumLedger). Computed before
-    // the no-minimum fold below empties `slots`.
-    const coveredMinimums = coveredMinimumDates({
-      slots,
-      extraPayments,
-      minimumCents: ledgerMinimumCents({
-        paidOff: p.debt.balanceCents <= 0,
-        nextDueThisMonth: p.nextDueDate >= utcMonthStart && p.nextDueDate < utcMonthEnd,
-        amountDueCents: p.amountDueCents,
-        minimumCents: p.debt.ignoreMinimumPayment ? 0 : p.amountCents,
-      }),
-      skippedDates: new Set(
-        [...skippedMinimumKeys].flatMap((k) => (k.startsWith(`${p.debtId}:`) ? [k.slice(p.debtId.length + 1)] : [])),
-      ),
-    }).map((d) => d.toISOString().slice(0, 10));
-    extraPayments = [
-      ...planExtraPayments.filter((t) => t.occurredOn >= utcMonthStart && t.occurredOn < utcMonthEnd),
-      ...extraPayments,
-    ].sort((a, b) => a.occurredOn.getTime() - b.occurredOn.getTime());
-    // A no-minimum card (ignoreMinimumPayment) has no "Minimum … due/paid"
-    // concept — fold every paired payment into the flat list so the ledger
-    // lists each as a plain payment, never a "Minimum $0.00" line. Same
-    // treatment as debts/page.tsx.
-    if (p.debt.ignoreMinimumPayment) {
-      extraPayments = [...slots.flatMap((s) => (s.payment ? [s.payment] : [])), ...extraPayments].sort(
-        (a, b) => a.occurredOn.getTime() - b.occurredOn.getTime(),
-      );
-      slots = [];
-    }
-    const toISO = (t: (typeof paymentsAbs)[number]) => ({ ...t, occurredOn: t.occurredOn.toISOString().slice(0, 10) });
-    // `confirmed` per projected extra: consume the debt's real extra-payment
-    // total this month oldest-projected-line-first, minus whatever already
-    // went toward a payoff target the live plan has since dropped. Shared with
-    // bills/page.tsx and payoff-planner's thisCycleExtrasByDebtId — see
-    // confirmProjectedExtras (debt-payoff.ts).
-    const projectedExtras = confirmProjectedExtras(
-      plannedExtraLinesByDebtId.get(p.debtId) ?? [],
-      extraPayments.reduce((s, t) => s + t.amountCents, 0),
-      supersededPayoffExtraByDebtId.get(p.debtId) ?? 0,
-      postedExtraNettedByDebtId.get(p.debtId) ?? 0,
-    );
-
-    return {
-      id: p.id,
-      debtName: p.debt.account?.displayName ?? p.debt.name,
-      // See the identical fields on bills/page.tsx's own DebtPaymentWithName
-      // construction — logo matching also searches these.
-      accountRawName: p.debt.account?.name ?? null,
-      accountOrgName: p.debt.account?.orgName ?? null,
-      debtLabel: p.debt.label,
-      balanceCents: p.debt.balanceCents,
-      amountCents: p.amountCents,
-      dueLineCents: capAtPayoffCents(p.amountCents, p.debt),
-      toleranceCents: p.toleranceCents,
-      cadence: p.cadence,
-      categoryId: p.categoryId,
-      categoryName: p.category?.name ?? null,
-      nextDueDate: p.nextDueDate.toISOString().slice(0, 10),
-      nextDueThisMonth: p.nextDueDate >= utcMonthStart && p.nextDueDate < utcMonthEnd,
-      lastPaidDate: p.lastPaidDate ? p.lastPaidDate.toISOString().slice(0, 10) : null,
-      dueDateLocked: p.dueDateLocked,
-      // dueDateLocked alone only means "needs setup" for a REVOLVING debt
-      // (debtSetupReason's own gating) — an INSTALLMENT/BNPL plan's rolling
-      // due-date projection is *expected* to sit unlocked between real
-      // payments (see matchInstallmentPayments), not a red "needs
-      // attention" dot on every ongoing plan (real report, 2026-09-07: six
-      // BNPL trackers lit up the moment their projections started being
-      // marked honest instead of falsely confirmed).
-      needsAttention: (p.debt.debtType === "REVOLVING" && !p.dueDateLocked) || debtIdsWithPendingReview.has(p.debtId),
-      // See the schema comment on DebtPayment.bucketId — a bucket-
-      // assigned debt payment counts toward this bucket's total, so if
-      // the underlying account is also Account.budgetTracked (its own
-      // purchases already categorize into spend elsewhere), the same
-      // money counts twice. Flagged in BucketBillsSection.
-      accountBudgetTracked: p.debt.account?.budgetTracked ?? false,
-      bucketId: p.bucketId,
-      paidOff: p.debt.balanceCents === 0,
-      paidOffDate: p.debt.paidOffDate ? p.debt.paidOffDate.toISOString().slice(0, 10) : null,
-      linked: p.debt.source === "SIMPLEFIN",
-      includeInPayoffPlan: p.debt.includeInPayoffPlan,
-      ignoreMinimumPayment: p.debt.ignoreMinimumPayment,
-      installmentsTotal: p.debt.installmentsTotal,
-      installmentsRemaining: p.debt.installmentsRemaining,
-      debtReceiptItems: (p.debt.receiptItems as DebtPaymentWithName["debtReceiptItems"]) ?? null,
-      debtReceiptTotalCents: p.debt.receiptTotalCents,
-      slots: slots.map((s) => ({ date: s.date.toISOString().slice(0, 10), payment: s.payment ? toISO(s.payment) : null })),
-      extraPayments: extraPayments.map(toISO),
-      projectedExtras,
-      coveredMinimums,
-    };
-  });
+  const mappedDebtPayments = await buildDebtPaymentCards(
+    session.user.householdId,
+    debtPayments,
+    debtIdsWithPendingReview,
+    utcMonthStart,
+    utcMonthEnd,
+  );
 
   // A bucket represents this calendar month — a bill / debt payment whose
   // next occurrence is a future month (a newly-tracked bill first due next

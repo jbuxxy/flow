@@ -17,7 +17,7 @@ import {
 } from "@/lib/merchant-rules";
 import { reassignTransactionsForMerchant } from "@/lib/merchant-rule-reassign";
 import { previewRoutingRule, type RoutingRulePreview } from "@/lib/routing-rules";
-import { P2P_DISCOVERY_KEYWORDS } from "@/lib/p2p-keywords";
+import { isP2PMerchant } from "@/lib/p2p-keywords";
 import { isGenericCardPaymentDescriptor } from "@/lib/debt-payment-pattern";
 import { dismissUnlabeledP2P } from "@/lib/p2p-transfers";
 
@@ -185,7 +185,7 @@ export async function reassignTransaction(
   const ruleMerchant = resolvedBusiness || transaction.merchant;
   const isP2P =
     !resolvedBusiness &&
-    P2P_DISCOVERY_KEYWORDS.some((k) => transaction.merchant.toLowerCase().includes(k));
+    isP2PMerchant(transaction.merchant);
 
   if ("bucketId" in target) {
     // A non-budget-tracked account's spend (see Account.budgetTracked) must
@@ -396,7 +396,7 @@ export async function setAmountRoutingRule(input: {
 
   // Same reasoning as reassignTransaction's isP2P guard — a bare
   // "Venmo"/"PayPal" rule would capture every unrelated P2P payment.
-  if (P2P_DISCOVERY_KEYWORDS.some((k) => merchant.toLowerCase().includes(k))) {
+  if (isP2PMerchant(merchant)) {
     return { error: "Amount routing isn't available for peer-to-peer payment apps." };
   }
 
@@ -448,7 +448,7 @@ export async function updateAmountRoutingRule(input: {
   const rule = await db.merchantRule.findUnique({ where: { id: input.ruleId } });
   // amountMinCents != null is the "is a bounded override" check — never let
   // this touch a merchant's base rule.
-  if (!rule || rule.householdId !== session.user.householdId || rule.amountMinCents == null) {
+  if (!belongsToHousehold(rule, session.user.householdId) || rule.amountMinCents == null) {
     return { error: "Rule not found." };
   }
 
@@ -518,7 +518,7 @@ export async function previewRoutingRuleAction(
   if (!session?.user) redirect("/login");
 
   const fromBucket = await db.bucket.findUnique({ where: { id: fromBucketId }, select: { householdId: true } });
-  if (!fromBucket || fromBucket.householdId !== session.user.householdId) {
+  if (!belongsToHousehold(fromBucket, session.user.householdId)) {
     return { preview: null, error: "Bucket not found." };
   }
   return previewRoutingRule(session.user.householdId, text, fromBucketId);
@@ -540,7 +540,7 @@ export async function applyRoutingRuleAction(input: ApplyRoutingRuleInput): Prom
   const householdId = session.user.householdId;
 
   const fromBucket = await db.bucket.findUnique({ where: { id: input.fromBucketId }, select: { householdId: true } });
-  if (!fromBucket || fromBucket.householdId !== householdId) return { error: "Bucket not found." };
+  if (!belongsToHousehold(fromBucket, householdId)) return { error: "Bucket not found." };
 
   if (!Number.isInteger(input.maxCents) || input.maxCents <= 0) return { error: "Enter an amount above $0." };
 
@@ -548,7 +548,7 @@ export async function applyRoutingRuleAction(input: ApplyRoutingRuleInput): Prom
   // never a generic P2P name.
   const cleaned = [...new Set(input.merchants.map((m) => m.trim()).filter(Boolean))];
   if (cleaned.length === 0) return { error: "No merchants selected." };
-  if (cleaned.some((m) => P2P_DISCOVERY_KEYWORDS.some((k) => m.toLowerCase().includes(k)))) {
+  if (cleaned.some((m) => isP2PMerchant(m))) {
     return { error: "Amount routing isn't available for peer-to-peer payment apps." };
   }
   const real = await db.transaction.findMany({
@@ -564,7 +564,7 @@ export async function applyRoutingRuleAction(input: ApplyRoutingRuleInput): Prom
   let targetBucketId: string;
   if (input.target.kind === "existing") {
     const b = await db.bucket.findUnique({ where: { id: input.target.bucketId } });
-    if (!b || b.householdId !== householdId) return { error: "Destination bucket not found." };
+    if (!belongsToHousehold(b, householdId)) return { error: "Destination bucket not found." };
     if (b.trackingMode === "RECURRING") return { error: "Pick a bucket that tracks single purchases." };
     targetBucketId = b.id;
   } else {
@@ -576,7 +576,7 @@ export async function applyRoutingRuleAction(input: ApplyRoutingRuleInput): Prom
     // leave a new bucket with no funding story.
     for (const adj of input.target.adjustments) {
       const b = await db.bucket.findUnique({ where: { id: adj.bucketId } });
-      if (!b || b.householdId !== householdId) return { error: "A bucket being rebalanced wasn't found." };
+      if (!belongsToHousehold(b, householdId)) return { error: "A bucket being rebalanced wasn't found." };
       if (!Number.isInteger(adj.capCents) || adj.capCents < 0) return { error: "Enter a valid adjusted budget." };
       await db.bucket.update({ where: { id: b.id }, data: { monthlyCapCents: adj.capCents } });
     }

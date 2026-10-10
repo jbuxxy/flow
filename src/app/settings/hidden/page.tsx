@@ -1,13 +1,10 @@
-import { redirect } from "next/navigation";
-import { auth } from "@/lib/auth";
+import { requireOwner } from "@/lib/access";
 import { getHiddenItems } from "@/lib/hidden-items";
 import { AppShell } from "@/components/app-shell";
 import { HiddenItems } from "@/app/settings/accounts/hidden-items";
 
 export default async function HiddenItemsPage() {
-  const session = await auth();
-  if (!session?.user) redirect("/login");
-  if (session.user.role !== "OWNER") redirect("/");
+  const session = await requireOwner();
 
   const hiddenItems = await getHiddenItems(session.user.householdId);
 

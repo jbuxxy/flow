@@ -12,6 +12,7 @@ import {
   type GoalPlanProposal,
 } from "@/lib/ai";
 import type { GoalAlertLevel, DataSource, AccountType } from "@prisma/client";
+import { belongsToHousehold } from "@/lib/access-rules";
 
 // A goal watches money accumulating in an account the household owns —
 // never a liability. Excludes CREDIT_CARD/LOAN so a card/loan balance can't
@@ -21,7 +22,7 @@ export const GOAL_LINKABLE_ACCOUNT_TYPES: AccountType[] = ["CHECKING", "SAVINGS"
 // ~30.44-day months — a rough "months until this date" for goal-pace math,
 // not a precise calendar diff. Shared by the weekly nudge, the goal-insight
 // prompt, and the "Set the Month" budget planner so all three pace the same way.
-export const MS_PER_AVG_MONTH = 1000 * 60 * 60 * 24 * 30.44;
+const MS_PER_AVG_MONTH = 1000 * 60 * 60 * 24 * 30.44;
 
 export function monthsUntilTargetDate(targetDate: Date | null, from: number = Date.now()): number | null {
   if (!targetDate) return null;
@@ -185,7 +186,7 @@ export async function resolveGoalAccountLink(
   if (!accountId) return { accountId: null, source: "MANUAL" };
 
   const account = await db.account.findUnique({ where: { id: accountId } });
-  if (!account || account.householdId !== householdId) return { accountId: null, source: "MANUAL" };
+  if (!belongsToHousehold(account, householdId)) return { accountId: null, source: "MANUAL" };
   if (!GOAL_LINKABLE_ACCOUNT_TYPES.includes(account.accountType)) return { accountId: null, source: "MANUAL" };
 
   const balanceCents = Math.max(account.balanceCents, 0);

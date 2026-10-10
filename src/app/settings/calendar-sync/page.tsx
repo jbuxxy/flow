@@ -1,13 +1,10 @@
-import { redirect } from "next/navigation";
-import { auth } from "@/lib/auth";
+import { requireOwner } from "@/lib/access";
 import { AppShell } from "@/components/app-shell";
 import { CalendarSyncPanel } from "./calendar-sync-panel";
 import { ensureCalendarFeedUrl } from "./actions";
 
 export default async function CalendarSyncSettingsPage() {
-  const session = await auth();
-  if (!session?.user) redirect("/login");
-  if (session.user.role !== "OWNER") redirect("/");
+  const session = await requireOwner();
 
   const url = await ensureCalendarFeedUrl();
 

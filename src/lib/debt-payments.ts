@@ -35,7 +35,7 @@ import type { CalendarDayEvent } from "@/app/debts/cycle-calendar-view";
 import type { IcsEvent } from "@/lib/ics";
 import { getPrimaryIncomeSchedule } from "@/lib/income";
 import { currentWeekBounds, currentPeriodKey, utcPeriodBounds, daysAgo } from "@/lib/period";
-import { todayAsUTCDate } from "@/lib/date";
+import { DAY_MS, todayAsUTCDate } from "@/lib/date";
 import {
   buildCycleSlots,
   occurrencesInPeriod,
@@ -53,11 +53,12 @@ import { allBnplKeywords, resolveBnplKeyword } from "@/lib/bnpl-detect";
 import { upsertMerchantRule } from "@/lib/merchant-rules";
 import { isGenericCardPaymentDescriptor } from "@/lib/debt-payment-pattern";
 import { currentPeriodPatternWhere } from "@/lib/pattern-match";
-import { DAY_MS, classifyCadence, MIN_OCCURRENCES, getDismissedBillKeys, type BillSuggestion } from "@/lib/bill-detect";
+import { classifyCadence, MIN_OCCURRENCES, getDismissedBillKeys, type BillSuggestion } from "@/lib/bill-detect";
 import { mapConcurrent } from "@/lib/concurrency";
 import { SPEND_TX_SELECT, netChargeCents } from "@/lib/spend";
 import { stepCadence } from "@/lib/cadence-step";
 import type { BillCadence } from "@prisma/client";
+import { ymd } from "@/lib/ics";
 
 // The debt-payment counterpart to src/lib/recurring-bills.ts — split out
 // because a card/loan's tracked payment (DebtPayment) diverged enough from
@@ -314,8 +315,16 @@ export async function filterDebtPaymentTwins<
   const isTwinPair = (a: { amountCents: number; occurredOn: Date }, b: { amountCents: number; occurredOn: Date }) =>
     a.amountCents === -b.amountCents && Math.abs(a.occurredOn.getTime() - b.occurredOn.getTime()) <= windowMs;
 
+  // Only rows that could pair with a candidate — the opposite sign of one
+  // of their amounts, within the window of one of their dates — instead of
+  // every transaction ever linked to this tracker.
+  const times = candidates.map((c) => c.occurredOn.getTime());
   const alreadyLinked = await db.transaction.findMany({
-    where: { debtPaymentId },
+    where: {
+      debtPaymentId,
+      amountCents: { in: [...new Set(candidates.map((c) => -c.amountCents))] },
+      occurredOn: { gte: new Date(Math.min(...times) - windowMs), lte: new Date(Math.max(...times) + windowMs) },
+    },
     select: { amountCents: true, occurredOn: true },
   });
 
@@ -618,20 +627,28 @@ export async function matchDebtPayments(householdId: string): Promise<void> {
   // grows (0 shortfall + $0 minimum, every cycle) and every real payment on
   // it counts as pure overpayment-on-a-fresh-cycle, so it's excluded from
   // the drift check below the same way it always was.
+  // One read each for the debts and their pending minimum-change reviews,
+  // instead of a review lookup (and a name lookup per push) per tracker.
+  const [debtRows, pendingDriftReviews] = await Promise.all([
+    db.debt.findMany({
+      where: { id: { in: debtPayments.map((dp) => dp.debtId) } },
+      select: {
+        id: true,
+        name: true,
+        ignoreMinimumPayment: true,
+        accountId: true,
+        balanceCents: true,
+        aprBasisPoints: true,
+        account: { select: { orgName: true, displayName: true } },
+      },
+    }),
+    db.debtAmountReview.findMany({
+      where: { debtPaymentId: { in: debtPayments.map((dp) => dp.id) } },
+      select: { debtPaymentId: true },
+    }),
+  ]);
   const debtInfoById = new Map(
-    (
-      await db.debt.findMany({
-        where: { id: { in: debtPayments.map((dp) => dp.debtId) } },
-        select: {
-          id: true,
-          ignoreMinimumPayment: true,
-          accountId: true,
-          balanceCents: true,
-          aprBasisPoints: true,
-          account: { select: { orgName: true } },
-        },
-      })
-    ).map((d) => [
+    debtRows.map((d) => [
       d.id,
       {
         ignoreMinimumPayment: d.ignoreMinimumPayment,
@@ -639,9 +656,11 @@ export async function matchDebtPayments(householdId: string): Promise<void> {
         accountId: d.accountId,
         balanceCents: d.balanceCents,
         aprBasisPoints: d.aprBasisPoints,
+        displayName: debtDisplayName(d),
       },
     ]),
   );
+  const trackersWithDriftReview = new Set(pendingDriftReviews.map((r) => r.debtPaymentId));
 
   for (const dp of debtPayments) {
     // Rollover pass — purely time-based, decoupled from any payment: every
@@ -807,7 +826,7 @@ export async function matchDebtPayments(householdId: string): Promise<void> {
     // uses everywhere. Doesn't block anything else below: real payments
     // keep applying against the running total regardless, this only
     // suppresses creating a second question.
-    let hasPendingDriftReview = Boolean(await db.debtAmountReview.findFirst({ where: { debtPaymentId: dp.id } }));
+    let hasPendingDriftReview = trackersWithDriftReview.has(dp.id);
 
     // Balance auto-derivation setup — manual (not synced-account) REVOLVING
     // debts only; a synced debt already gets balanceCents straight from the
@@ -926,13 +945,9 @@ export async function matchDebtPayments(householdId: string): Promise<void> {
           },
         });
         hasPendingDriftReview = true;
-        const debt = await db.debt.findUnique({
-          where: { id: dp.debtId },
-          select: { name: true, account: { select: { displayName: true } } },
-        });
         await sendPushToHouseholdForType(householdId, "DEBT_AMOUNT_REVIEW", {
           title: "Did your minimum payment change?",
-          body: `${debt ? debtDisplayName(debt) : "A debt"}: expected ${formatCents(cycleAmountCents)}, saw ${formatCents(paymentAmount)} instead.`,
+          body: `${debtInfoById.get(dp.debtId)?.displayName ?? "A debt"}: expected ${formatCents(cycleAmountCents)}, saw ${formatCents(paymentAmount)} instead.`,
           url: "/",
         });
       }
@@ -959,23 +974,26 @@ export async function matchDebtPayments(householdId: string): Promise<void> {
         const hasPendingBalanceReview = Boolean(await db.debtBalanceReview.findFirst({ where: { debtId: dp.debtId } }));
         if (!hasPendingBalanceReview) {
           await db.debtBalanceReview.create({ data: { householdId, debtId: dp.debtId } });
-          const debt = await db.debt.findUnique({
-            where: { id: dp.debtId },
-            select: { name: true, account: { select: { displayName: true } } },
-          });
           await sendPushToHouseholdForType(householdId, "DEBT_BALANCE_PAID_OFF_REVIEW", {
             title: "Is this debt paid off?",
-            body: `${debt ? debtDisplayName(debt) : "A debt"}'s calculated balance just hit $0.`,
+            body: `${debtInfoById.get(dp.debtId)?.displayName ?? "A debt"}'s calculated balance just hit $0.`,
             url: "/",
           });
         }
       }
     }
 
-    await db.debtPayment.update({
-      where: { id: dp.id },
-      data: { nextDueDate, amountDueCents, lastPaidDate },
-    });
+    // Most syncs change nothing for most trackers — skip the no-op write.
+    if (
+      nextDueDate.getTime() !== dp.nextDueDate.getTime() ||
+      amountDueCents !== dp.amountDueCents ||
+      (lastPaidDate?.getTime() ?? null) !== (dp.lastPaidDate?.getTime() ?? null)
+    ) {
+      await db.debtPayment.update({
+        where: { id: dp.id },
+        data: { nextDueDate, amountDueCents, lastPaidDate },
+      });
+    }
   }
 }
 
@@ -2470,7 +2488,7 @@ export async function getDebtPaymentsThisWeek(householdId: string, weekOf: Date 
       name: planned.debtName,
       kind: "debt" as const,
       expectedCents: planned.amountCents,
-      paidCents: planned.confirmed ? planned.amountCents : 0,
+      paidCents: 0,
       extraCents: 0,
       plannedExtraCents: planned.amountCents,
       poolBreakdown: planned.poolBreakdown,
@@ -2478,13 +2496,15 @@ export async function getDebtPaymentsThisWeek(householdId: string, weekOf: Date 
       minimumDueCents: 0,
       reimbursedCents: 0,
       dueDate: planned.dueDate,
-      paid: planned.confirmed,
-      paysOff: planned.confirmed && planned.paysOff,
+      // Nothing marks a plan extra paid by hand any more (the /debts
+      // "confirmed this cycle" checkbox and its PayoffExtraConfirmation
+      // writes are gone), so this row is always still expected.
+      paid: false,
+      paysOff: false,
       // Same isCurrentWeek gate as the tracked-debt row above, same reason:
       // a past week's "will pay off" snapshot shouldn't keep badging
-      // "Paid Off!" once that week is over and the real outcome (confirmed
-      // or not) is already knowable.
-      plannedPayoff: isCurrentWeek ? planned.paysOff : planned.confirmed && planned.paysOff,
+      // "Paid Off!" once that week is over.
+      plannedPayoff: isCurrentWeek && planned.paysOff,
       // It's getting a payoff-plan allocation this week — by definition in the plan.
       inPayoffPlan: true,
       // dueDate here is the plan's own paycheck date, not a BNPL/lender
@@ -2693,9 +2713,6 @@ export type PlannedExtraThisWeek = {
   // Earliest paycheck date the plan puts extra on this week — the row's
   // due date when there's no real minimum-payment tracker to anchor to.
   dueDate: Date;
-  // Every (debt, paycheck) allocation this week has a PayoffExtraConfirmation
-  // — the "confirmed this cycle" checkbox from /debts.
-  confirmed: boolean;
   // The simulation projects one of this week's extra allocations to take the
   // debt's balance to $0 — drives the card's "pays off" star / "For Payoff!"
   // badge on a debt with no minimum-payment tracker of its own.
@@ -2721,6 +2738,115 @@ type PlannedExtraAllocation = {
 // identical calls to a single simulation per request.
 const PLANNED_EXTRA_LOOKAHEAD_MONTHS = 2;
 
+// Everything the three payoff-plan projections share — the dashboard's
+// extra-payment allocations (projectHouseholdExtraAllocations), the Payment
+// Calendar (getPaymentCalendarThisCycle) and its ICS feed
+// (getPaymentCalendarIcsEvents). Each used to load and derive this itself,
+// ~80 near-identical lines three times (2026-10-09 /simplify). cache(): the
+// dashboard asks for the allocations and the calendar on the same request.
+// The skipped-minimum keys only ever feed coveredSlotDates, which the
+// allocation path doesn't read, so loading them for all three is harmless.
+const loadCyclePlanContext = cache(async function loadCyclePlanContext(householdId: string) {
+  const { start: monthStart, end: monthEnd } = utcPeriodBounds(currentPeriodKey());
+  const [household, income, allDebts, debtPayments, skippedMinimumKeys, planExtraTargets] = await Promise.all([
+    db.household.findUniqueOrThrow({
+      where: { id: householdId },
+      select: {
+        payoffPlanEnabled: true,
+        payoffOrder: true,
+        payoffExtraCents: true,
+        payoffRollFreedMinimums: true,
+        payoffRollFreedMinimumsSplit: true,
+      },
+    }),
+    getPrimaryIncomeSchedule(householdId),
+    db.debt.findMany({
+      where: { householdId },
+      orderBy: { sortOrder: "asc" },
+      include: { account: { select: { displayName: true } } },
+    }),
+    db.debtPayment.findMany({
+      where: { householdId, active: true },
+      select: {
+        debtId: true,
+        amountCents: true,
+        amountDueCents: true,
+        cadence: true,
+        nextDueDate: true,
+        lastPaidDate: true,
+        cycleRestartDueDate: true,
+        createdAt: true,
+        payments: { select: { amountCents: true, occurredOn: true } },
+      },
+    }),
+    getSkippedMinimumKeys(householdId, monthStart, monthEnd),
+    planExtraTargetsByDebt(householdId, monthStart, monthEnd),
+  ]);
+
+  const debtMetaById = new Map(
+    allDebts.map((d) => [
+      d.id,
+      {
+        debtType: d.debtType,
+        purchaseDate: d.purchaseDate,
+        installmentsRemaining: d.installmentsRemaining,
+        balanceCents: d.balanceCents,
+        paidOffDate: d.paidOffDate,
+      },
+    ]),
+  );
+  const dueDateByDebtId = correctedDueDateByDebtId(
+    debtPayments,
+    monthStart,
+    monthEnd,
+    debtMetaById,
+    skippedMinimumKeys,
+    planExtraTargets,
+  );
+  const minimumSatisfiedThisCycleIds = new Set<string>();
+  for (const p of debtPayments) {
+    if (dueDateByDebtId.get(p.debtId)?.cyclePaid) minimumSatisfiedThisCycleIds.add(p.debtId);
+  }
+
+  const owedDebts = allDebts.filter((d) => d.balanceCents > 0);
+  const inPlanIds = new Set(owedDebts.filter((d) => d.includeInPayoffPlan).map((d) => d.id));
+  const planActive = household.payoffPlanEnabled && !!income && inPlanIds.size > 0;
+  const debtInputs: DebtInput[] = owedDebts.map((d) => ({
+    id: d.id,
+    name: debtDisplayName(d),
+    balanceCents: d.balanceCents,
+    aprBasisPoints: d.aprBasisPoints,
+    minPaymentCents: d.minPaymentCents,
+    debtType: d.debtType,
+    paymentCadence: dueDateByDebtId.get(d.id)?.cadence,
+  }));
+  const [alreadyFreedMinimums, skippedExtraPairs] = planActive
+    ? await Promise.all([
+        getAlreadyFreedMinimums(householdId, household.payoffRollFreedMinimums),
+        getPayoffExtraSkips(householdId),
+      ])
+    : [[], new Set<string>()];
+  const extraPaidThisCycleByDebtId = new Map([...dueDateByDebtId.entries()].map(([id, v]) => [id, v.extraPaidCents]));
+
+  return {
+    household,
+    income,
+    allDebts,
+    owedDebts,
+    debtPayments,
+    monthStart,
+    monthEnd,
+    dueDateByDebtId,
+    minimumSatisfiedThisCycleIds,
+    inPlanIds,
+    planActive,
+    debtInputs,
+    alreadyFreedMinimums,
+    skippedExtraPairs,
+    extraPaidThisCycleByDebtId,
+  };
+});
+
 // Every payoff-plan "extra" allocation (per debt, per paycheck date) across
 // the next `monthsCount` calendar months — the shared source for the two
 // "planned extra by debt" readers below. Runs the exact same
@@ -2740,97 +2866,21 @@ const projectHouseholdExtraAllocations = cache(async function projectHouseholdEx
   householdId: string,
   monthsCount: number,
 ): Promise<{ allocations: PlannedExtraAllocation[]; postedExtraNetted: Map<string, number> } | null> {
-  const household = await db.household.findUniqueOrThrow({
-    where: { id: householdId },
-    select: {
-      payoffPlanEnabled: true,
-      payoffOrder: true,
-      payoffExtraCents: true,
-      payoffRollFreedMinimums: true,
-      payoffRollFreedMinimumsSplit: true,
-    },
-  });
-  if (!household.payoffPlanEnabled) return null;
-
-  const income = await getPrimaryIncomeSchedule(householdId);
-  if (!income) return null;
-
-  const allDebts = await db.debt.findMany({
-    where: { householdId },
-    orderBy: { sortOrder: "asc" },
-    include: { account: { select: { displayName: true } } },
-  });
-  const activeDebts = allDebts.filter((d) => d.balanceCents > 0 && d.includeInPayoffPlan);
-  if (activeDebts.length === 0) return null;
-  const inPlanIds = new Set(activeDebts.map((d) => d.id));
+  const ctx = await loadCyclePlanContext(householdId);
+  if (!ctx.planActive || !ctx.income) return null;
+  const {
+    household,
+    income,
+    allDebts,
+    inPlanIds,
+    dueDateByDebtId,
+    minimumSatisfiedThisCycleIds,
+    debtInputs,
+    alreadyFreedMinimums,
+    skippedExtraPairs,
+    extraPaidThisCycleByDebtId,
+  } = ctx;
   const nameById = new Map(allDebts.map((d) => [d.id, debtDisplayName(d)]));
-
-  const debtPayments = await db.debtPayment.findMany({
-    where: { householdId, debtId: { in: allDebts.map((d) => d.id) }, active: true },
-    select: {
-      debtId: true,
-      cadence: true,
-      nextDueDate: true,
-      lastPaidDate: true,
-      cycleRestartDueDate: true,
-      createdAt: true,
-      amountCents: true,
-      payments: { select: { amountCents: true, occurredOn: true } },
-    },
-  });
-
-  const { start: monthStart, end: monthEnd } = utcPeriodBounds(currentPeriodKey());
-  const debtMetaById = new Map(
-    allDebts.map((d) => [
-      d.id,
-      {
-        debtType: d.debtType,
-        purchaseDate: d.purchaseDate,
-        installmentsRemaining: d.installmentsRemaining,
-        balanceCents: d.balanceCents,
-        paidOffDate: d.paidOffDate,
-      },
-    ]),
-  );
-  const dueDateByDebtId = correctedDueDateByDebtId(
-    debtPayments,
-    monthStart,
-    monthEnd,
-    debtMetaById,
-    new Set(),
-    await planExtraTargetsByDebt(householdId, monthStart, monthEnd),
-  );
-
-  // Only the debts whose current cycle is genuinely paid per the real ledger
-  // — same primitive getPaymentCalendarThisCycle keys its "due" events off
-  // (correctedDueDateByDebtId's slot-based cyclePaid), not
-  // DebtPayment.amountDueCents, which routinely sits stale-high.
-  const minimumSatisfiedThisCycleIds = new Set<string>();
-  for (const p of debtPayments) {
-    if (dueDateByDebtId.get(p.debtId)?.cyclePaid) minimumSatisfiedThisCycleIds.add(p.debtId);
-  }
-
-  // Every still-owed debt, in-plan or not (excluded debts still get their own
-  // minimum schedule simulated so the attack-order balance trajectory is
-  // right — extraEligibleIds keeps cascaded extra off them). Mirrors
-  // getPaymentCalendarThisCycle's debtInputs exactly.
-  const debtInputs: DebtInput[] = allDebts
-    .filter((d) => d.balanceCents > 0)
-    .map((d) => ({
-      id: d.id,
-      name: debtDisplayName(d),
-      balanceCents: d.balanceCents,
-      aprBasisPoints: d.aprBasisPoints,
-      minPaymentCents: d.minPaymentCents,
-      debtType: d.debtType,
-      paymentCadence: dueDateByDebtId.get(d.id)?.cadence,
-    }));
-
-  const alreadyFreedMinimums = await getAlreadyFreedMinimums(householdId, household.payoffRollFreedMinimums);
-  const extraPaidThisCycleByDebtId = new Map(
-    [...dueDateByDebtId.entries()].map(([id, v]) => [id, v.extraPaidCents]),
-  );
-  const skippedExtraPairs = await getPayoffExtraSkips(householdId);
 
   const postedExtraNetted = new Map<string, number>();
   const months = projectCyclePlan(debtInputs, {
@@ -3004,7 +3054,7 @@ export async function supersededPayoffExtraByDebtInPeriod(
 // [start, end) — see supersededPayoffTargetAmounts (debt-payoff.ts) for why
 // the Payment Calendar's isExtraPaid badge needs each target's own amount
 // instead of one aggregate pool.
-export async function supersededPayoffTargetAmountsByDebtInPeriod(
+async function supersededPayoffTargetAmountsByDebtInPeriod(
   householdId: string,
   start: Date,
   end: Date,
@@ -3025,7 +3075,7 @@ export async function supersededPayoffTargetAmountsByDebtInPeriod(
 // by getDebtPaymentsThisWeek below so the dashboard's "This week's bills"
 // card shows one line per debt (minimum + planned extra together) rather
 // than two competing rows.
-export async function plannedExtraByDebtThisWeek(
+async function plannedExtraByDebtThisWeek(
   householdId: string,
 ): Promise<Map<string, PlannedExtraThisWeek>> {
   const empty = new Map<string, PlannedExtraThisWeek>();
@@ -3037,26 +3087,11 @@ export async function plannedExtraByDebtThisWeek(
   const thisWeek = allocations.filter((a) => a.date >= start && a.date < end && a.amountCents > 0);
   if (thisWeek.length === 0) return empty;
 
-  const confirmations = await db.payoffExtraConfirmation.findMany({
-    where: {
-      householdId,
-      paycheckDate: { gte: start, lt: end },
-      debtId: { in: thisWeek.map((a) => a.debtId) },
-    },
-    select: { debtId: true, paycheckDate: true },
-  });
-  const confirmedKeys = new Set(
-    confirmations.map((c) => `${c.debtId}:${c.paycheckDate.toISOString().slice(0, 10)}`),
-  );
-
   const byDebtId = new Map<string, PlannedExtraThisWeek>();
   for (const alloc of thisWeek) {
-    const dateKey = alloc.date.toISOString().slice(0, 10);
     const existing = byDebtId.get(alloc.debtId);
-    const allocConfirmed = confirmedKeys.has(`${alloc.debtId}:${dateKey}`);
     if (existing) {
       existing.amountCents += alloc.amountCents;
-      existing.confirmed = existing.confirmed && allocConfirmed;
       existing.paysOff = existing.paysOff || alloc.isPayoff;
       if (alloc.date < existing.dueDate) existing.dueDate = alloc.date;
       if (alloc.poolBreakdown) {
@@ -3067,7 +3102,6 @@ export async function plannedExtraByDebtThisWeek(
         debtName: alloc.name,
         amountCents: alloc.amountCents,
         dueDate: alloc.date,
-        confirmed: allocConfirmed,
         poolBreakdown: alloc.poolBreakdown,
         paysOff: alloc.isPayoff,
       });
@@ -3145,22 +3179,12 @@ async function plannedExtraSnapshotForWeek(
   const liveRows = withoutSkippedExtras(rows, await getPayoffExtraSkips(householdId));
   if (liveRows.length === 0) return empty;
 
-  const confirmations = await db.payoffExtraConfirmation.findMany({
-    where: { householdId, debtId: { in: liveRows.map((r) => r.debtId) }, paycheckDate: { in: liveRows.map((r) => r.dueDate) } },
-    select: { debtId: true, paycheckDate: true },
-  });
-  const confirmedKeys = new Set(
-    confirmations.map((c) => `${c.debtId}:${c.paycheckDate.toISOString().slice(0, 10)}`),
-  );
-
   const byDebtId = new Map<string, PlannedExtraThisWeek>();
   for (const row of liveRows) {
-    const dateKey = row.dueDate.toISOString().slice(0, 10);
     byDebtId.set(row.debtId, {
       debtName: debtDisplayName(row.debt),
       amountCents: row.amountCents,
       dueDate: row.dueDate,
-      confirmed: confirmedKeys.has(`${row.debtId}:${dateKey}`),
       paysOff: row.isPayoff,
     });
   }
@@ -3492,112 +3516,26 @@ function correctedDueDateByDebtId(
 export async function getPaymentCalendarThisCycle(
   householdId: string,
 ): Promise<{ monthDate: Date; eventsByDay: Map<number, CalendarDayEvent[]> } | null> {
-  const household = await db.household.findUniqueOrThrow({
-    where: { id: householdId },
-    select: {
-      payoffPlanEnabled: true,
-      payoffOrder: true,
-      payoffExtraCents: true,
-      payoffRollFreedMinimums: true,
-      payoffRollFreedMinimumsSplit: true,
-    },
-  });
-
-  const income = await getPrimaryIncomeSchedule(householdId);
-
-  const allDebts = await db.debt.findMany({
-    where: { householdId },
-    orderBy: { sortOrder: "asc" },
-    include: { account: { select: { displayName: true } } },
-  });
-  const activeDebts = allDebts.filter((d) => d.balanceCents > 0 && d.includeInPayoffPlan);
-  const inPlanIds = new Set(activeDebts.map((d) => d.id));
-
-  // Extra payoff-plan lines only show when the plan is genuinely running.
-  // Otherwise this is a plain minimums-only payment calendar.
-  const planActive = household.payoffPlanEnabled && !!income && activeDebts.length > 0;
-
-  const debtPayments = await db.debtPayment.findMany({
-    where: { householdId, debtId: { in: allDebts.map((d) => d.id) }, active: true },
-    select: {
-      debtId: true,
-      amountCents: true,
-      amountDueCents: true,
-      cadence: true,
-      nextDueDate: true,
-      lastPaidDate: true,
-      cycleRestartDueDate: true,
-      createdAt: true,
-      payments: { select: { amountCents: true, occurredOn: true } },
-    },
-  });
-  const paymentByDebtId = new Map(debtPayments.map((p) => [p.debtId, p]));
-
-  const { start: monthStart, end: monthEnd } = utcPeriodBounds(currentPeriodKey());
-  const debtMetaById = new Map(
-    allDebts.map((d) => [
-      d.id,
-      {
-        debtType: d.debtType,
-        purchaseDate: d.purchaseDate,
-        installmentsRemaining: d.installmentsRemaining,
-        balanceCents: d.balanceCents,
-        paidOffDate: d.paidOffDate,
-      },
-    ]),
-  );
-  const dueDateByDebtId = correctedDueDateByDebtId(
+  const {
+    household,
+    income,
+    allDebts,
     debtPayments,
     monthStart,
     monthEnd,
-    debtMetaById,
-    await getSkippedMinimumKeys(householdId, monthStart, monthEnd),
-    await planExtraTargetsByDebt(householdId, monthStart, monthEnd),
-  );
+    dueDateByDebtId,
+    minimumSatisfiedThisCycleIds,
+    inPlanIds,
+    planActive,
+    debtInputs,
+    alreadyFreedMinimums,
+    skippedExtraPairs,
+    extraPaidThisCycleByDebtId,
+  } = await loadCyclePlanContext(householdId);
+  const paymentByDebtId = new Map(debtPayments.map((p) => [p.debtId, p]));
 
-  // Slot-based cycle status (correctedDueDateByDebtId's own buildCycleSlots
-  // pass) rather than paidThisCycle(DebtPayment.amountDueCents) — that
-  // running total is a REVOLVING-only concept (matchInstallmentPayments
-  // never maintains it) and can also sit stale-high on a REVOLVING debt
-  // whose cycle-satisfying payment got linked by a tracker-creation action
-  // that never credited it against amountDueCents. This is the exact
-  // primitive /debts' own Payoff Calendar uses (debts/page.tsx's
-  // CycleMinimum.paidThisCycle), so the two calendars now agree.
-  const minimumSatisfiedThisCycleIds = new Set<string>();
-  for (const p of debtPayments) {
-    if (dueDateByDebtId.get(p.debtId)?.cyclePaid) minimumSatisfiedThisCycleIds.add(p.debtId);
-  }
-
-  // The extra-payment projection — skipped entirely when the payoff plan
-  // isn't running (see planActive above), leaving a minimums-only calendar.
   let thisCycle: CyclePlanMonth | undefined;
   if (planActive) {
-    // Every still-owed debt, in-plan or not — mirrors payoff-planner.tsx's
-    // projectionDebtInputs (household request, 2026-08-21: the dashboard's own
-    // mini calendar should show an excluded debt's own normal payment
-    // schedule too, same as the /debts page's Payoff Calendar now does, just
-    // without any extra cascading onto it — see extraEligibleIds below).
-    // paymentCadence comes from the same tracker as dueDateByDebtId above —
-    // without it, a freed-up WEEKLY/BIWEEKLY debt's rolled minimum defaults to
-    // a MONTHLY assumption inside projectCyclePlan (see getAlreadyFreedMinimums).
-    const debtInputs: DebtInput[] = allDebts
-      .filter((d) => d.balanceCents > 0)
-      .map((d) => ({
-        id: d.id,
-        name: debtDisplayName(d),
-        balanceCents: d.balanceCents,
-        aprBasisPoints: d.aprBasisPoints,
-        minPaymentCents: d.minPaymentCents,
-        debtType: d.debtType,
-        paymentCadence: dueDateByDebtId.get(d.id)?.cadence,
-      }));
-
-    const alreadyFreedMinimums = await getAlreadyFreedMinimums(householdId, household.payoffRollFreedMinimums);
-    const extraPaidThisCycleByDebtId = new Map(
-      [...dueDateByDebtId.entries()].map(([id, v]) => [id, v.extraPaidCents]),
-    );
-    const skippedExtraPairs = await getPayoffExtraSkips(householdId);
-
     const cyclePlan = projectCyclePlan(debtInputs, {
       order: household.payoffOrder as PayoffOrder,
       rollFreedMinimums: household.payoffRollFreedMinimums,
@@ -3986,113 +3924,25 @@ export async function getPaymentCalendarThisCycle(
 // exactly like the dashboard grid. Plan off ≠ empty feed; it just means no
 // extra lines. A household with only bills and no debts still gets a feed.
 export async function getPaymentCalendarIcsEvents(householdId: string): Promise<IcsEvent[]> {
-  const household = await db.household.findUniqueOrThrow({
-    where: { id: householdId },
-    select: {
-      payoffPlanEnabled: true,
-      payoffOrder: true,
-      payoffExtraCents: true,
-      payoffRollFreedMinimums: true,
-      payoffRollFreedMinimumsSplit: true,
-    },
-  });
-
-  const income = await getPrimaryIncomeSchedule(householdId);
-
-  const allDebts = await db.debt.findMany({
-    where: { householdId },
-    orderBy: { sortOrder: "asc" },
-    include: { account: { select: { displayName: true } } },
-  });
-  const owedDebts = allDebts.filter((d) => d.balanceCents > 0);
-  // In-plan debts (still owed + opted in) — the only ones the extra-payment
-  // pool ever cascades onto (extraEligibleIds below).
-  const inPlanIds = new Set(owedDebts.filter((d) => d.includeInPayoffPlan).map((d) => d.id));
-  // Extra-payment lines only when the plan is genuinely running — same three
-  // conditions getPaymentCalendarThisCycle's `planActive` checks.
-  const planActive = household.payoffPlanEnabled && !!income && inPlanIds.size > 0;
-  const nameById = new Map(allDebts.map((d) => [d.id, debtDisplayName(d)]));
-
-  const debtPayments = await db.debtPayment.findMany({
-    where: { householdId, debtId: { in: allDebts.map((d) => d.id) }, active: true },
-    select: {
-      debtId: true,
-      cadence: true,
-      nextDueDate: true,
-      lastPaidDate: true,
-      cycleRestartDueDate: true,
-      createdAt: true,
-      amountCents: true,
-      // The tracked minimum owed on the current occurrence — used below to
-      // decide whether a still-unpaid debt gets an explicit "upcoming
-      // minimum" event in the feed (mirrors getPaymentCalendarThisCycle's
-      // own `amountDueCents > 0` guard on its "due" cells).
-      amountDueCents: true,
-      payments: { select: { amountCents: true, occurredOn: true } },
-    },
-  });
-  const { start: monthStart, end: monthEnd } = utcPeriodBounds(currentPeriodKey());
-  const debtMetaById = new Map(
-    allDebts.map((d) => [
-      d.id,
-      {
-        debtType: d.debtType,
-        purchaseDate: d.purchaseDate,
-        installmentsRemaining: d.installmentsRemaining,
-        balanceCents: d.balanceCents,
-        paidOffDate: d.paidOffDate,
-      },
-    ]),
-  );
-  const dueDateByDebtId = correctedDueDateByDebtId(
+  const {
+    household,
+    income,
+    allDebts,
+    owedDebts,
     debtPayments,
     monthStart,
-    monthEnd,
-    debtMetaById,
-    await getSkippedMinimumKeys(householdId, monthStart, monthEnd),
-    await planExtraTargetsByDebt(householdId, monthStart, monthEnd),
-  );
-
-  // Only the debts whose current cycle is genuinely paid per the real ledger
-  // — the exact same slot-based `cyclePaid` primitive getPaymentCalendarThisCycle
-  // (the in-app dashboard calendar) and PayoffPlanner both key off. This feed
-  // used to pass *every* debt id here instead, which fed projectCyclePlan a
-  // simulation where every genuinely-unpaid debt's current-cycle minimum +
-  // interest was dropped (its due date rolled a cycle forward) — so the
-  // extra-payment waterfall was seeded wrong and per-debt payoff dates in the
-  // feed drifted a cycle off what the in-app calendar showed, leaving
-  // interest-tick residuals ("$0.45 — Pays It Off!" a month late). The
-  // still-unpaid current occurrence is instead surfaced explicitly below, the
-  // way getPaymentCalendarThisCycle surfaces it as a "due" cell.
-  const minimumSatisfiedThisCycleIds = new Set<string>();
-  for (const p of debtPayments) {
-    if (dueDateByDebtId.get(p.debtId)?.cyclePaid) minimumSatisfiedThisCycleIds.add(p.debtId);
-  }
+    dueDateByDebtId,
+    minimumSatisfiedThisCycleIds,
+    inPlanIds,
+    planActive,
+    debtInputs,
+    alreadyFreedMinimums,
+    skippedExtraPairs,
+    extraPaidThisCycleByDebtId,
+  } = await loadCyclePlanContext(householdId);
+  const nameById = new Map(allDebts.map((d) => [d.id, debtDisplayName(d)]));
   const amountDueByDebtId = new Map(debtPayments.map((p) => [p.debtId, p.amountDueCents]));
   const minimumByDebtId = new Map(debtPayments.map((p) => [p.debtId, p.amountCents]));
-
-  // Every still-owed debt, in-plan or not — same reasoning as
-  // getPaymentCalendarThisCycle: an excluded debt still keeps its own
-  // real payment schedule on the calendar, it just never receives cascaded
-  // extra. paymentCadence comes from the same tracker as dueDateByDebtId
-  // above — see getAlreadyFreedMinimums for why it matters.
-  const debtInputs: DebtInput[] = owedDebts.map((d) => ({
-    id: d.id,
-    name: debtDisplayName(d),
-    balanceCents: d.balanceCents,
-    aprBasisPoints: d.aprBasisPoints,
-    minPaymentCents: d.minPaymentCents,
-    debtType: d.debtType,
-    paymentCadence: dueDateByDebtId.get(d.id)?.cadence,
-  }));
-
-  const alreadyFreedMinimums = planActive
-    ? await getAlreadyFreedMinimums(householdId, household.payoffRollFreedMinimums)
-    : [];
-  const extraPaidThisCycleByDebtId = new Map(
-    [...dueDateByDebtId.entries()].map(([id, v]) => [id, v.extraPaidCents]),
-  );
-  const skippedExtraPairs = planActive ? await getPayoffExtraSkips(householdId) : new Set<string>();
 
   // Same 3-month horizon payoff-planner.tsx projects client-side (see
   // projectionDebtInputs there) — keeps the calendar feed agreeing with
@@ -4275,10 +4125,6 @@ export async function getPaymentCalendarIcsEvents(householdId: string): Promise<
   }
 
   return events;
-}
-
-function ymd(date: Date): string {
-  return `${date.getUTCFullYear()}${String(date.getUTCMonth() + 1).padStart(2, "0")}${String(date.getUTCDate()).padStart(2, "0")}`;
 }
 
 export type PaidOffDebt = { id: string; name: string; paidOffDate: Date };

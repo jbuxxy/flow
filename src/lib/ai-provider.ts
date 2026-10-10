@@ -1,3 +1,4 @@
+import { cache } from "react";
 // Provider-agnostic AI client — dispatches to whichever provider a
 // household has configured (see /settings/ai) instead of a single global
 // key. Every function here keeps the same graceful-degrade contract as the
@@ -31,13 +32,14 @@ export async function getHouseholdAiConfig(householdId: string): Promise<AiProvi
 // "Needs attention" for the household's AI connection — no key configured
 // at all is included, not just a configured-but-broken one, matching the
 // household's explicit ask for parity with the SimpleFIN badge below.
-export async function needsAiAttention(householdId: string): Promise<boolean> {
+// cache(): the app shell and the dashboard both ask on the same request.
+export const needsAiAttention = cache(async function needsAiAttention(householdId: string): Promise<boolean> {
   // The demo household deliberately has no AI row (cleared at seed finalize);
   // that's the intended steady state, not something for its OWNER to "fix".
   if (await isDemoHousehold(householdId)) return false;
   const row = await db.householdAiSettings.findUnique({ where: { householdId }, select: { status: true } });
   return !row || row.status === "ERROR";
-}
+});
 
 // Best-effort — a settings row can vanish mid-flight (household just hit
 // Disconnect while a sync was in-flight), which isn't itself an error worth

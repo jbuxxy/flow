@@ -14,3 +14,18 @@
 // *entire* merchant string is literally "PayPal Credit", which real
 // PayPal-issued payment descriptors ("PayPal") never are).
 export const P2P_DISCOVERY_KEYWORDS = ["venmo", "zelle", "cash app", "cashapp", "apple cash", "paypal"];
+
+// Whether a merchant string names a P2P app (case-insensitive substring).
+// Only the merchant text — callers that also honor a receipt-resolved
+// business party (reassignTransaction, the sync categorizer) check that
+// themselves.
+export function isP2PMerchant(merchant: string | null | undefined): boolean {
+  const m = (merchant ?? "").toLowerCase();
+  return P2P_DISCOVERY_KEYWORDS.some((k) => m.includes(k));
+}
+
+// The Prisma-shaped counterpart: `{ OR: [...] }` matching a P2P merchant.
+// Plain object, no Prisma import, so this file stays client-safe.
+export function p2pMerchantMatch() {
+  return { OR: P2P_DISCOVERY_KEYWORDS.map((k) => ({ merchant: { contains: k, mode: "insensitive" as const } })) };
+}

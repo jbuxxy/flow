@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { belongsToHousehold } from "@/lib/access-rules";
 
 // Lives outside bills/actions.ts on purpose: every export of a server-actions
 // file is a publicly POST-able endpoint, and this one takes a caller-supplied
@@ -19,7 +20,7 @@ export async function resolveCategoryId(
 ): Promise<string | null> {
   if (!categoryId) return null;
   const category = await db.billCategory.findUnique({ where: { id: categoryId } });
-  if (!category || category.householdId !== householdId) return null;
+  if (!belongsToHousehold(category, householdId)) return null;
   if (bucketId !== undefined && category.bucketId !== bucketId) return null;
   return category.id;
 }

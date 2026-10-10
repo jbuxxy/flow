@@ -130,3 +130,20 @@ export function __resetToastsForTest(): void {
 export function __getToastsForTest(): Toast[] {
   return toasts;
 }
+
+// Runs a client-side mutation and toasts the outcome — the shared form of
+// the little try/showToast/catch wrapper five settings and debt components
+// each used to define for themselves.
+export async function withToast(
+  run: () => Promise<unknown>,
+  success = "Saved",
+  failure = "Couldn’t Save",
+): Promise<void> {
+  try {
+    await run();
+    showToast(success);
+  } catch {
+    showToast(failure, "error");
+  }
+}
+

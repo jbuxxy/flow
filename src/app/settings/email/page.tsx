@@ -1,7 +1,5 @@
-import { redirect } from "next/navigation";
-import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { hasFullAccess } from "@/lib/access";
+import { requireFullAccess } from "@/lib/access";
 import { AppShell } from "@/components/app-shell";
 import { isHouseholdScanning } from "@/lib/receipt-sync";
 import { EmailSettingsPanel } from "./email-settings-panel";
@@ -108,9 +106,7 @@ function summarizeItems(lineItems: unknown): string | null {
 }
 
 export default async function EmailSettingsPage() {
-  const session = await auth();
-  if (!session?.user) redirect("/login");
-  if (!hasFullAccess(session.user)) redirect("/");
+  const session = await requireFullAccess();
 
   const userId = session.user.id;
   const householdId = session.user.householdId;

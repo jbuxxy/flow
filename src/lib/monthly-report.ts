@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { periodBounds, utcPeriodBounds } from "@/lib/period";
+import { monthsAgoPeriodKey, periodLabel, utcPeriodBounds } from "@/lib/period";
 import { spendByBucketInRange, getBucketTopUpCentsByBucketId } from "@/lib/buckets";
 import { getIncomeSummary } from "@/lib/income";
 import { offsetSumByCreditId, countedIncomeCents } from "@/lib/reimbursements";
@@ -45,15 +45,7 @@ export type MonthReport = {
 
 export type ExtraIncomeReport = { receivedCents: number; appliedCents: number; unappliedCents: number; byBucket: { name: string; amountCents: number }[] };
 
-export function periodLabel(periodKey: string): string {
-  const { start } = periodBounds(periodKey);
-  return start.toLocaleDateString("en-US", { month: "long", year: "numeric" });
-}
-
-export function monthsAgoPeriodKey(monthsAgo: number, from = new Date()): string {
-  const d = new Date(from.getFullYear(), from.getMonth() - monthsAgo, 1);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-}
+export { monthsAgoPeriodKey, periodLabel };
 
 export async function getMonthReport(householdId: string, periodKey: string): Promise<MonthReport> {
   // UTC bounds — spendByBucketInRange now requires them directly (it used

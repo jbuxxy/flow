@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { P2P_DISCOVERY_KEYWORDS } from "@/lib/p2p-keywords";
+import { p2pMerchantMatch } from "@/lib/p2p-keywords";
 import { daysAgo } from "@/lib/period";
 import type { Prisma } from "@prisma/client";
 
@@ -38,7 +38,7 @@ export function unlabeledP2PWhere(householdId: string): Prisma.TransactionWhereI
     occurredOn: { gte: daysAgo(P2P_STALE_AFTER_DAYS) },
     AND: [
       { OR: [{ bucketId: null }, { isTransfer: true }, { isIncome: true }] },
-      { OR: P2P_DISCOVERY_KEYWORDS.map((k) => ({ merchant: { contains: k, mode: "insensitive" as const } })) },
+      p2pMerchantMatch(),
     ],
   };
 }

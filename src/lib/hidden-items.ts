@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { daysAgo } from "@/lib/period";
 
 // "Hidden over a year" purge-eligibility window. Still enforced server-side
 // by deleteHiddenItem (src/app/settings/accounts/actions.ts) for anything
@@ -8,7 +9,7 @@ import { db } from "@/lib/db";
 // A plain function (not a module-level constant) so it reads "now" fresh on
 // each call rather than once at module load.
 export function purgeCutoffDate(): Date {
-  return new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
+  return daysAgo(365);
 }
 
 export type HiddenItem = {

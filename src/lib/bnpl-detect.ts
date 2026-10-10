@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { nameSimilarity } from "@/lib/fuzzy-match";
-import { amountToleranceCents } from "@/lib/recurring-bills";
+import { clusterByAmount } from "@/lib/amount-tolerance";
 import { learnedKeywordsFor, checkForNewKeywords } from "@/lib/keyword-learning";
 import { BNPL_KEYWORDS } from "@/lib/bnpl-keywords";
 import { mapConcurrent } from "@/lib/concurrency";
@@ -106,28 +106,6 @@ export type BnplSuggestion = {
   lastSeen: Date;
   transactions: BnplTransaction[];
 };
-
-// Greedy 1D clustering by amount, sorted ascending — same pattern as
-// clusterByAmount in bill-detect.ts. Applied within each keyword's group
-// below to tell apart multiple simultaneous plans at the same provider
-// (e.g. two separate Klarna purchases with different payment amounts)
-// instead of merging every transaction under one keyword into a single
-// suggestion — a household with 2 real Klarna plans is exactly the case
-// that motivated this (2026-08-16).
-function clusterByAmount(group: BnplTransaction[]): BnplTransaction[][] {
-  const sorted = [...group].sort((a, b) => a.amountCents - b.amountCents);
-  const clusters: BnplTransaction[][] = [];
-  for (const t of sorted) {
-    const current = clusters[clusters.length - 1];
-    const avg = current ? current.reduce((s, x) => s + x.amountCents, 0) / current.length : 0;
-    if (current && Math.abs(t.amountCents - avg) <= amountToleranceCents(avg)) {
-      current.push(t);
-    } else {
-      clusters.push([t]);
-    }
-  }
-  return clusters;
-}
 
 type BnplCluster = { key: string; transactions: BnplTransaction[] };
 

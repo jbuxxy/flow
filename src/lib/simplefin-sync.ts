@@ -42,7 +42,7 @@ import {
   txnTextNamesDebt,
   scopeToNamedDebts,
 } from "@/lib/debt-payment-pattern";
-import { P2P_DISCOVERY_KEYWORDS } from "@/lib/p2p-keywords";
+import { isP2PMerchant, p2pMerchantMatch } from "@/lib/p2p-keywords";
 import { nameSimilarity } from "@/lib/fuzzy-match";
 import { pendingRowRetirable, phantomTwinMergeData, settleOrphanPendingInPlace } from "@/lib/pending-twin-merge";
 import { todayAsUTCDate } from "@/lib/date";
@@ -50,6 +50,7 @@ import { tryAutoLinkRefund, tryAutoLinkGenericCredit } from "@/lib/refund-match"
 import { creditDoesNotIdentifyPayee } from "@/lib/reimbursements";
 import { stripPendingPrefix } from "@/lib/pending-prefix";
 import type { AccountType, SyncMode, DebtType } from "@prisma/client";
+import { daysAgo } from "@/lib/period";
 
 // How long an account has to sit missing from its connection's synced
 // `accounts` list, continuously, before syncHousehold treats it as actually
@@ -361,7 +362,7 @@ async function reconcileCategorizedCardPayments(householdId: string): Promise<vo
       debtPaymentId: null,
       bucketId: { not: null },
       account: { accountType: { in: ["CHECKING", "SAVINGS"] } },
-      occurredOn: { gte: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000) },
+      occurredOn: { gte: daysAgo(60) },
     },
     select: {
       id: true,
@@ -1066,7 +1067,7 @@ export async function categorizeUncategorizedTransactions(householdId: string): 
         // totals or reports anyway (see "Needs a bucket" queue, which
         // applies the same cutoff) — no reason to spend a Gemini call
         // resolving it. It stays uncategorized rather than guessed at.
-        occurredOn: { gte: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000) },
+        occurredOn: { gte: daysAgo(60) },
       },
       select: {
         id: true,
@@ -1217,7 +1218,7 @@ export async function categorizeUncategorizedTransactions(householdId: string): 
 
   const needsAi: { id: string; merchant: string; amountCents: number }[] = [];
   // P2P debits needing a bucket/category guess — collected separately from
-  // needsAi above (see the isP2PMerchant branch below): P2P merchant text
+  // needsAi above (see the treatAsP2P branch below): P2P merchant text
   // has no per-merchant signal to batch on, so this goes through
   // suggestP2PClassifications instead of suggestBucketsForMerchants/
   // suggestCategoriesForMerchants, one call per transaction batch rather
@@ -1269,8 +1270,8 @@ export async function categorizeUncategorizedTransactions(householdId: string): 
     // A P2P charge is treated as an ordinary merchant only once a matched
     // receipt has resolved it to a *business*. Unresolved, or resolved to a
     // person, it stays on the suggest-only P2P path.
-    const isP2PMerchant =
-      !resolvedBusiness && P2P_DISCOVERY_KEYWORDS.some((k) => t.merchant.toLowerCase().includes(k));
+    const treatAsP2P =
+      !resolvedBusiness && isP2PMerchant(t.merchant);
 
     // User-defined patterns (Venmo-paid activities, recurring reimbursements)
     // are the most specific signal available — checked before the generic
@@ -1292,7 +1293,7 @@ export async function categorizeUncategorizedTransactions(householdId: string): 
     // ahead of the MerchantRule lookup so a stale low-confidence AI guess of
     // "Bills (recurring)" on the same generic text can't shadow it.
     if (
-      !isP2PMerchant &&
+      !treatAsP2P &&
       t.amountCents > 0 &&
       t.account?.accountType !== "CREDIT_CARD" &&
       t.account?.accountType !== "LOAN" &&
@@ -1318,7 +1319,7 @@ export async function categorizeUncategorizedTransactions(householdId: string): 
     // catches it and it would fall into Groceries. Ahead of the MerchantRule
     // lookup for the same reason the loan branch is: a learned
     // "Sam's Club -> Groceries" rule must not shadow it.
-    if (!isP2PMerchant) {
+    if (!treatAsP2P) {
       const coBrandedDebtId = await resolveCoBrandedCardPayment(householdId, t, debts, bnplKeywords);
       if (coBrandedDebtId) {
         await db.transaction.update({
@@ -1337,7 +1338,7 @@ export async function categorizeUncategorizedTransactions(householdId: string): 
       }
     }
 
-    const pickedRule = !isP2PMerchant ? pickMerchantRule(rulesByMerchant.get(key) ?? [], t.amountCents) : undefined;
+    const pickedRule = !treatAsP2P ? pickMerchantRule(rulesByMerchant.get(key) ?? [], t.amountCents) : undefined;
     // Whether the BNPL-attribution branch further down would fire for this
     // transaction — merchant text carries a provider keyword AND a tracked
     // installment plan's amount qualifies. Hoisted here so the rule lookup
@@ -1434,7 +1435,7 @@ export async function categorizeUncategorizedTransactions(householdId: string): 
     // ahead of the generic debt/P2P defaults below, so a stray "contains
     // 'loan'" match or a minimum-payment coincidence can't shadow an actual
     // down payment.
-    if (!isP2PMerchant && budgetTracked && t.amountCents > 0 && oneTimeBuckets.length > 0 && !t.aiSuggestedBucketId) {
+    if (!treatAsP2P && budgetTracked && t.amountCents > 0 && oneTimeBuckets.length > 0 && !t.aiSuggestedBucketId) {
       const match = matchOneTimeBucket(oneTimeBuckets, effectiveMerchant, t.amountCents);
       // A non-commit match is a hint — same "no suggestion while pending"
       // rule as everywhere else above; a commit (an already-eligible
@@ -1456,7 +1457,7 @@ export async function categorizeUncategorizedTransactions(householdId: string): 
     // $20-30) can easily collide with an unrelated debt's minimum by
     // chance, silently misfiling it as that debt's payment for the cycle.
     // P2P falls through to its own dedicated default below instead.
-    if (!isP2PMerchant && DEBT_PAYMENT_TEXT_PATTERN.test(t.merchant)) {
+    if (!treatAsP2P && DEBT_PAYMENT_TEXT_PATTERN.test(t.merchant)) {
       const debtId =
         t.amountCents < 0
           ? (debtByAccountId.get(t.accountId ?? "") ?? null)
@@ -1484,7 +1485,7 @@ export async function categorizeUncategorizedTransactions(householdId: string): 
     // across totally unrelated payments, so a household's own ordinary
     // PayPal *purchases* would otherwise wrongly suppress the income
     // default for a genuine PayPal *payment received*.
-    if (isP2PMerchant && t.amountCents < 0) {
+    if (treatAsP2P && t.amountCents < 0) {
       await db.transaction.update({ where: { id: t.id }, data: { isIncome: true } });
       continue;
     }
@@ -1627,7 +1628,7 @@ export async function categorizeUncategorizedTransactions(householdId: string): 
     // request, 2026-08-23: "confirm AI-suggested bucket and category,"
     // mirroring the existing P2P income-confirm flow) rather than being left
     // silently uncategorized the way it used to be.
-    if (isP2PMerchant) {
+    if (treatAsP2P) {
       needsAiP2P.push({ id: t.id, merchant: t.merchant, party: t.resolvedMerchant ?? null, receiptNote: t.receiptNote ?? null, amountCents: t.amountCents, occurredOn: t.occurredOn, label: t.label, notes: t.notes });
       continue;
     }
@@ -1819,7 +1820,7 @@ async function runP2PAiSuggestions(
     where: {
       householdId,
       AND: [
-        { OR: P2P_DISCOVERY_KEYWORDS.map((k) => ({ merchant: { contains: k, mode: "insensitive" as const } })) },
+        p2pMerchantMatch(),
         { OR: [{ bucketId: { not: null } }, { categoryId: { not: null } }] },
       ],
     },
@@ -1902,7 +1903,7 @@ async function runHouseholdSync(householdId: string): Promise<SyncResult> {
   // on file is idempotent.
   const startDate = connection.lastSyncedAt
     ? new Date(connection.lastSyncedAt.getTime() - 14 * 24 * 60 * 60 * 1000)
-    : new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+    : daysAgo(90);
 
   let accountsSynced = 0;
   let transactionsSynced = 0;
@@ -1952,7 +1953,7 @@ async function runHouseholdSync(householdId: string): Promise<SyncResult> {
       }
       if (newAccountIds.length > 0) {
         const { accounts: backfilled } = await fetchSimpleFinData(accessUrl, {
-          startDate: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000),
+          startDate: daysAgo(90),
           includePending: true,
           accountIds: newAccountIds,
         });
@@ -2136,9 +2137,7 @@ async function runHouseholdSync(householdId: string): Promise<SyncResult> {
           // that day's "today" again, so the date doesn't keep drifting
           // forward for a charge that just sits pending a long time.
           const postedDate = t.posted ? new Date(t.posted * 1000) : null;
-          const realOccurredOn = postedDate
-            ? new Date(Date.UTC(postedDate.getFullYear(), postedDate.getMonth(), postedDate.getDate()))
-            : null;
+          const realOccurredOn = postedDate ? todayAsUTCDate(postedDate) : null;
           const rawDescription = t.description?.trim() || null;
           await db.transaction.upsert({
             where: { simpleFinTransactionId: t.id },

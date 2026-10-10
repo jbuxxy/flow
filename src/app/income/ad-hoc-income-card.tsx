@@ -1,5 +1,5 @@
 import { formatCents } from "@/lib/money";
-import { formatISODate } from "@/lib/date";
+import { formatShortDate } from "@/lib/date";
 
 export type AdHocIncomeEntry = {
   id: string;
@@ -7,10 +7,6 @@ export type AdHocIncomeEntry = {
   amountCents: number;
   occurredOn: string; // ISO date
 };
-
-function formatShortDate(iso: string): string {
-  return formatISODate(iso, { month: "short", day: "numeric" });
-}
 
 // Distinct from ExpectedIncomeThisMonth (tracked, scheduled Income records)
 // — this is one-off/irregular money in that's still isIncome:true but was

@@ -1,7 +1,8 @@
 import { db } from "@/lib/db";
 import { parseRoutingRuleFromText, type RoutingContextMerchant } from "@/lib/ai";
 import { getHouseholdSavingsCapacity } from "@/lib/savings";
-import { P2P_DISCOVERY_KEYWORDS } from "@/lib/p2p-keywords";
+import { isP2PMerchant } from "@/lib/p2p-keywords";
+import { belongsToHousehold } from "@/lib/access-rules";
 
 // How far back the merchant snapshot handed to the AI looks. Long enough to
 // see a merchant's real spread of charge sizes and roughly monthly volume,
@@ -52,7 +53,7 @@ async function buildMerchantSnapshot(householdId: string): Promise<RoutingContex
   const byMerchant = new Map<string, { count: number; min: number; max: number; buckets: Map<string, number> }>();
   for (const t of txns) {
     const key = t.merchant.trim();
-    if (!key || P2P_DISCOVERY_KEYWORDS.some((k) => key.toLowerCase().includes(k))) continue;
+    if (!key || isP2PMerchant(key)) continue;
     const e = byMerchant.get(key) ?? { count: 0, min: t.amountCents, max: t.amountCents, buckets: new Map() };
     e.count += 1;
     e.min = Math.min(e.min, t.amountCents);
@@ -121,7 +122,7 @@ export async function previewRoutingRule(
     getHouseholdSavingsCapacity(householdId),
     buildMerchantSnapshot(householdId),
   ]);
-  if (!fromBucket || fromBucket.householdId !== householdId) return { preview: null, error: "Bucket not found." };
+  if (!belongsToHousehold(fromBucket, householdId)) return { preview: null, error: "Bucket not found." };
 
   const parsed = await parseRoutingRuleFromText(householdId, {
     text: trimmed,

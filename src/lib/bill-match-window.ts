@@ -1,3 +1,4 @@
+import { DAY_MS } from "@/lib/date";
 // The grace window a payment can land within (either side) of an expected
 // due/pay date and still count as that cycle's — shared by matchBillPayments
 // (recurring-bills.ts) and matchIncomePayments (income.ts) on the server,
@@ -10,7 +11,6 @@
 // budget-tracked.ts.
 export const MATCH_WINDOW_DAYS = 3;
 
-const DAY_MS = 86_400_000;
 
 // The one real search window a "catch up one cycle at a time" matcher walks
 // against — shared by matchBillPayments (recurring-bills.ts),

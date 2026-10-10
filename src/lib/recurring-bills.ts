@@ -4,7 +4,7 @@ import { isDemoHousehold } from "@/lib/demo";
 import { summarizeUpcomingBills } from "@/lib/ai";
 import { currentPeriodKey, currentDateKey, currentWeekBounds, currentWeekKey, utcPeriodBounds } from "@/lib/period";
 import { nameSimilarity } from "@/lib/fuzzy-match";
-import { todayAsUTCDate } from "@/lib/date";
+import { DAY_MS, todayAsUTCDate } from "@/lib/date";
 import { amountToleranceCents } from "@/lib/amount-tolerance";
 import { stepCadence } from "@/lib/cadence-step";
 import { MATCH_WINDOW_DAYS, catchupCycleWindow, fastForwardCycleDate } from "@/lib/bill-match-window";
@@ -34,7 +34,6 @@ export function currentPeriodBillWhere(): Prisma.RecurringBillWhereInput {
   return { OR: [{ active: true }, { active: false, lastPaidDate: { gte: start } }] };
 }
 
-const DAY_MS = 86_400_000;
 
 // UTC setters, not local — every date this touches (nextDueDate, etc.) is a
 // `@db.Date` value, UTC midnight for a specific calendar day (src/lib/

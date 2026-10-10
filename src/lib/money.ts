@@ -39,3 +39,36 @@ export function parseDollarsToCents(input: string): number | null {
   if (!Number.isFinite(value) || value < 0) return null;
   return dollarsToCents(value);
 }
+
+// A form's optional tolerance field: blank -> null ("use the default
+// amountToleranceCents heuristic"), a valid non-negative dollar amount ->
+// cents, anything else -> not ok.
+export function parseOptionalToleranceCents(tolerance: string | undefined): { ok: true; value: number | null } | { ok: false } {
+  if (!tolerance) return { ok: true, value: null };
+  const cents = parseDollarsToCents(tolerance);
+  if (cents === null || cents < 0) return { ok: false };
+  return { ok: true, value: cents };
+}
+
+// A percent field ("19.99", "19.99%") -> basis points, or null when it
+// isn't a valid 0–100 rate. Shared by every APR/APY form.
+export function parsePercentToBasisPoints(input: string): number | null {
+  const value = Number(input.replace(/%/g, "").trim());
+  if (!Number.isFinite(value) || value < 0 || value > 100) return null;
+  return Math.round(value * 100);
+}
+
+// Basis points -> "19.99%".
+export function formatBasisPoints(basisPoints: number): string {
+  return `${(basisPoints / 100).toFixed(2)}%`;
+}
+
+// A /transactions "$ min"/"$ max" URL param -> cents (undefined when blank or
+// not a number). Shared by the filter form and the page's own query so the
+// two can't read the same param differently.
+export function parseAmountParamCents(param: string | undefined): number | undefined {
+  if (!param) return undefined;
+  const dollars = parseFloat(param);
+  return Number.isFinite(dollars) ? dollarsToCents(dollars) : undefined;
+}
+

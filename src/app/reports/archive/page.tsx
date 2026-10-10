@@ -1,23 +1,19 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { FileDown, Sparkles } from "lucide-react";
-import { auth } from "@/lib/auth";
-import { hasFullAccess } from "@/lib/access";
+import { requireFullAccess } from "@/lib/access";
 import { AppShell } from "@/components/app-shell";
 import { listReportArchive, type ReportArchiveEntry } from "@/lib/reports";
+import { currentPeriodKey, periodLabel } from "@/lib/period";
 
-function periodLabel(periodKey: string): string {
-  if (periodKey === "STARTUP") return "Startup Report";
-  const [y, m] = periodKey.split("-").map(Number);
-  return new Date(y, m - 1, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+function reportLabel(periodKey: string): string {
+  return periodKey === "STARTUP" ? "Startup Report" : periodLabel(periodKey);
 }
 
 // A STARTUP report has no month in its periodKey — bucket it (and sort it) by
 // the month it was generated. Everything else carries "YYYY-MM" already.
 function monthKey(entry: ReportArchiveEntry): string {
   if (entry.periodKey !== "STARTUP") return entry.periodKey;
-  const d = entry.createdAt;
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  return currentPeriodKey(entry.createdAt);
 }
 
 function yearOf(entry: ReportArchiveEntry): number {
@@ -29,9 +25,7 @@ export default async function ReportArchivePage({
 }: {
   searchParams: Promise<{ year?: string }>;
 }) {
-  const session = await auth();
-  if (!session?.user) redirect("/login");
-  if (!hasFullAccess(session.user)) redirect("/");
+  const session = await requireFullAccess();
 
   const entries = await listReportArchive(session.user.householdId);
   const { year: yearParam } = await searchParams;
@@ -96,7 +90,7 @@ export default async function ReportArchivePage({
                   href={`/reports/archive/${r.id}/pdf`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  aria-label={`Download ${periodLabel(r.periodKey)} PDF`}
+                  aria-label={`Download ${reportLabel(r.periodKey)} PDF`}
                   className="flex items-start justify-between gap-3"
                 >
                   <div className="min-w-0">
@@ -104,7 +98,7 @@ export default async function ReportArchivePage({
                       {r.type === "STARTUP" && (
                         <Sparkles size={14} className="shrink-0 text-emerald-600 dark:text-emerald-400" />
                       )}
-                      {periodLabel(r.periodKey)}
+                      {reportLabel(r.periodKey)}
                     </p>
                     <p className="mt-1 line-clamp-2 text-xs text-gray-500 dark:text-neutral-400">{r.narrative}</p>
                   </div>

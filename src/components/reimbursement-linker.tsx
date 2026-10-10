@@ -6,7 +6,7 @@ import { formatCents } from "@/lib/money";
 import { showToast } from "@/lib/toast";
 import { formatDate } from "@/lib/date";
 import { SelectField } from "@/components/select-field";
-import { P2P_DISCOVERY_KEYWORDS } from "@/lib/p2p-keywords";
+import { isP2PMerchant } from "@/lib/p2p-keywords";
 import {
   addTransactionOffset,
   dismissRefundReview,
@@ -278,7 +278,7 @@ export function ReimbursementLinker({
     // reimbursement; a merchant crediting its own purchase back (Amazon,
     // Walmart) reads better as a plain refund — same P2P_DISCOVERY_KEYWORDS
     // check TransactionRow uses for its own isP2P.
-    const isP2P = P2P_DISCOVERY_KEYWORDS.some((k) => (merchant ?? "").toLowerCase().includes(k));
+    const isP2P = isP2PMerchant(merchant);
     const verb = isP2P ? "Reimburses" : "Refund from";
     return (
       <div className="flex items-center gap-1.5 text-xs text-emerald-700 dark:text-emerald-400">

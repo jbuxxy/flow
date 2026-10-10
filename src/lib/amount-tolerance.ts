@@ -10,3 +10,24 @@
 export function amountToleranceCents(billAmountCents: number): number {
   return Math.max(Math.round(billAmountCents * 0.3), 500);
 }
+
+// Greedy 1D clustering by amount: sorted ascending, each charge joins the
+// current cluster while it's within amountToleranceCents of that cluster's
+// running average. Tells apart same-merchant series by size — a $12.95/mo
+// fee inside hundreds of differently-priced runs at the same retailer
+// (bill-detect.ts), two simultaneous plans at one BNPL provider
+// (bnpl-detect.ts), a recurring merchant's charge sizes (keyword-learning.ts).
+export function clusterByAmount<T extends { amountCents: number }>(group: T[]): T[][] {
+  const sorted = [...group].sort((a, b) => a.amountCents - b.amountCents);
+  const clusters: T[][] = [];
+  for (const t of sorted) {
+    const current = clusters[clusters.length - 1];
+    const avg = current ? current.reduce((s, x) => s + x.amountCents, 0) / current.length : 0;
+    if (current && Math.abs(t.amountCents - avg) <= amountToleranceCents(avg)) {
+      current.push(t);
+    } else {
+      clusters.push([t]);
+    }
+  }
+  return clusters;
+}

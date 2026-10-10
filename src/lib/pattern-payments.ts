@@ -1,12 +1,11 @@
 import { db } from "@/lib/db";
-import { todayAsUTCDate } from "@/lib/date";
+import { DAY_MS, todayAsUTCDate } from "@/lib/date";
 import { nextBillDueDate, MAX_CATCHUP_CYCLES } from "@/lib/recurring-bills";
 import { MATCH_WINDOW_DAYS, catchupCycleWindow, fastForwardCycleDate } from "@/lib/bill-match-window";
 import { patternCounterpartyMatches, patternMatchData } from "@/lib/pattern-match";
 import { mapConcurrent } from "@/lib/concurrency";
 import { Prisma, type RecurringPattern } from "@prisma/client";
 
-const DAY_MS = 86_400_000;
 
 // How far past a cycle's own tight match window (MATCH_WINDOW_DAYS on
 // either side) to still look for a *counterparty-matched* transaction worth

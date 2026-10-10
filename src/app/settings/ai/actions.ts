@@ -1,19 +1,11 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 import { z } from "zod";
-import { auth } from "@/lib/auth";
+import { requireOwner } from "@/lib/access";
 import { db } from "@/lib/db";
 import { encrypt, decrypt } from "@/lib/crypto";
 import { verifyAiConfig } from "@/lib/ai-provider";
-
-async function requireOwner() {
-  const session = await auth();
-  if (!session?.user) redirect("/login");
-  if (session.user.role !== "OWNER") redirect("/");
-  return session;
-}
 
 export type AiSettingsState = { error?: string };
 

@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
+import { requireOwner } from "@/lib/access";
 import Image from "next/image";
-import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getOrCreateStartupReport } from "@/lib/reports";
 import { GeometricBackground } from "@/components/geometric-background";
@@ -8,9 +8,7 @@ import { OnboardingWizard } from "./onboarding-wizard";
 import type { ReportFindings } from "@/lib/ai";
 
 export default async function OnboardingPage() {
-  const session = await auth();
-  if (!session?.user) redirect("/login");
-  if (session.user.role !== "OWNER") redirect("/");
+  const session = await requireOwner();
 
   const household = await db.household.findUniqueOrThrow({ where: { id: session.user.householdId } });
   if (household.onboardingCompletedAt) redirect("/");

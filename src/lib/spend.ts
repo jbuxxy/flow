@@ -5,7 +5,7 @@ import { occurrencesInPeriod } from "@/lib/cycle-slots";
 import { budgetedDebtPaymentCents } from "@/lib/debt-payment-budget";
 import { isPayoffPlanEnabled } from "@/lib/debt-payments";
 import { stripPendingPrefix } from "@/lib/pending-prefix";
-import { P2P_DISCOVERY_KEYWORDS } from "@/lib/p2p-keywords";
+import { isP2PMerchant } from "@/lib/p2p-keywords";
 import type { Prisma } from "@prisma/client";
 
 // Reimbursements/refunds land against the *charge they offset*, not the
@@ -128,7 +128,7 @@ export function spendMerchantKey(
   label: string | null | undefined,
   resolvedMerchant?: string | null,
 ): string {
-  const isP2P = P2P_DISCOVERY_KEYWORDS.some((k) => merchant.toLowerCase().includes(k));
+  const isP2P = isP2PMerchant(merchant);
   if (isP2P) {
     const l = label?.trim();
     if (l) return l;

@@ -10,6 +10,29 @@ import type { ReceiptKind } from "@prisma/client";
 
 export type BucketSuggestion = { bucketName: string | null; confidence: number };
 
+// The {"results": [...]} envelope every batched structured-output call
+// here asks for, around one result item's schema.
+function resultsSchema(items: object) {
+  return {
+    type: "object",
+    properties: { results: { type: "array", items } },
+    required: ["results"],
+    additionalProperties: false,
+  };
+}
+
+// Maps a name the model returned back to the household's own spelling,
+// case-insensitively — null when it isn't one of `names`.
+function nameLookup(names: string[]): (raw: string | null | undefined) => string | null {
+  const byLower = new Map(names.map((n) => [n.toLowerCase(), n] as const));
+  return (raw) => (raw ? (byLower.get(raw.toLowerCase()) ?? null) : null);
+}
+
+// A model-reported confidence, coerced into [0, 1].
+function clampConfidence(value: unknown): number {
+  return Math.max(0, Math.min(1, Number(value) || 0));
+}
+
 // Shared by suggestBucketsForMerchants and suggestBucketsFromReceipts below
 // (real finding, 2026-09-22 code review: the two had each hand-copied the
 // same hint-suffix line and the same case-insensitive match/confidence-clamp
@@ -23,13 +46,12 @@ function resolveBucketSuggestions(
   buckets: { name: string }[],
   results: { key: string; bucketName: string | null; confidence: number }[],
 ): Map<string, BucketSuggestion> {
-  const byLowerName = new Map(buckets.map((b) => [b.name.toLowerCase(), b.name] as const));
+  const bucketNamed = nameLookup(buckets.map((b) => b.name));
   const result = new Map<string, BucketSuggestion>();
   for (const entry of results) {
-    const matched = entry.bucketName ? byLowerName.get(entry.bucketName.toLowerCase()) : null;
     result.set(entry.key, {
-      bucketName: matched ?? null,
-      confidence: Math.max(0, Math.min(1, Number(entry.confidence) || 0)),
+      bucketName: bucketNamed(entry.bucketName),
+      confidence: clampConfidence(entry.confidence),
     });
   }
   return result;
@@ -72,26 +94,16 @@ export async function suggestBucketsForMerchants(
 
   // Top-level object (not a bare array) — required for Anthropic's forced
   // tool-use input_schema and OpenAI/Grok's strict JSON schema mode.
-  const schema = {
+  const schema = resultsSchema({
     type: "object",
     properties: {
-      results: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            merchant: { type: "string" },
-            bucketName: { type: "string", nullable: true },
-            confidence: { type: "number" },
-          },
-          required: ["merchant", "bucketName", "confidence"],
-          additionalProperties: false,
-        },
-      },
+      merchant: { type: "string" },
+      bucketName: { type: "string", nullable: true },
+      confidence: { type: "number" },
     },
-    required: ["results"],
+    required: ["merchant", "bucketName", "confidence"],
     additionalProperties: false,
-  };
+  });
 
   const parsed = await callJson<{ results: { merchant: string; bucketName: string | null; confidence: number }[] }>(
     householdId,
@@ -151,26 +163,16 @@ export async function suggestBucketsFromReceipts(
     `from 0 to 1. Return the "key" exactly as given.\n\n` +
     `Transactions:\n${entryLines.join("\n")}`;
 
-  const schema = {
+  const schema = resultsSchema({
     type: "object",
     properties: {
-      results: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            key: { type: "string" },
-            bucketName: { type: "string", nullable: true },
-            confidence: { type: "number" },
-          },
-          required: ["key", "bucketName", "confidence"],
-          additionalProperties: false,
-        },
-      },
+      key: { type: "string" },
+      bucketName: { type: "string", nullable: true },
+      confidence: { type: "number" },
     },
-    required: ["results"],
+    required: ["key", "bucketName", "confidence"],
     additionalProperties: false,
-  };
+  });
 
   const parsed = await callJson<{ results: { key: string; bucketName: string | null; confidence: number }[] }>(
     householdId,
@@ -215,26 +217,16 @@ export async function suggestCategoriesForMerchants(
     `"merchant" field exactly as given, without the amount.\n\n` +
     `Transactions:\n${merchantLines.join("\n")}`;
 
-  const schema = {
+  const schema = resultsSchema({
     type: "object",
     properties: {
-      results: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            merchant: { type: "string" },
-            categoryName: { type: "string", nullable: true },
-            confidence: { type: "number" },
-          },
-          required: ["merchant", "categoryName", "confidence"],
-          additionalProperties: false,
-        },
-      },
+      merchant: { type: "string" },
+      categoryName: { type: "string", nullable: true },
+      confidence: { type: "number" },
     },
-    required: ["results"],
+    required: ["merchant", "categoryName", "confidence"],
     additionalProperties: false,
-  };
+  });
 
   const parsed = await callJson<{ results: { merchant: string; categoryName: string | null; confidence: number }[] }>(
     householdId,
@@ -244,12 +236,11 @@ export async function suggestCategoriesForMerchants(
   );
   if (!parsed) return result;
 
-  const byLowerName = new Map(categories.map((c) => [c.name.toLowerCase(), c.name] as const));
+  const categoryNamed = nameLookup(categories.map((c) => c.name));
   for (const entry of parsed.results) {
-    const matched = entry.categoryName ? byLowerName.get(entry.categoryName.toLowerCase()) : null;
     result.set(entry.merchant, {
-      categoryName: matched ?? null,
-      confidence: Math.max(0, Math.min(1, Number(entry.confidence) || 0)),
+      categoryName: categoryNamed(entry.categoryName),
+      confidence: clampConfidence(entry.confidence),
     });
   }
 
@@ -296,25 +287,15 @@ export async function suggestKeywordMatches(
     `field exactly as given.\n\n` +
     `Merchants:\n${merchants.map((m) => `- ${m}`).join("\n")}`;
 
-  const schema = {
+  const schema = resultsSchema({
     type: "object",
     properties: {
-      results: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            merchant: { type: "string" },
-            isMatch: { type: "boolean" },
-          },
-          required: ["merchant", "isMatch"],
-          additionalProperties: false,
-        },
-      },
+      merchant: { type: "string" },
+      isMatch: { type: "boolean" },
     },
-    required: ["results"],
+    required: ["merchant", "isMatch"],
     additionalProperties: false,
-  };
+  });
 
   const parsed = await callJson<{ results: { merchant: string; isMatch: boolean }[] }>(
     householdId,
@@ -406,40 +387,30 @@ export async function suggestP2PClassifications(
     `exactly as given.\n\n` +
     `New payments:\n${txnLines.join("\n")}`;
 
-  const schema = {
+  const schema = resultsSchema({
     type: "object",
     properties: {
-      results: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            id: { type: "string" },
-            bucketName: { type: "string", nullable: true },
-            categoryName: { type: "string", nullable: true },
-            confidence: { type: "number" },
-          },
-          required: ["id", "bucketName", "categoryName", "confidence"],
-          additionalProperties: false,
-        },
-      },
+      id: { type: "string" },
+      bucketName: { type: "string", nullable: true },
+      categoryName: { type: "string", nullable: true },
+      confidence: { type: "number" },
     },
-    required: ["results"],
+    required: ["id", "bucketName", "categoryName", "confidence"],
     additionalProperties: false,
-  };
+  });
 
   const parsed = await callJson<{
     results: { id: string; bucketName: string | null; categoryName: string | null; confidence: number }[];
   }>(householdId, config, prompt, schema);
   if (!parsed) return result;
 
-  const bucketByLowerName = new Map(buckets.map((b) => [b.name.toLowerCase(), b.name] as const));
-  const categoryByLowerName = new Map(categories.map((c) => [c.name.toLowerCase(), c.name] as const));
+  const bucketNamed = nameLookup(buckets.map((b) => b.name));
+  const categoryNamed = nameLookup(categories.map((c) => c.name));
   for (const entry of parsed.results) {
     result.set(entry.id, {
-      bucketName: entry.bucketName ? (bucketByLowerName.get(entry.bucketName.toLowerCase()) ?? null) : null,
-      categoryName: entry.categoryName ? (categoryByLowerName.get(entry.categoryName.toLowerCase()) ?? null) : null,
-      confidence: Math.max(0, Math.min(1, Number(entry.confidence) || 0)),
+      bucketName: bucketNamed(entry.bucketName),
+      categoryName: categoryNamed(entry.categoryName),
+      confidence: clampConfidence(entry.confidence),
     });
   }
 
@@ -676,25 +647,15 @@ export async function suggestBucketIcons(
     `Return the "name" field exactly as given. If none of the keys fit a ` +
     `name at all, use "wallet".`;
 
-  const schema = {
+  const schema = resultsSchema({
     type: "object",
     properties: {
-      results: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            name: { type: "string" },
-            iconKey: { type: "string" },
-          },
-          required: ["name", "iconKey"],
-          additionalProperties: false,
-        },
-      },
+      name: { type: "string" },
+      iconKey: { type: "string" },
     },
-    required: ["results"],
+    required: ["name", "iconKey"],
     additionalProperties: false,
-  };
+  });
 
   const parsed = await callJson<{ results: { name: string; iconKey: string }[] }>(
     householdId,
@@ -705,9 +666,9 @@ export async function suggestBucketIcons(
   if (!parsed) return result;
 
   const allowed = new Set(allowedKeys);
-  const byLowerName = new Map(names.map((n) => [n.toLowerCase(), n] as const));
+  const named = nameLookup(names);
   for (const entry of parsed.results) {
-    const name = byLowerName.get(entry.name?.toLowerCase() ?? "");
+    const name = named(entry.name);
     const key = entry.iconKey?.trim();
     if (name && key && allowed.has(key)) result.set(name, key);
   }
@@ -2186,80 +2147,70 @@ const RECEIPT_KINDS: ReceiptKind[] = [
   "OTHER",
 ];
 
-const RECEIPT_EXTRACT_SCHEMA = {
+const RECEIPT_EXTRACT_SCHEMA = resultsSchema({
   type: "object",
   properties: {
-    results: {
+    messageId: { type: "string" },
+    isReceipt: { type: "boolean" },
+    kind: { type: "string" },
+    party: { type: "string", nullable: true },
+    partyIsPerson: { type: "boolean" },
+    p2pApp: { type: "string", nullable: true },
+    totalDollars: { type: "number", nullable: true },
+    currency: { type: "string", nullable: true },
+    occurredOn: { type: "string", nullable: true },
+    orderNumber: { type: "string", nullable: true },
+    noteText: { type: "string", nullable: true },
+    isRefund: { type: "boolean" },
+    refundTo: { type: "string", nullable: true },
+    refundToLast4: { type: "string", nullable: true },
+    lineItems: {
       type: "array",
       items: {
         type: "object",
         properties: {
-          messageId: { type: "string" },
-          isReceipt: { type: "boolean" },
-          kind: { type: "string" },
-          party: { type: "string", nullable: true },
-          partyIsPerson: { type: "boolean" },
-          p2pApp: { type: "string", nullable: true },
+          description: { type: "string" },
+          quantity: { type: "number", nullable: true },
+          unitPriceDollars: { type: "number", nullable: true },
           totalDollars: { type: "number", nullable: true },
-          currency: { type: "string", nullable: true },
-          occurredOn: { type: "string", nullable: true },
-          orderNumber: { type: "string", nullable: true },
-          noteText: { type: "string", nullable: true },
-          isRefund: { type: "boolean" },
-          refundTo: { type: "string", nullable: true },
-          refundToLast4: { type: "string", nullable: true },
-          lineItems: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                description: { type: "string" },
-                quantity: { type: "number", nullable: true },
-                unitPriceDollars: { type: "number", nullable: true },
-                totalDollars: { type: "number", nullable: true },
-              },
-              required: ["description", "quantity", "unitPriceDollars", "totalDollars"],
-              additionalProperties: false,
-            },
-          },
-          billNotice: {
-            type: "object",
-            nullable: true,
-            properties: {
-              billerName: { type: "string" },
-              amountDueDollars: { type: "number" },
-              dueDate: { type: "string", nullable: true },
-              accountLast4: { type: "string", nullable: true },
-            },
-            required: ["billerName", "amountDueDollars", "dueDate", "accountLast4"],
-            additionalProperties: false,
-          },
         },
-        required: [
-          "messageId",
-          "isReceipt",
-          "kind",
-          "party",
-          "partyIsPerson",
-          "p2pApp",
-          "totalDollars",
-          "currency",
-          "occurredOn",
-          "orderNumber",
-          "noteText",
-          "isRefund",
-          "refundTo",
-          "refundToLast4",
-          "lineItems",
-          "billNotice",
-        ],
+        required: ["description", "quantity", "unitPriceDollars", "totalDollars"],
         additionalProperties: false,
       },
     },
+    billNotice: {
+      type: "object",
+      nullable: true,
+      properties: {
+        billerName: { type: "string" },
+        amountDueDollars: { type: "number" },
+        dueDate: { type: "string", nullable: true },
+        accountLast4: { type: "string", nullable: true },
+      },
+      required: ["billerName", "amountDueDollars", "dueDate", "accountLast4"],
+      additionalProperties: false,
+    },
   },
-  required: ["results"],
+  required: [
+    "messageId",
+    "isReceipt",
+    "kind",
+    "party",
+    "partyIsPerson",
+    "p2pApp",
+    "totalDollars",
+    "currency",
+    "occurredOn",
+    "orderNumber",
+    "noteText",
+    "isRefund",
+    "refundTo",
+    "refundToLast4",
+    "lineItems",
+    "billNotice",
+  ],
   additionalProperties: false,
-};
+});
 
 type RawExtractedReceipt = {
   messageId: string;
