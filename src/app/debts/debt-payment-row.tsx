@@ -101,6 +101,10 @@ export type DebtPaymentData = {
   // (see resolveMinimumLedger, src/lib/minimum-ledger.ts; skip lives on
   // /debts). Optional so a caller without it renders exactly as before.
   coveredMinimums?: string[];
+  // The synced balance hit $0 this month but the payment that did it hasn't
+  // synced as a transaction yet — see balanceOnlyPayoff (debt-payoff.ts).
+  // Rendered as a pending payoff line, same as DebtRow on /debts.
+  balanceOnlyPayoff: { date: string; amountCents: number } | null;
   // See the schema comment on DebtPayment.bucketId's double-counting note —
   // only a debt whose linked account is itself used for transactions has
   // purchases to double-count against in the first place, so the
@@ -505,6 +509,7 @@ export function DebtPaymentRow({
           "Paid Off" badge remains. */}
       {(debtPayment.slots.some((s) => s.payment) ||
         debtPayment.extraPayments.length > 0 ||
+        debtPayment.balanceOnlyPayoff ||
         debtPayment.projectedExtras.length > 0 ||
         (!debtPayment.paidOff &&
           !debtPayment.ignoreMinimumPayment &&
@@ -641,6 +646,24 @@ export function DebtPaymentRow({
                       suggestions={accountedForSuggestions[p.id] ?? []}
                       bucket={bucket}
                     />
+                  ),
+                });
+              }
+              if (debtPayment.balanceOnlyPayoff) {
+                const { date, amountCents } = debtPayment.balanceOnlyPayoff;
+                rows.push({
+                  sortMs: at(date),
+                  el: bucket ? (
+                    <EntryLine key="balance-only-payoff" state="paid" date={new Date(date)} amountCents={amountCents} payoff pending />
+                  ) : (
+                    <li key="balance-only-payoff" className="flex w-full items-center gap-2">
+                      <Star size={15} className="shrink-0 fill-emerald-400 text-emerald-500" aria-label="Payoff" />
+                      <span className="flex flex-1 items-center gap-1.5 text-neutral-500 dark:text-neutral-400">
+                        {formatDate(new Date(date), { month: "short", day: "numeric" })} · Payoff
+                        <PendingIcon />
+                      </span>
+                      <span className="font-medium text-neutral-800 dark:text-neutral-200">{formatCents(amountCents)}</span>
+                    </li>
                   ),
                 });
               }

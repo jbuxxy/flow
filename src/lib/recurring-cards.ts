@@ -10,7 +10,7 @@ import {
 } from "@/lib/debt-payments";
 import { coveredMinimumDates, ledgerMinimumCents, tracksMinimum } from "@/lib/minimum-ledger";
 import { ACCOUNTED_FOR_SELECT, accountedForDisplayList } from "@/lib/spend";
-import { confirmProjectedExtras, capAtPayoffCents } from "@/lib/debt-payoff";
+import { balanceOnlyPayoff, confirmProjectedExtras, capAtPayoffCents } from "@/lib/debt-payoff";
 import { splitPlanExtraPayments, buildCycleSlots, slotBounds, cyclePaymentStatus, recentPaymentsWhere } from "@/lib/cycle-slots";
 import { skipShownOnBillRow } from "@/lib/recurring-bills";
 import { dueStatus } from "@/lib/date";
@@ -74,6 +74,7 @@ export function debtPaymentCardInclude() {
         minPaymentCents: true,
         aprBasisPoints: true,
         paidOffDate: true,
+        paidOffAmountCents: true,
         includeInPayoffPlan: true,
         ignoreMinimumPayment: true,
         installmentsTotal: true,
@@ -281,6 +282,14 @@ export async function buildDebtPaymentCards(
       );
       slots = [];
     }
+    // Same balance-only payoff line /debts' DebtRow shows — see
+    // balanceOnlyPayoff (debt-payoff.ts).
+    const unsyncedPayoff = balanceOnlyPayoff(
+      [...slots.flatMap((s) => (s.payment ? [s.payment] : [])), ...extraPayments],
+      p.debt,
+      monthStart,
+      monthEnd,
+    );
     const toISO = (t: (typeof paymentsAbs)[number]) => ({ ...t, occurredOn: t.occurredOn.toISOString().slice(0, 10) });
     // `confirmed` per projected extra: consume this month's real extra-payment
     // total oldest-projected-line-first, minus whatever already went toward a
@@ -340,6 +349,9 @@ export async function buildDebtPaymentCards(
       extraPayments: extraPayments.map(toISO),
       projectedExtras,
       coveredMinimums,
+      balanceOnlyPayoff: unsyncedPayoff
+        ? { date: unsyncedPayoff.date.toISOString().slice(0, 10), amountCents: unsyncedPayoff.amountCents }
+        : null,
     };
   });
 }
