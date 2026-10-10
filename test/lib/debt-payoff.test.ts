@@ -12,6 +12,7 @@ import {
   mostRecentPaydayOnOrBefore,
   nextPaidOffDate,
   pickPayoffPaymentTime,
+  balanceOnlyPayoff,
   PAYOFF_ATTRIBUTION_WINDOW_MS,
   projectCyclePlan,
   projectPaycheckDates,
@@ -223,6 +224,32 @@ describe("pickPayoffPaymentTime", () => {
   test("null when the latest payment is too far from paidOffDate (outside the attribution window)", () => {
     const far = new Date(paidOff.getTime() - PAYOFF_ATTRIBUTION_WINDOW_MS - 86_400_000);
     assert.equal(pickPayoffPaymentTime([{ occurredOn: far }], 0, paidOff), null);
+  });
+});
+
+describe("balanceOnlyPayoff", () => {
+  // Sam's Club Card, 2026-10-10: balance synced to $0 on Oct 9 ($193.22),
+  // the only real payment this month is the routine Oct 1 one.
+  const start = utc(2026, 10, 1);
+  const end = utc(2026, 11, 1);
+  const debt = { balanceCents: 0, paidOffDate: utc(2026, 10, 9), paidOffAmountCents: 19322 };
+
+  test("shows the balance-confirmed payoff when no real payment this period closed it", () => {
+    assert.deepEqual(balanceOnlyPayoff([{ occurredOn: utc(2026, 10, 1) }], debt, start, end), {
+      date: utc(2026, 10, 9),
+      amountCents: 19322,
+    });
+    assert.deepEqual(balanceOnlyPayoff([], debt, start, end), { date: utc(2026, 10, 9), amountCents: 19322 });
+  });
+
+  test("null once the real closing payment has synced", () => {
+    assert.equal(balanceOnlyPayoff([{ occurredOn: utc(2026, 10, 9) }], debt, start, end), null);
+  });
+
+  test("null outside the period, with a balance, or with no known amount", () => {
+    assert.equal(balanceOnlyPayoff([], debt, utc(2026, 9, 1), start), null);
+    assert.equal(balanceOnlyPayoff([], { ...debt, balanceCents: 500 }, start, end), null);
+    assert.equal(balanceOnlyPayoff([], { ...debt, paidOffAmountCents: null }, start, end), null);
   });
 });
 

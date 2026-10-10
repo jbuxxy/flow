@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Settings } from "lucide-react";
 import { db } from "@/lib/db";
 import { requireFullAccess } from "@/lib/access";
-import type { PayoffOrder } from "@/lib/debt-payoff";
+import { balanceOnlyPayoff, type PayoffOrder } from "@/lib/debt-payoff";
 import { AppShell } from "@/components/app-shell";
 import { nameSimilarity } from "@/lib/fuzzy-match";
 import {
@@ -355,6 +355,8 @@ export default async function DebtsPage() {
           }
         : period;
     ({ slots, extraPayments } = foldNoMinimum({ slots, extraPayments }));
+    const paymentsInPeriod = (periodStart: Date, periodEnd: Date) =>
+      paymentsAbs.filter((p) => p.occurredOn >= periodStart && p.occurredOn < periodEnd);
     const cycleMinimum: CycleMinimum | null = payment
       ? {
           debtPaymentId: payment.id,
@@ -391,13 +393,14 @@ export default async function DebtsPage() {
           // array's .every() — e.g. an ANNUAL debt due in a different month).
           paidThisCycle: slots.every((s) => s.payment !== null),
           dueDateLocked: payment.dueDateLocked,
-          payments: paymentsAbs.filter((p) => p.occurredOn >= monthStart && p.occurredOn < monthEnd),
-          lastMonthPayments: paymentsAbs.filter((p) => p.occurredOn >= lastMonthStart && p.occurredOn < monthStart),
+          payments: paymentsInPeriod(monthStart, monthEnd),
+          lastMonthPayments: paymentsInPeriod(lastMonthStart, monthStart),
           slots,
           extraPayments,
           extraPaymentsBeyondSlots,
           planExtraPaymentIds: planExtraPayments.map((t) => t.id),
           skippedSlotDates: skippedMinimumDatesByDebtId.get(d.id) ?? [],
+          balanceOnlyPayoff: balanceOnlyPayoff(paymentsInPeriod(monthStart, monthEnd), d, monthStart, monthEnd),
         }
       : null;
     // The same ledger, scoped to last calendar month — the Payoff Calendar's
@@ -421,6 +424,7 @@ export default async function DebtsPage() {
             extraPayments: lastMonth.extraPayments,
             extraPaymentsBeyondSlots: [],
             skippedSlotDates: lastMonthSkippedMinimumDatesByDebtId.get(d.id) ?? [],
+            balanceOnlyPayoff: balanceOnlyPayoff(paymentsInPeriod(lastMonthStart, monthStart), d, lastMonthStart, monthStart),
           }
         : null;
     return {

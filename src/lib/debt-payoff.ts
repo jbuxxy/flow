@@ -236,6 +236,27 @@ export function pickPayoffPaymentTime(
   return Math.abs(latest - paidOffDate.getTime()) <= PAYOFF_ATTRIBUTION_WINDOW_MS ? latest : null;
 }
 
+// The payoff line for a debt the synced balance alone confirmed at $0, before
+// the payment that closed it has synced as a transaction: paidOffDate in
+// [periodStart, periodEnd), no real payment this period that
+// pickPayoffPaymentTime credits as the closer, and a known amount
+// (paidOffAmountCents). Same balance-only fallback the Payment Calendar and
+// This Week's Bills already show — /debts' own ledger had none, so the card
+// read "Paid Off Oct 09" with no Oct 9 line under it (real report,
+// 2026-10-10: Sam's Club Card, whose issuer posts payments days late).
+export function balanceOnlyPayoff(
+  periodPayments: { occurredOn: Date }[],
+  debt: { balanceCents: number; paidOffDate: Date | null; paidOffAmountCents: number | null },
+  periodStart: Date,
+  periodEnd: Date,
+): { date: Date; amountCents: number } | null {
+  const { balanceCents, paidOffDate, paidOffAmountCents } = debt;
+  if (balanceCents !== 0 || !paidOffDate || paidOffAmountCents == null) return null;
+  if (paidOffDate < periodStart || paidOffDate >= periodEnd) return null;
+  if (pickPayoffPaymentTime(periodPayments, balanceCents, paidOffDate) !== null) return null;
+  return { date: paidOffDate, amountCents: paidOffAmountCents };
+}
+
 export type PayoffResult = {
   months: number;
   debtFreeDate: Date | null;

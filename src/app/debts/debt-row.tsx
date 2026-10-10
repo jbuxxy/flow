@@ -119,6 +119,10 @@ export type CycleMinimum = {
   // skipped — see DebtMinimumSkip / resolveMinimumLedger. Optional: only
   // /debts' page.tsx supplies it.
   skippedSlotDates?: string[];
+  // The balance-only payoff line (balanceOnlyPayoff, debt-payoff.ts) — the
+  // synced balance hit $0 this period but the payment that did it hasn't
+  // synced as a transaction yet. Optional: only /debts' page.tsx supplies it.
+  balanceOnlyPayoff?: { date: Date; amountCents: number } | null;
 };
 
 // The extra-payment half — pure projection, no tracker of its own (see
@@ -275,7 +279,9 @@ export function DebtRow({
   // below), so the section header itself shouldn't render over nothing.
   const cycleMinimumHasContent = cycleMinimum
     ? paidOff
-      ? cycleMinimum.slots.some((s) => s.payment) || cycleMinimum.extraPayments.length > 0
+      ? cycleMinimum.slots.some((s) => s.payment) ||
+        cycleMinimum.extraPayments.length > 0 ||
+        !!cycleMinimum.balanceOnlyPayoff
       : // An active debt with nothing expected this month (no slots), no real
         // payments this month (no extraPayments), and a next due date that's
         // in a future month has nothing to say under "This Month" — the
@@ -562,6 +568,16 @@ export function DebtRow({
           pending={p.pending}
         />
       ),
+    });
+  }
+  // Paid off by a synced balance drop whose payment hasn't posted yet — the
+  // payoff star on paidOffDate, flagged pending until the real transaction
+  // syncs and takes it over (balanceOnlyPayoff then returns null).
+  if (cycleMinimum?.balanceOnlyPayoff) {
+    const { date, amountCents } = cycleMinimum.balanceOnlyPayoff;
+    ledgerRows.push({
+      sortMs: date.getTime(),
+      el: <EntryLine key="balance-only-payoff" state="paid" date={date} amountCents={amountCents} payoff pending />,
     });
   }
   // Every projected upcoming extra paycheck for this debt this cycle — an
