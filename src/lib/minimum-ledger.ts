@@ -22,6 +22,14 @@ import { DAY_MS } from "@/lib/date";
 // amountToleranceCents (the same tolerance the sync uses to call a payment
 // "the minimum"). A payment of about the minimum, or any payment on/after the
 // due date, is the slot's own payment and reads as before.
+//
+// The same holds for a payoff-plan extra (2026-10-11: Amazon Card's Oct 2
+// $108.33 extra against its $35 minimum due Oct 10). splitPlanExtraPayments
+// keeps a paid plan extra out of the slots, so the slot stays open, but the
+// card issuer (and matchDebtPayments' own rollover, which counts any linked
+// payment >= the minimum in the cycle) treats the minimum as met. An open
+// slot with such an extra since the previous slot is "covered" too — each
+// extra covers at most one slot, and stays listed as its own extra line.
 
 type LedgerPayment = { id: string; amountCents: number; occurredOn: Date; pending?: boolean };
 
@@ -49,13 +57,33 @@ export function resolveMinimumLedger(opts: {
   const remainingExtras = [...opts.extraPayments].sort((a, b) => a.occurredOn.getTime() - b.occurredOn.getTime());
   const entries: MinimumLedgerEntry[] = [];
   const tolerance = amountToleranceCents(minimumCents);
+  const coveringExtras = new Set<LedgerPayment>();
+  let prevSlotMs = -Infinity;
 
   for (const slot of slots) {
     const p = slot.payment;
+    const slotMs = slot.date.getTime();
     if (!p) {
-      entries.push({ kind: "open", date: slot.date });
+      const coveringExtra =
+        minimumCents > 0
+          ? remainingExtras.find(
+              (e) =>
+                !coveringExtras.has(e) &&
+                e.occurredOn.getTime() > prevSlotMs &&
+                e.occurredOn.getTime() < slotMs &&
+                e.amountCents > minimumCents + tolerance,
+            )
+          : undefined;
+      if (coveringExtra) {
+        coveringExtras.add(coveringExtra);
+        entries.push({ kind: "covered", date: slot.date, skipped: skippedDates.has(slot.date.toISOString().slice(0, 10)) });
+      } else {
+        entries.push({ kind: "open", date: slot.date });
+      }
+      prevSlotMs = slotMs;
       continue;
     }
+    prevSlotMs = slotMs;
     entries.push({ kind: "payment", payment: p });
 
     const paidAheadAndOver =
@@ -123,6 +151,14 @@ export function coveredMinimumDates(opts: {
 }): Date[] {
   return resolveMinimumLedger(opts)
     .entries.flatMap((e) => (e.kind === "covered" && !e.skipped ? [e.date] : []));
+}
+
+// Every still-open minimum slot date this month — slots with no payment that
+// nothing covered (see resolveMinimumLedger). The calendars draw these as
+// plain "due" cells and the covered ones (coveredMinimumDates) separately, so
+// a covered open slot must come from one list only.
+export function openMinimumDates(opts: Parameters<typeof resolveMinimumLedger>[0]): Date[] {
+  return resolveMinimumLedger(opts).entries.flatMap((e) => (e.kind === "open" ? [e.date] : []));
 }
 
 // Whether a debt carries a real minimum payment: not flagged no-minimum

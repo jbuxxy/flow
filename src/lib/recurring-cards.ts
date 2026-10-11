@@ -8,7 +8,7 @@ import {
   supersededPayoffExtraByDebtInPeriod,
   planExtraTargetsByDebt,
 } from "@/lib/debt-payments";
-import { coveredMinimumDates, ledgerMinimumCents, tracksMinimum } from "@/lib/minimum-ledger";
+import { coveredMinimumDates, ledgerMinimumCents, openMinimumDates, tracksMinimum } from "@/lib/minimum-ledger";
 import { ACCOUNTED_FOR_SELECT, accountedForDisplayList } from "@/lib/spend";
 import { balanceOnlyPayoff, confirmProjectedExtras, capAtPayoffCents } from "@/lib/debt-payoff";
 import { splitPlanExtraPayments, buildCycleSlots, slotBounds, cyclePaymentStatus, recentPaymentsWhere } from "@/lib/cycle-slots";
@@ -254,10 +254,15 @@ export async function buildDebtPaymentCards(
         cycleRestartDueDate: p.cycleRestartDueDate,
       }),
     );
-    // Minimums an earlier, bigger payment already covered — still listed as
-    // expected payments until skipped (resolveMinimumLedger). Computed before
-    // the no-minimum fold below empties `slots`.
-    const coveredMinimums = coveredMinimumDates({
+    extraPayments = [
+      ...planExtraPayments.filter((t) => t.occurredOn >= monthStart && t.occurredOn < monthEnd),
+      ...extraPayments,
+    ].sort((a, b) => a.occurredOn.getTime() - b.occurredOn.getTime());
+    // Minimums an earlier, bigger payment (a plan extra included) already
+    // covered — still listed as expected payments until skipped
+    // (resolveMinimumLedger). Computed before the no-minimum fold below
+    // empties `slots`.
+    const ledgerOpts = {
       slots,
       extraPayments,
       minimumCents: ledgerMinimumCents({
@@ -269,11 +274,14 @@ export async function buildDebtPaymentCards(
       skippedDates: new Set(
         [...skippedMinimumKeys].flatMap((k) => (k.startsWith(`${p.debtId}:`) ? [k.slice(p.debtId.length + 1)] : [])),
       ),
-    }).map((d) => d.toISOString().slice(0, 10));
-    extraPayments = [
-      ...planExtraPayments.filter((t) => t.occurredOn >= monthStart && t.occurredOn < monthEnd),
-      ...extraPayments,
-    ].sort((a, b) => a.occurredOn.getTime() - b.occurredOn.getTime());
+    };
+    const coveredMinimums = coveredMinimumDates(ledgerOpts).map((d) => d.toISOString().slice(0, 10));
+    // Open slots a plan extra covered (skipped or not) — the row draws them
+    // from coveredMinimums, never as a plain due line too.
+    const openDates = new Set(openMinimumDates(ledgerOpts).map((d) => d.getTime()));
+    const coveredOpenSlots = slots
+      .filter((s) => !s.payment && !openDates.has(s.date.getTime()))
+      .map((s) => s.date.toISOString().slice(0, 10));
     // No-minimum card: fold every paired payment into the flat list so the
     // ledger never shows a "Minimum $0.00" line (same as debts/page.tsx).
     if (p.debt.ignoreMinimumPayment) {
@@ -349,6 +357,7 @@ export async function buildDebtPaymentCards(
       extraPayments: extraPayments.map(toISO),
       projectedExtras,
       coveredMinimums,
+      coveredOpenSlots,
       balanceOnlyPayoff: unsyncedPayoff
         ? { date: unsyncedPayoff.date.toISOString().slice(0, 10), amountCents: unsyncedPayoff.amountCents }
         : null,

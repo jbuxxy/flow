@@ -1,6 +1,6 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { coveredMinimumDates, ledgerMinimumCents, resolveMinimumLedger, minimumOwedCents, tracksMinimum } from "@/lib/minimum-ledger";
+import { coveredMinimumDates, ledgerMinimumCents, openMinimumDates, resolveMinimumLedger, minimumOwedCents, tracksMinimum } from "@/lib/minimum-ledger";
 import { utc } from "../helpers.ts";
 
 const pay = (id: string, cents: number, d: Date) => ({ id, amountCents: cents, occurredOn: d });
@@ -85,6 +85,45 @@ describe("resolveMinimumLedger", () => {
     const { entries } = resolveMinimumLedger({ slots: [{ date: due, payment: pay("p1", 17_700, utc(2026, 9, 18)) }], extraPayments: [], minimumCents: 0, skippedDates: none });
     assert.equal(entries.length, 1);
     assert.equal(entries[0].kind, "payment");
+  });
+});
+
+describe("open slot covered by a payoff-plan extra", () => {
+  // Amazon Card, 2026-10-11: a $108.33 plan extra on Oct 2 (kept out of the
+  // slot by splitPlanExtraPayments) against a $35 minimum due Oct 10.
+  const due = utc(2026, 10, 10);
+  const extra = pay("x1", 10_833, utc(2026, 10, 2));
+  const opts = { slots: [{ date: due, payment: null }], extraPayments: [extra], minimumCents: 3_500, skippedDates: none };
+
+  test("reads as covered (skippable), and the extra stays its own line", () => {
+    const { entries, extraPayments } = resolveMinimumLedger(opts);
+    assert.deepEqual(entries, [{ kind: "covered", date: due, skipped: false }]);
+    assert.deepEqual(extraPayments, [extra]);
+    assert.deepEqual(openMinimumDates(opts), []);
+    assert.deepEqual(coveredMinimumDates(opts), [due]);
+  });
+
+  test("skipped: neither open nor a calendar cell", () => {
+    const skipped = { ...opts, skippedDates: new Set(["2026-10-10"]) };
+    assert.deepEqual(openMinimumDates(skipped), []);
+    assert.deepEqual(coveredMinimumDates(skipped), []);
+  });
+
+  test("stays open when the extra is small, on/after the due date, or the cycle is in arrears", () => {
+    const open = [{ kind: "open", date: due }];
+    assert.deepEqual(resolveMinimumLedger({ ...opts, extraPayments: [pay("x", 3_600, utc(2026, 10, 2))] }).entries, open);
+    assert.deepEqual(resolveMinimumLedger({ ...opts, extraPayments: [pay("x", 10_833, due)] }).entries, open);
+    assert.deepEqual(resolveMinimumLedger({ ...opts, minimumCents: 0 }).entries, open);
+  });
+
+  test("one extra covers one slot, and only one landing since the previous slot", () => {
+    const first = utc(2026, 10, 3);
+    const second = utc(2026, 10, 17);
+    const twoSlots = { ...opts, slots: [{ date: first, payment: null }, { date: second, payment: null }], extraPayments: [pay("x", 10_833, utc(2026, 10, 1))] };
+    assert.deepEqual(resolveMinimumLedger(twoSlots).entries, [
+      { kind: "covered", date: first, skipped: false },
+      { kind: "open", date: second },
+    ]);
   });
 });
 

@@ -50,7 +50,7 @@ import {
   occurrenceSettledAfterWeek,
   parkedOccurrenceSettledLate,
 } from "@/lib/upcoming-bills-shared";
-import { coveredMinimumDates, ledgerMinimumCents, minimumOwedCents, tracksMinimum } from "@/lib/minimum-ledger";
+import { coveredMinimumDates, ledgerMinimumCents, minimumOwedCents, openMinimumDates, tracksMinimum } from "@/lib/minimum-ledger";
 import { allBnplKeywords, resolveBnplKeyword } from "@/lib/bnpl-detect";
 import { upsertMerchantRule } from "@/lib/merchant-rules";
 import { isGenericCardPaymentDescriptor } from "@/lib/debt-payment-pattern";
@@ -3325,6 +3325,10 @@ type CorrectedDue = {
   cyclePaid: boolean;
   // Unskipped "covered minimum" slot dates this month — see resolveMinimumLedger.
   coveredSlotDates: Date[];
+  // `date`'s own open slot was covered by an earlier, bigger plan extra
+  // (resolveMinimumLedger) — it's drawn from coveredSlotDates (or not at all
+  // once skipped), never as a plain "due" cell too.
+  dueCovered: boolean;
   extraPaidCents: number;
   extraPaidTimes: Set<number>;
 };
@@ -3468,9 +3472,9 @@ function correctedDueDateByDebtId(
     const correctedNextDue = correctedNextDueDate(cyclePaid, p.nextDueDate, periodDate, p.cadence);
     // Minimums an earlier, bigger payment already covered — still shown on
     // the calendars unless skipped (resolveMinimumLedger, 2026-09-20).
-    const coveredSlotDates = coveredMinimumDates({
+    const ledgerOpts = {
       slots,
-      extraPayments,
+      extraPayments: [...planExtraThisMonth, ...extraPayments],
       minimumCents: ledgerMinimumCents({
         paidOff: meta?.balanceCents !== undefined && meta.balanceCents <= 0,
         nextDueThisMonth: p.nextDueDate >= monthStart && p.nextDueDate < monthEnd,
@@ -3480,12 +3484,14 @@ function correctedDueDateByDebtId(
       skippedDates: new Set(
         [...skippedMinimumKeys].flatMap((k) => (k.startsWith(`${p.debtId}:`) ? [k.slice(p.debtId.length + 1)] : [])),
       ),
-    });
+    };
+    const coveredSlotDates = coveredMinimumDates(ledgerOpts);
     dueDateByDebtId.set(p.debtId, {
       date: correctedNextDue,
       cadence: p.cadence,
       cyclePaid,
       coveredSlotDates,
+      dueCovered: !cyclePaid && !openMinimumDates(ledgerOpts).some((d) => d.getTime() === periodDate.getTime()),
       extraPaidCents,
       // occurredOn timestamps of the real payments this cycle that went
       // beyond the expected minimum slot(s) — lets the payment calendar badge
@@ -3702,7 +3708,7 @@ export async function getPaymentCalendarThisCycle(
       // debt (ignoreMinimumPayment / paid in full each cycle) still gets no
       // "$0.00 due" cell (household report, 2026-08-31).
       const owedCents = minimumOwedCents(p, d);
-      if (d.balanceCents > 0 && corrected && !corrected.cyclePaid && owedCents > 0) {
+      if (d.balanceCents > 0 && corrected && !corrected.cyclePaid && !corrected.dueCovered && owedCents > 0) {
         add(corrected.date, debtDisplayName(d), owedCents, "due", d.includeInPayoffPlan);
       }
       // A minimum an earlier, bigger payment already covered (a $177 payment
@@ -4036,7 +4042,7 @@ export async function getPaymentCalendarIcsEvents(householdId: string): Promise<
       { amountDueCents: amountDueByDebtId.get(d.id) ?? 0, amountCents: minimumByDebtId.get(d.id) ?? 0 },
       d,
     );
-    if (!corrected || corrected.cyclePaid || amountDueCents <= 0) continue;
+    if (!corrected || corrected.cyclePaid || corrected.dueCovered || amountDueCents <= 0) continue;
     const day = ymd(corrected.date);
     if (emittedUids.has(`${d.id}-minimum-${day}`)) continue;
     const debtName = nameById.get(d.id) ?? "Debt";

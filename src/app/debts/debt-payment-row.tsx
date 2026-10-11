@@ -101,6 +101,10 @@ export type DebtPaymentData = {
   // (see resolveMinimumLedger, src/lib/minimum-ledger.ts; skip lives on
   // /debts). Optional so a caller without it renders exactly as before.
   coveredMinimums?: string[];
+  // ISO dates of open slots (no payment of their own) that an earlier, bigger
+  // plan extra covered — drawn from coveredMinimums (bucket variant) or not
+  // at all, never as a plain due line.
+  coveredOpenSlots: string[];
   // The synced balance hit $0 this month but the payment that did it hasn't
   // synced as a transaction yet — see balanceOnlyPayoff (debt-payoff.ts).
   // Rendered as a pending payoff line, same as DebtRow on /debts.
@@ -541,7 +545,7 @@ export function DebtPaymentRow({
                       suggestions={accountedForSuggestions[slot.payment.id] ?? []}
                       bucket={bucket}
                     />
-                  ) : debtPayment.paidOff ? null : bucket ? (
+                  ) : debtPayment.paidOff || debtPayment.coveredOpenSlots.includes(slot.date) ? null : bucket ? (
                     <EntryLine
                       key={slot.date}
                       state="due"
