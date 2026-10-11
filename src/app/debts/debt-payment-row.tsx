@@ -52,8 +52,8 @@ export type DebtPaymentData = {
   // The underlying Debt sitting at $0 (2026-08-16, real report: a $0-balance
   // card kept showing a projected next due date months out, which reads as
   // money owed that isn't). Overrides the whole due/paid badge area below
-  // with a plain "Paid off" pill and hides "Mark this payment paid" (there's
-  // nothing to confirm) and the "still due" badge (nothing's due).
+  // with a plain "Paid off" pill and hides the "still due" badge (nothing's
+  // due).
   paidOff: boolean;
   // Stamped the moment the balance itself crossed zero (nextPaidOffDate,
   // debt-payoff.ts) — used with pickPayoffPaymentTime to find which real
@@ -483,8 +483,8 @@ export function DebtPaymentRow({
             inline here, on the /bills or /buckets browsing surfaces this
             row also renders on (household request, 2026-09-12: "I
             shouldn't be able to edit accounts here, only in settings").
-            "Mark this payment paid" and the ledger below stay available
-            either way — those aren't term-editing. */}
+            The ledger below stays available either way — it isn't
+            term-editing. */}
         <Link
           href="/settings/accounts"
           aria-label="Edit in Settings"

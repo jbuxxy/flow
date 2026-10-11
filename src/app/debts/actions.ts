@@ -1445,37 +1445,17 @@ export async function acceptDebtPaymentSuggestion(
   revalidateHousehold();
 }
 
-// The debt-payment counterpart to markBillPaid — manual "mark this cycle
-// paid" for a debt payment with no matching transaction yet.
-export async function markDebtPaymentPaid(debtPaymentId: string) {
-  const session = await requireOwner();
-
-  const debtPayment = await db.debtPayment.findUnique({ where: { id: debtPaymentId } });
-  if (!belongsToHousehold(debtPayment, session.user.householdId)) return;
-
-  await db.debtPayment.update({
-    where: { id: debtPaymentId },
-    data: {
-      lastPaidDate: todayAsUTCDate(),
-      nextDueDate: nextBillDueDate(debtPayment.cadence, debtPayment.nextDueDate, []),
-      // Manual debts have no synced transactions to ever reduce
-      // amountDueCents automatically (see matchDebtPayments) — this click
-      // is the only signal that a cycle's owed, so it resets the rolling
-      // total the same way a real qualifying payment would.
-      amountDueCents: debtPayment.amountCents,
-    },
-  });
-  revalidateHousehold();
-}
-
 // Inline "Mark Caught Up" on the debt row itself (household feedback,
 // 2026-08-26: correcting a wrong "amount due" by going into Account
 // Settings "is not obvious") — resets the rolling amountDueCents to a fresh
 // cycle's regular minimum, for whenever the calculated carried-over
-// shortfall is wrong (a surplus/credit applied that Flow can't see). Unlike
-// markDebtPaymentPaid above, deliberately leaves nextDueDate untouched —
-// this corrects the *amount*, it doesn't skip the household ahead to the
-// next billing cycle.
+// shortfall is wrong (a surplus/credit applied that Flow can't see).
+// Deliberately leaves nextDueDate untouched — this corrects the *amount*, it
+// doesn't skip the household ahead to the next billing cycle. There is no
+// manual "mark this minimum paid": a tap-to-mark-paid due line used to roll
+// nextDueDate a cycle per tap while the line stayed open, and was removed
+// after ~8 taps pushed Amazon Card's tracker to June 2027 (2026-10-11). Every
+// debt, manual ones included, is settled by its linked transactions.
 export async function settleDebtAmountDue(debtPaymentId: string) {
   const session = await requireOwner();
 

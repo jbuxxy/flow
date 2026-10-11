@@ -20,7 +20,6 @@ import { debtLogoSearchText } from "@/lib/merchant-domains";
 import { ledgerMinimumCents, minimumOwedCents, resolveMinimumLedger } from "@/lib/minimum-ledger";
 import {
   linkDebtAccount,
-  markDebtPaymentPaid,
   settleDebtAmountDue,
   skipDebtMinimum,
   skipPayoffExtra,
@@ -29,7 +28,7 @@ import {
 } from "./actions";
 
 // The minimum-payment half of the "this cycle" checklist — reuses
-// DebtPayment/markDebtPaymentPaid (the same tracker Buckets already shows)
+// DebtPayment (the same tracker Buckets already shows)
 // rather than inventing a second minimum-payment concept just for this page.
 // "This cycle" = the real current calendar month (household correction,
 // 2026-08-25: "a cycle in the Flow context is a month... this applies to all
@@ -475,8 +474,6 @@ export function DebtRow({
               approximate={!cycleMinimum.dueDateLocked}
               dateClassName={proximity.textClassName}
               dateTitle={proximity.label}
-              onToggle={() => startMinTransition(() => toasted(() => markDebtPaymentPaid(cycleMinimum.debtPaymentId), "Payment Marked Paid"))}
-              disabled={readOnly || minPending}
             >
               {minDisplayCents > cycleMinimum.amountCents && (
                 <p className="ml-[23px] flex items-center gap-1.5 text-[11px] text-red-600 dark:text-red-400">
