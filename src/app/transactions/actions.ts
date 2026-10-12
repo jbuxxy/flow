@@ -627,6 +627,20 @@ export async function createPattern(
     // the cycle info (lastPaidDate/nextDueDate) a successful match just set.
     if (belongsToHousehold(source, session.user.householdId) && source.patternId === null) {
       await db.transaction.update({ where: { id: sourceTransactionId }, data: patternMatchData(pattern) });
+      // A scheduled pattern whose household-set nextDueDate is still ahead
+      // (a Venmo lesson payment: paid Oct 8, next due Nov 1) — the matcher above never
+      // opens that cycle yet, so nothing stamped the payment that was just
+      // linked. Record it as the last payment (nextDueDate stays as set), or
+      // the card dated its "paid" line off a null lastPaidDate ("Jan 01")
+      // and the weekly bills card never saw it as paid (2026-10-12).
+      const current = await db.recurringPattern.findUnique({ where: { id: pattern.id }, select: { lastPaidDate: true, nextDueDate: true } });
+      if (
+        current?.nextDueDate &&
+        source.occurredOn < current.nextDueDate &&
+        (!current.lastPaidDate || current.lastPaidDate < source.occurredOn)
+      ) {
+        await db.recurringPattern.update({ where: { id: pattern.id }, data: { lastPaidDate: source.occurredOn } });
+      }
     }
   }
   await matchReimbursements(session.user.householdId);

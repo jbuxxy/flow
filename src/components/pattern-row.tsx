@@ -178,12 +178,18 @@ export function PatternRow({
   const currentCyclePayments = pattern.currentCyclePayments;
   const totalCents = currentCyclePayments.reduce((s, p) => s + p.amountCents, 0);
   const nextDue = pattern.nextDueDate ? new Date(pattern.nextDueDate) : null;
+  // The payment the paid line stands for — the one lastPaidDate points at,
+  // else this cycle's first. Its own date wins over lastPaidDate, which a
+  // pattern created ahead of its first cycle can lack ("Jan 01", 2026-10-12).
+  const primaryPayment =
+    currentCyclePayments.find((p) => p.occurredOn === pattern.lastPaidDate) ?? currentCyclePayments[0];
+  const paidOn = primaryPayment?.occurredOn ?? pattern.lastPaidDate;
   const today = todayAsUTCDate();
   // A canceled pattern only lingers here at all because it's already been
   // paid this period (currentPeriodPatternWhere) — always show it settled,
   // same "cancel right after the final payment" treatment BillRow's own
   // paidThisCycle gives a canceled bill.
-  const paidThisCycle = isScheduled && (!pattern.active || pattern.cyclePaid);
+  const paidThisCycle = isScheduled && (!pattern.active || pattern.cyclePaid) && paidOn !== null;
   const expectedCents = Math.round((pattern.amountMinCents + pattern.amountMaxCents) / 2);
   // Same paidThisCycle gate BillRow's own showLedger uses (bill-row.tsx).
   const showLedger = paidThisCycle && currentCyclePayments.length > 1;
@@ -280,12 +286,9 @@ export function PatternRow({
             {paidThisCycle ? (
               <EntryLine
                 state="paid"
-                date={new Date(pattern.lastPaidDate!)}
+                date={new Date(paidOn!)}
                 amountCents={currentCyclePayments.length > 0 ? totalCents : expectedCents}
-                receipt={
-                  (currentCyclePayments.find((p) => p.occurredOn === pattern.lastPaidDate) ?? currentCyclePayments[0])
-                    ?.receipt
-                }
+                receipt={primaryPayment?.receipt}
                 pending={currentCyclePayments.some((p) => p.pending)}
               />
             ) : (
@@ -300,7 +303,7 @@ export function PatternRow({
             )}
           </ul>
           {showLedger && (
-            <CycleLedger payments={currentCyclePayments} primaryOccurredOn={pattern.lastPaidDate} totalCents={totalCents} />
+            <CycleLedger payments={currentCyclePayments} primaryOccurredOn={paidOn} totalCents={totalCents} />
           )}
           <RowActions actions={actions} dense {...rowActionsProps}>
             {showSkip && (
