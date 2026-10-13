@@ -635,14 +635,52 @@ export async function checkAndSendBucketAlerts(bucketId: string, spend?: AlertSp
   }
 }
 
-// One push per current-period transaction in this bucket that hasn't been
-// pushed yet (BucketTransactionAlert.transactionId is the per-transaction
-// dedup key — see that model's comment). `spentCents` is the bucket's
-// already-computed period total *including* every one of these, so every
-// push in one batch shows the same final running total rather than a
-// step-by-step replay — simpler, and the only case where a batch is bigger
-// than one transaction is a first-time enable (catching up on the whole
-// period at once) or a burst of synced transactions landing together.
+// The most charges a batched push spells out line by line before folding the
+// rest into "+N more" — a lock-screen notification only shows a few lines.
+const BATCH_PUSH_MAX_LINES = 5;
+
+export type BucketTransactionPushLine = { merchant: string; amountCents: number };
+
+// Title + body for one BUCKET_TRANSACTION push. One charge reads as before
+// ("$34.37 at Amazon"); several that land in the same sync collapse into one
+// push listing each charge (household request, 2026-10-12: four Amazon
+// charges used to arrive as four near-identical pushes). "Today" is the
+// household's own calendar day of the *alerts* — every charge this bucket has
+// pushed since local midnight, this batch included — not the bank's
+// occurredOn, which a bank can stamp a day ahead (next-business-day
+// posting), and used to make an evening push's "today" total silently cover
+// tomorrow's charges instead.
+export function bucketTransactionPush(args: {
+  bucketName: string;
+  batch: BucketTransactionPushLine[];
+  todayCount: number;
+  todayCents: number;
+  progressLine: string;
+}): { title: string; body: string } {
+  const { bucketName, batch, todayCount, todayCents, progressLine } = args;
+  const todayLine = `Today: ${todayCount} transaction${todayCount === 1 ? "" : "s"} totaling ${formatCents(todayCents)}.`;
+  if (batch.length === 1) {
+    const [t] = batch;
+    return {
+      title: `${formatCents(Math.abs(t.amountCents))} at ${t.merchant}`,
+      body: `${bucketName}: ${progressLine} ${todayLine}`,
+    };
+  }
+  const shown = batch.slice(0, BATCH_PUSH_MAX_LINES).map((t) => `${formatCents(t.amountCents)} at ${t.merchant}`);
+  const hidden = batch.length - shown.length;
+  if (hidden > 0) shown.push(`+${hidden} more`);
+  return {
+    title: `${batch.length} New Transactions in ${bucketName}`,
+    body: [...shown, todayLine, `${bucketName}: ${progressLine}`].join("\n"),
+  };
+}
+
+// One push per sync batch: every not-yet-pushed current-period transaction in
+// this bucket goes out together in a single notification (see
+// bucketTransactionPush). BucketTransactionAlert.transactionId stays the
+// per-transaction dedup key — see that model's comment — so a charge is only
+// ever listed in one push. `spentCents` is the bucket's already-computed
+// period total *including* every one of these.
 async function sendUnalertedBucketTransactions(
   bucketId: string,
   bucketName: string,
@@ -662,62 +700,66 @@ async function sendUnalertedBucketTransactions(
   // even though it correctly counted toward spentCents/oneTimeStatus (real
   // finding, 2026-09-22 code review).
   const { start, end } = utcPeriodBounds(period);
-  const scopedWhere = { bucketId, ...(oneTimeStatus === null ? { occurredOn: { gte: start, lt: end } } : {}) };
-
-  // Every transaction in scope, not just the unalerted ones — the "N
-  // transactions, $X today" line each push carries needs the whole day's
-  // activity in this bucket, including whatever already alerted earlier
-  // today. Deliberately no `pending` filter: a pending hold counts toward
-  // today's total same as a posted transaction (see the dedup note below on
-  // why a pending transaction firing this alert never double-fires once it
-  // posts).
-  const scoped = await db.transaction.findMany({
-    where: scopedWhere,
-    select: { id: true, merchant: true, occurredOn: true, bucketTransactionAlert: true, ...SPEND_TX_SELECT },
-    orderBy: { occurredOn: "asc" },
+  const unalerted = await db.transaction.findMany({
+    where: {
+      bucketId,
+      bucketTransactionAlert: null,
+      ...(oneTimeStatus === null ? { occurredOn: { gte: start, lt: end } } : {}),
+    },
+    select: { id: true, merchant: true, amountCents: true },
+    orderBy: [{ occurredOn: "asc" }, { createdAt: "asc" }],
   });
-  const unalerted = scoped.filter((t) => t.bucketTransactionAlert === null);
   if (unalerted.length === 0) return;
 
-  const byDay = new Map<number, typeof scoped>();
-  for (const t of scoped) {
-    const key = t.occurredOn.getTime();
-    const list = byDay.get(key);
-    if (list) list.push(t);
-    else byDay.set(key, [t]);
-  }
-
-  for (const t of unalerted) {
-    const dayTxns = byDay.get(t.occurredOn.getTime()) ?? [];
-    const dailyCount = dayTxns.length;
-    const dailyLine = `${dailyCount} transaction${dailyCount === 1 ? "" : "s"} today totaling ${formatCents(netSpendCents(dayTxns))}.`;
-
-    // The dedup row is keyed off this transaction's own id, which SimpleFIN
-    // sync upserts in place across pending -> posted (see simplefin-sync.ts)
-    // rather than creating a new row — so a pending transaction that fires
-    // this alert here is never re-alerted once it settles, even if the
-    // posted amount differs from the pending hold (household requirement,
-    // 2026-09-24). Same claim rules as every once-only push (run-once.ts).
-    await runOnce(
-      `transaction alert ${t.id}`,
-      () => db.bucketTransactionAlert.createMany({ data: [{ transactionId: t.id }], skipDuplicates: true }),
-      () => db.bucketTransactionAlert.deleteMany({ where: { transactionId: t.id } }),
-      async () => {
-        // A funded one-time bucket already got (or is getting, from the
-        // caller's level loop) its single "Fully Funded" push — the charge
-        // that completes it, and any after, stay silent instead of doubling
-        // up. The claim is still kept so it can never re-alert later.
-        if (oneTimeStatus?.fullyFunded) return;
-        await sendPushToBucketForType(bucketId, householdId, "BUCKET_TRANSACTION", {
-          title: `${formatCents(Math.abs(t.amountCents))} at ${t.merchant}`,
-          body: oneTimeStatus
-            ? `${bucketName}: ${formatCents(spentCents)} of ${formatCents(monthlyCapCents)} funded (${oneTimeStatus.pctFunded}%). ${dailyLine}`
-            : `${bucketName}: ${formatCents(spentCents)} of ${formatCents(monthlyCapCents)} spent this month. ${dailyLine}`,
-          url: `/buckets/${bucketId}`,
+  // Claimed one row at a time so a concurrent run (two syncs, a sync racing
+  // a manual reassign) can't list the same charge twice — whichever claims a
+  // row first owns it. Deliberately no `pending` filter anywhere here: the
+  // dedup row is keyed off the transaction's own id, which SimpleFIN sync
+  // upserts in place across pending -> posted, so a pending hold that's
+  // pushed is never re-pushed once it settles, even if the posted amount
+  // differs (household requirement, 2026-09-24).
+  const claimed: typeof unalerted = [];
+  await runOnce(
+    `transaction alert ${bucketId}`,
+    async () => {
+      for (const t of unalerted) {
+        const { count } = await db.bucketTransactionAlert.createMany({
+          data: [{ transactionId: t.id }],
+          skipDuplicates: true,
         });
-      },
-    );
-  }
+        if (count === 1) claimed.push(t);
+      }
+      return { count: claimed.length };
+    },
+    () => db.bucketTransactionAlert.deleteMany({ where: { transactionId: { in: claimed.map((t) => t.id) } } }),
+    async () => {
+      // A funded one-time bucket already got (or is getting, from the
+      // caller's level loop) its single "Fully Funded" push — the charge
+      // that completes it, and any after, stay silent instead of doubling
+      // up. The claims are still kept so they can never re-alert later.
+      if (oneTimeStatus?.fullyFunded) return;
+
+      // Server-local (household) midnight as an instant — sentAt is a
+      // DateTime, not a @db.Date, so no UTC re-anchoring here.
+      const now = new Date();
+      const localMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const pushedToday = await db.transaction.findMany({
+        where: { bucketId, bucketTransactionAlert: { sentAt: { gte: localMidnight } } },
+        select: SPEND_TX_SELECT,
+      });
+
+      const { title, body } = bucketTransactionPush({
+        bucketName,
+        batch: claimed,
+        todayCount: pushedToday.length,
+        todayCents: netSpendCents(pushedToday),
+        progressLine: oneTimeStatus
+          ? `${formatCents(spentCents)} of ${formatCents(monthlyCapCents)} funded (${oneTimeStatus.pctFunded}%).`
+          : `${formatCents(spentCents)} of ${formatCents(monthlyCapCents)} spent this month.`,
+      });
+      await sendPushToBucketForType(bucketId, householdId, "BUCKET_TRANSACTION", { title, body, url: `/buckets/${bucketId}` });
+    },
+  );
 }
 
 // checkAndSendBucketAlerts for several buckets (a sync's auto-filed buckets,
