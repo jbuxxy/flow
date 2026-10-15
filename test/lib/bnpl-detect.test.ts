@@ -14,6 +14,12 @@ describe("resolveBnplKeyword", () => {
     assert.equal(resolveBnplKeyword({ name: "Nike - Klarna", bnplKeyword: null }, ["klarna", "affirm"]), "klarna");
   });
 
+  test("a bare-PayPal plan name resolves to the Pay in 4 keyword", () => {
+    const kws = ["klarna", "paypal credit", "pay in 4"];
+    assert.equal(resolveBnplKeyword({ name: "PayPal - Dick's", bnplKeyword: null }, kws), "pay in 4");
+    assert.equal(resolveBnplKeyword({ name: "PayPal Credit", bnplKeyword: null }, kws), "paypal credit");
+  });
+
   test("falls back the same way when bnplKeyword is simply absent from the object", () => {
     assert.equal(resolveBnplKeyword({ name: "Affirm Payment" }, ["klarna", "affirm"]), "affirm");
   });

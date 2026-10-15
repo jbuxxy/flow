@@ -39,7 +39,17 @@ export function resolveBnplKeyword(
   debt: { name: string; bnplKeyword?: string | null },
   keywords: string[],
 ): string | undefined {
-  return debt.bnplKeyword ?? keywords.find((k) => debt.name.toLowerCase().includes(k));
+  if (debt.bnplKeyword) return debt.bnplKeyword;
+  const name = debt.name.toLowerCase();
+  const hit = keywords.find((k) => name.includes(k));
+  if (hit) return hit;
+  // A plan named for bare "PayPal" ("PayPal - Dick's") is a Pay in 4 plan —
+  // PayPal Credit names itself, and "paypal credit" matches above. Its
+  // installments post as "PAYPAL PYPL PAYIN4 INST XFER" → merchant "PayPal
+  // Pay in 4", so "pay in 4" is the keyword that finds them; without it the
+  // plan had no keyword and its first withdrawal never linked (2026-10-15).
+  if (name.includes("paypal") && keywords.includes("pay in 4")) return "pay in 4";
+  return undefined;
 }
 
 // Locks in bnplKeyword for every INSTALLMENT debt that doesn't have one yet
