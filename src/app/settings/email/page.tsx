@@ -188,7 +188,7 @@ export default async function EmailSettingsPage() {
           minPaymentCents: true,
           installmentsTotal: true,
           purchaseDate: true,
-          debtPayment: { select: { amountDueCents: true } },
+          debtPayment: { select: { amountCents: true } },
         },
       })
     : [];
@@ -358,7 +358,7 @@ export default async function EmailSettingsPage() {
                   minPaymentCents: p.minPaymentCents,
                   installmentsTotal: p.installmentsTotal,
                   purchaseDate: p.purchaseDate,
-                  perInstallmentCents: p.debtPayment?.amountDueCents ?? null,
+                  perInstallmentCents: p.debtPayment?.amountCents ?? null,
                 });
                 return (
                   original != null &&

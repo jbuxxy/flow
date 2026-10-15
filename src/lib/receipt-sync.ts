@@ -37,7 +37,7 @@ import {
   RECEIPT_WIDE_MATCH_AFTER_DAYS,
   refundItemsMatch,
 } from "@/lib/receipt-match";
-import { bnplPlanMatchesReceipt } from "@/lib/bnpl-plan-match";
+import { bnplPlanMatchesReceipt, bnplPlanNameResemblesParty } from "@/lib/bnpl-plan-match";
 import { currentWeekKey, daysAgo } from "@/lib/period";
 import { extractReceipts, type ParsedReceipt, type ParsedReceiptLineItem } from "@/lib/ai";
 import { matchBillNoticeAmounts, purgeStaleBillNotices } from "@/lib/bill-notice-sync";
@@ -400,6 +400,7 @@ async function matchOneReceipt(householdId: string, receipt: Receipt): Promise<v
 
   if (await retireIfDuplicate(householdId, receipt)) return;
   if (await tryTransactionMatch(householdId, receipt, total)) return;
+  if (await tryPlanInstallmentMatch(householdId, receipt, total)) return;
 
   // tryTransactionMatch left it unplaced. If an earlier run had parked it
   // AMBIGUOUS but this run's candidates no longer qualify (a decoy got
@@ -413,6 +414,40 @@ async function matchOneReceipt(householdId: string, receipt: Receipt): Promise<v
   // …) never posts as a single charge — the bank only sees the installments
   // — so try attaching the receipt to a tracked installment plan instead.
   await matchReceiptToBnplPlan(householdId, receipt, total);
+}
+
+// A BNPL lender's "payment received for <store>" email can land days after
+// the installment's bank withdrawal — Klarna confirmed the Oct 8 GlassesUSA
+// withdrawal on Oct 13 — well past tryTransactionMatch's 2-day before-slack,
+// and the "Klarna" descriptor never resembles the store. But that withdrawal
+// is already attributed to the store's plan (Transaction.debtId), which is
+// far stronger evidence than the date, so a payment receipt naming a tracked
+// installment plan gets a wide backward reach over that plan's own charges.
+const PLAN_INSTALLMENT_BEFORE_DAYS = 10;
+
+async function tryPlanInstallmentMatch(householdId: string, receipt: Receipt, total: number): Promise<boolean> {
+  const party = receipt.party;
+  if (receipt.kind !== "PAYMENT_SENT" || !party || receipt.partyIsPerson || isP2PReceipt(receipt)) return false;
+
+  const anchor = receipt.occurredOn ?? receipt.receivedAt;
+  const { to } = receiptMatchWindow(anchor);
+  const from = new Date(anchor);
+  from.setUTCDate(from.getUTCDate() - PLAN_INSTALLMENT_BEFORE_DAYS);
+
+  const candidates = await db.transaction.findMany({
+    where: {
+      householdId,
+      receipt: { is: null },
+      occurredOn: { gte: from, lte: to },
+      debt: { is: { debtType: "INSTALLMENT" } },
+      AND: [receiptAmountWhere(receipt, total)],
+    },
+    select: { id: true, debt: { select: { name: true } } },
+  });
+  const hits = candidates.filter((c) => c.debt && bnplPlanNameResemblesParty(c.debt.name, party));
+  if (hits.length !== 1) return false;
+  await linkReceipt(receipt, hits[0].id);
+  return true;
 }
 
 // Returns true when the receipt was placed on a transaction, or
@@ -793,7 +828,7 @@ async function matchReceiptToBnplPlan(householdId: string, receipt: Receipt, tot
       minPaymentCents: true,
       installmentsTotal: true,
       purchaseDate: true,
-      debtPayment: { select: { amountDueCents: true } },
+      debtPayment: { select: { amountCents: true } },
       receipts: { select: { id: true } },
     },
   });
@@ -806,7 +841,7 @@ async function matchReceiptToBnplPlan(householdId: string, receipt: Receipt, tot
         minPaymentCents: p.minPaymentCents,
         installmentsTotal: p.installmentsTotal,
         purchaseDate: p.purchaseDate,
-        perInstallmentCents: p.debtPayment?.amountDueCents ?? null,
+        perInstallmentCents: p.debtPayment?.amountCents ?? null,
       },
       { party: receipt.party, totalCents: total },
       anchor,

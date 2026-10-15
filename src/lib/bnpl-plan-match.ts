@@ -21,21 +21,32 @@ export type BnplPlanShape = {
   minPaymentCents: number;
   installmentsTotal: number | null;
   purchaseDate: Date | null;
-  // DebtPayment.amountDueCents when the plan has a tracked recurring payment
-  // (all do in practice) — the fixed per-installment amount.
+  // DebtPayment.amountCents when the plan has a tracked recurring payment
+  // (all do in practice) — the fixed per-installment amount. Not
+  // amountDueCents: that's the rolling total owed, which runs past one
+  // installment as soon as a due date passes with no synced payment (a
+  // PayPal Pay in 4 plan whose first payment went to an unsynced card read
+  // $71.50 there, so 4 × $71.50 never matched the $71.50 receipt,
+  // 2026-10-14).
   perInstallmentCents: number | null;
 };
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 // "Nike - Klarna" -> "Nike", "Afterpay - CR-V" -> "CR-V",
-// "GlassesUSA.com - Klarna" -> "GlassesUSA com", "Affirm — Dick's" -> "Dick s".
+// "GlassesUSA.com - Klarna" -> "GlassesUSA com", "Affirm — Dick's" -> "Dick s",
+// "PayPal - Dick's" -> "Dick s".
 // The household names these plans "<lender> - <what/merchant>" (or the
 // reverse); stripping the lender token leaves the part a receipt's party can
 // actually be compared against.
+// Bare "paypal" is a lender token in a plan *name* ("PayPal - Dick's" is a
+// Pay in 4 plan), but it can't join BNPL_KEYWORDS — that list also flags
+// bank charges as BNPL, and most PayPal charges are ordinary purchases.
+const PLAN_NAME_LENDER_TOKENS = [...BNPL_KEYWORDS, "paypal"];
+
 export function bnplPlanMerchantName(planName: string): string {
   let s = planName;
-  for (const k of BNPL_KEYWORDS) s = s.replace(new RegExp(escapeRe(k), "ig"), " ");
+  for (const k of PLAN_NAME_LENDER_TOKENS) s = s.replace(new RegExp(escapeRe(k), "ig"), " ");
   return s
     .replace(/[^\p{L}\p{N}]+/gu, " ")
     .replace(/\s+/g, " ")
@@ -61,7 +72,7 @@ export function bnplPlanTotalMatches(originalCents: number, receiptTotalCents: n
   return Math.abs(originalCents - receiptTotalCents) <= Math.max(Math.round(receiptTotalCents * 0.01), 100);
 }
 
-function bnplPlanNameResemblesParty(planName: string, party: string): boolean {
+export function bnplPlanNameResemblesParty(planName: string, party: string): boolean {
   return nameSimilarity(bnplPlanMerchantName(planName), party) >= 0.6;
 }
 

@@ -26,6 +26,9 @@ describe("bnplPlanMerchantName", () => {
     assert.equal(bnplPlanMerchantName("Affirm — Dick's"), "Dick s");
     assert.equal(bnplPlanMerchantName("GlassesUSA.com - Klarna"), "GlassesUSA com");
   });
+  test("bare PayPal counts as a lender token in a plan name (Pay in 4)", () => {
+    assert.equal(bnplPlanMerchantName("PayPal - Dick's"), "Dick s");
+  });
 });
 
 describe("bnplPlanOriginalPrincipalCents", () => {
@@ -71,6 +74,25 @@ describe("bnplPlanMatchesReceipt", () => {
   test("missing party or total -> false", () => {
     assert.equal(bnplPlanMatchesReceipt(plan(), { party: null, totalCents: 20_000 }, utc(2026, 3, 5)), false);
     assert.equal(bnplPlanMatchesReceipt(plan(), { party: "Nike", totalCents: null }, utc(2026, 3, 5)), false);
+  });
+  test("PayPal Pay in 4 plan matches its store's order total", () => {
+    const paypal = plan({
+      name: "PayPal - Dick's",
+      balanceCents: 7_152,
+      minPaymentCents: 1_788,
+      installmentsTotal: 4,
+      purchaseDate: utc(2026, 10, 9),
+      perInstallmentCents: 1_788,
+    });
+    assert.equal(
+      bnplPlanMatchesReceipt(paypal, { party: "DICK'S Sporting Goods", totalCents: 7_150 }, utc(2026, 10, 9)),
+      true,
+    );
+    // A single installment's receipt is not the purchase.
+    assert.equal(
+      bnplPlanMatchesReceipt(paypal, { party: "Dick's Sporting Goods", totalCents: 1_788 }, utc(2026, 10, 9)),
+      false,
+    );
   });
   test("wrong merchant -> false", () => {
     assert.equal(bnplPlanMatchesReceipt(plan(), { party: "Adidas", totalCents: 20_000 }, utc(2026, 3, 5)), false);
