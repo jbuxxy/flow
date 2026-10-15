@@ -275,6 +275,14 @@ async function upsertInstallmentDebtPayment(
       where: { id: existing.id },
       data: {
         amountCents,
+        // Nothing maintains a rolling amount due for an installment plan
+        // (matchDebtPayments is REVOLVING-only), but the debt row still
+        // reads it — kept equal to amountCents, or an edited payment amount
+        // leaves the old one standing as a phantom "carried over" shortfall
+        // (a PayPal plan saved at its $71.50 total, then corrected to
+        // $17.88, showed "$71.50 — Includes $53.62 carried over",
+        // 2026-10-14).
+        amountDueCents: amountCents,
         cadence,
         toleranceCents,
         bucketId: resolvedBucketId,
