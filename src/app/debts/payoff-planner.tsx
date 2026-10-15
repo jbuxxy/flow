@@ -444,10 +444,15 @@ export function PayoffPlanner({
   // payment isn't double-counted alongside the to-do line it should instead
   // be covering/replacing.
   const extraPaidThisCycleByDebtId = useMemo(() => {
-    const map = new Map<string, number>();
+    const map = new Map<string, { amountCents: number; occurredOn: Date }[]>();
     for (const d of debts) {
-      const total = d.cycleMinimum?.extraPaymentsBeyondSlots.reduce((s, p) => s + Math.abs(p.amountCents), 0) ?? 0;
-      map.set(d.id, total);
+      map.set(
+        d.id,
+        (d.cycleMinimum?.extraPaymentsBeyondSlots ?? []).map((p) => ({
+          amountCents: Math.abs(p.amountCents),
+          occurredOn: new Date(p.occurredOn),
+        })),
+      );
     }
     return map;
   }, [debts]);

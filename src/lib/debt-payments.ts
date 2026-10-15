@@ -2832,7 +2832,7 @@ const loadCyclePlanContext = cache(async function loadCyclePlanContext(household
         getPayoffExtraSkips(householdId),
       ])
     : [[], new Set<string>()];
-  const extraPaidThisCycleByDebtId = new Map([...dueDateByDebtId.entries()].map(([id, v]) => [id, v.extraPaidCents]));
+  const extraPaidThisCycleByDebtId = new Map([...dueDateByDebtId.entries()].map(([id, v]) => [id, v.extraPaid]));
 
   return {
     household,
@@ -3329,7 +3329,7 @@ type CorrectedDue = {
   // (resolveMinimumLedger) — it's drawn from coveredSlotDates (or not at all
   // once skipped), never as a plain "due" cell too.
   dueCovered: boolean;
-  extraPaidCents: number;
+  extraPaid: { amountCents: number; occurredOn: Date }[];
   extraPaidTimes: Set<number>;
 };
 
@@ -3365,7 +3365,7 @@ function correctedDueDateByDebtId(
     cycleRestartDueDate?: Date | null;
     // The tracker's own per-occurrence minimum — 0 for a no-minimum debt
     // (ignoreMinimumPayment). Needed to size a single slot's own overage
-    // below; a no-minimum debt never reports one (see extraPaidCents).
+    // below; a no-minimum debt never reports one (see extraPaid).
     amountCents: number;
     // The tracker's rolling amount owed — optional; only gates the "covered
     // minimum" state (ledgerMinimumCents), where arrears disable it.
@@ -3464,7 +3464,6 @@ function correctedDueDateByDebtId(
         tracksMinimum: tracksMinimum(meta ?? {}, p),
       }),
     ];
-    const extraPaidCents = extraTxns.reduce((s, t) => s + t.amountCents, 0);
     // Shared with payoff-planner.tsx's own dueDateByDebtId — see
     // correctedNextDueDate's own comment (debt-payoff.ts) for the full
     // incident writeup (Amazon Card, 2026-09-11) this exists to fix, and
@@ -3492,7 +3491,7 @@ function correctedDueDateByDebtId(
       cyclePaid,
       coveredSlotDates,
       dueCovered: !cyclePaid && !openMinimumDates(ledgerOpts).some((d) => d.getTime() === periodDate.getTime()),
-      extraPaidCents,
+      extraPaid: extraTxns.map((t) => ({ amountCents: t.amountCents, occurredOn: t.occurredOn })),
       // occurredOn timestamps of the real payments this cycle that went
       // beyond the expected minimum slot(s) — lets the payment calendar badge
       // the day an extra payoff-plan payment actually posted, not only the

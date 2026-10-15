@@ -21,6 +21,7 @@ import { isGenericCardPaymentDescriptor } from "@/lib/debt-payment-pattern";
 import { dismissUnlabeledP2P } from "@/lib/p2p-transfers";
 import { scheduleBucketIcons } from "@/lib/bucket-icons-sync";
 import { revalidateHousehold } from "@/lib/revalidate";
+import { matchInstallmentPayments } from "@/lib/debt-payments";
 
 const createBucketSchema = z.object({
   name: z.string().trim().min(1).max(60),
@@ -310,6 +311,12 @@ export async function reassignTransaction(
         { confidence: 1, source: "USER" },
       );
     }
+    // Credit it as an installment now rather than at the next sync — the
+    // matcher picks up exactly this debtId-tagged, debtPaymentId-null row.
+    // Without this a hand-attached BNPL payment left the plan reading
+    // "0/4" and the installment overdue for up to a sync interval
+    // (PayPal - Dick's, 2026-10-15).
+    if (debt.debtType === "INSTALLMENT") await matchInstallmentPayments(session.user.householdId);
     revalidateHousehold();
   } else {
     // Same reasoning as the debtId branch above — income is also scoped

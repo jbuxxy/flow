@@ -608,7 +608,7 @@ describe("projectCyclePlan", () => {
       dueDateByDebtId: new Map([["amazon", { date: utc(2026, 4, 12), cadence: "MONTHLY" }]]),
       minimumSatisfiedThisCycleIds: new Set(["amazon"]),
       extraEligibleIds: new Set(["amazon"]), // Sam's Club excluded
-      extraPaidThisCycleByDebtId: new Map([["sams-club", 17_578]]), // real, unrelated payoff
+      extraPaidThisCycleByDebtId: new Map([["sams-club", [{ amountCents: 17_578, occurredOn: utc(2026, 3, 6) }]]]), // real, unrelated payoff
     });
     const extraLine = months[0].debts[0].lines.find((l) => l.kind === "extra");
     assert.ok(extraLine, "Amazon still gets a pending extra line for this payday");
@@ -626,9 +626,33 @@ describe("projectCyclePlan", () => {
       startDate: utc(2026, 3, 8), // payday Mar 6 is in the past -> netting branch
       dueDateByDebtId: new Map([["amazon", { date: utc(2026, 3, 12), cadence: "MONTHLY" }]]),
       extraEligibleIds: new Set(["amazon"]),
-      extraPaidThisCycleByDebtId: new Map([["amazon", 10_000]]),
+      extraPaidThisCycleByDebtId: new Map([["amazon", [{ amountCents: 10_000, occurredOn: utc(2026, 3, 7) }]]]),
       postedExtraNettedOut: netted,
     });
+    assert.equal(netted.get("amazon"), 10_000);
+  });
+
+  test("an earlier payday's posted extra doesn't net against the month's second payday (2026-10-15 fix)", () => {
+    // Paydays Mar 6 and Mar 20. Today is the 20th, so the walk starts at the
+    // 20th; the $100 paid Mar 7 was the Mar 6 payday's extra and must not
+    // shrink the Mar 20 line (Amazon Card's Oct 15 extra read $4.17).
+    const netted = new Map<string, number>();
+    const months = projectCyclePlan([debt({ id: "amazon", balanceCents: 150_000, aprBasisPoints: 0, minPaymentCents: 3_500 })], {
+      order: "CUSTOM",
+      rollFreedMinimums: false,
+      extraPerPaycheckCents: 10_000,
+      income: sched,
+      monthsCount: 1,
+      startDate: utc(2026, 3, 20),
+      dueDateByDebtId: new Map([["amazon", { date: utc(2026, 4, 12), cadence: "MONTHLY" }]]),
+      minimumSatisfiedThisCycleIds: new Set(["amazon"]),
+      extraEligibleIds: new Set(["amazon"]),
+      extraPaidThisCycleByDebtId: new Map([["amazon", [{ amountCents: 10_000, occurredOn: utc(2026, 3, 7) }]]]),
+      postedExtraNettedOut: netted,
+    });
+    const line = months[0].debts[0].lines.find((l) => l.kind === "extra" && l.date.getTime() === utc(2026, 3, 20).getTime());
+    assert.equal(line?.amountCents, 10_000);
+    // Reported as already accounted for, so it can't confirm the Mar 20 line.
     assert.equal(netted.get("amazon"), 10_000);
   });
 
@@ -642,7 +666,7 @@ describe("projectCyclePlan", () => {
       startDate: utc(2026, 3, 8),
       dueDateByDebtId: new Map([["amazon", { date: utc(2026, 3, 12), cadence: "MONTHLY" }]]),
       extraEligibleIds: new Set(["amazon"]),
-      extraPaidThisCycleByDebtId: new Map([["amazon", 10_833]]),
+      extraPaidThisCycleByDebtId: new Map([["amazon", [{ amountCents: 10_833, occurredOn: utc(2026, 3, 7) }]]]),
     });
     assert.equal(months[0].debts[0].lines.filter((l) => l.pending).length, 0);
   });
@@ -955,7 +979,7 @@ describe("simulatePayoff agrees with projectCyclePlan over the calendar window",
   };
   const scenarios: [string, Record<string, unknown>][] = [
     ["plain", {}],
-    ["extra already paid this cycle", { extraPaidThisCycleByDebtId: new Map([["a", 20_000]]) }],
+    ["extra already paid this cycle", { extraPaidThisCycleByDebtId: new Map([["a", [{ amountCents: 20_000, occurredOn: utc(2026, 10, 3) }]]]) }],
     [
       "real due dates (one not due until next month)",
       {

@@ -142,6 +142,10 @@ export function projectPaycheckDates(income: IncomeSchedule, count: number, from
 // of nextPayDate directly so "this cycle's payday" always means the payday
 // that actually just happened, not whichever one Income.nextPayDate happens
 // to point at.
+// A real extra payment (beyond the minimum slots), absolute cents — what
+// projectCyclePlan nets its current-cycle extra line against.
+export type PostedExtraPayment = { amountCents: number; occurredOn: Date };
+
 export function mostRecentPaydayOnOrBefore(income: IncomeSchedule, onOrBefore: Date): Date {
   let d = new Date(income.nextPayDate);
   const anchorDay = d.getUTCDate();
@@ -736,7 +740,7 @@ export function simulatePayoff(
     // toward this cycle (the live balance already reflects it), and the
     // freed-minimum rollover's lump-vs-split setting.
     dueDateByDebtId?: Map<string, { date: Date; cadence: BillCadence }>;
-    extraPaidThisCycleByDebtId?: Map<string, number>;
+    extraPaidThisCycleByDebtId?: Map<string, readonly PostedExtraPayment[]>;
     rollFreedMinimumsSplit?: boolean;
   },
 ): PayoffResult {
@@ -1182,13 +1186,15 @@ export function projectCyclePlan(
     // schedule on the calendar), it just never receives a rolled-in extra.
     // Omit to make every debt eligible (unchanged behavior).
     extraEligibleIds?: Set<string>;
-    // Real extra payments (beyond the minimum slots) already posted this
-    // cycle, per debt, in absolute cents — from buildCycleSlots'
+    // Real extra payments (beyond the minimum slots) posted this calendar
+    // month, per debt, absolute cents with their dates — from buildCycleSlots'
     // extraPayments (src/lib/debt-payments.ts's correctedDueDateByDebtId).
-    // Nets against the current cycle's own (past-payday, "pending") extra
-    // line below so a real synced payment isn't double-counted on top of
-    // the display line it should instead be covering/replacing.
-    extraPaidThisCycleByDebtId?: Map<string, number>;
+    // The ones on/after the current cycle's payday net against that payday's
+    // own (past-payday, "pending") extra line below so a real synced payment
+    // isn't double-counted on top of the display line it should instead be
+    // covering/replacing. Earlier ones paid an earlier payday's extra that
+    // this walk never visits — see postedExtraRemaining.
+    extraPaidThisCycleByDebtId?: Map<string, readonly PostedExtraPayment[]>;
     // Out-param: filled per debt with how much of extraPaidThisCycleByDebtId
     // the past-payday branch actually netted away (that money has already
     // replaced a display line, so it must not also confirm a future one —
@@ -1380,11 +1386,27 @@ export function projectCyclePlan(
   // Mutable running balance of real posted extra, per debt — consumed as
   // past-payday lines net against it below (see the past-payday branch).
   // Copied so the caller's own map is never mutated.
-  const postedExtraRemaining = new Map(opts.extraPaidThisCycleByDebtId ?? []);
   const noteNetted = (debtId: string, cents: number) => {
     if (cents > 0 && opts.postedExtraNettedOut)
       opts.postedExtraNettedOut.set(debtId, (opts.postedExtraNettedOut.get(debtId) ?? 0) + cents);
   };
+  // Only payments on/after this cycle's payday can be paying *its* extra. The
+  // walk starts at that payday, so a payment from earlier in the month went to
+  // an earlier payday's extra (the live balance already reflects it) — netting
+  // it here charged it against the new payday a second time. Real report,
+  // 2026-10-15: Amazon Card's Oct 2 $108.33 (the Oct 1 payday's extra) cut its
+  // Oct 15 extra from $112.50 to $4.17; it hit every month's second payday.
+  // Reported as netted so confirmProjectedExtras doesn't let it confirm a
+  // later line either.
+  const postedExtraRemaining = new Map<string, number>();
+  for (const [debtId, payments] of opts.extraPaidThisCycleByDebtId ?? []) {
+    let thisCycleCents = 0;
+    for (const p of payments) {
+      if (p.occurredOn.getTime() >= paycheckAnchor.getTime()) thisCycleCents += p.amountCents;
+      else noteNetted(debtId, p.amountCents);
+    }
+    postedExtraRemaining.set(debtId, thisCycleCents);
+  }
 
   for (const event of filteredEvents) {
     const monthKey = monthKeyOf(event);
