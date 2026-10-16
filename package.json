@@ -36,7 +36,7 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/mailparser": "^3.9.0",
-    "@types/node": "^20",
+    "@types/node": "^25",
     "@types/pg": "^8.23.1",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19",
