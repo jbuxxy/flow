@@ -10,6 +10,7 @@
 // 4") has two paid installments with no transaction behind them at all.
 import type { BillCadence } from "@prisma/client";
 import { addCadenceISO } from "@/lib/cadence-label";
+import { stepCadence } from "@/lib/cadence-step";
 
 export type BnplScheduleStatus = "PAID" | "NEXT" | "UPCOMING";
 
@@ -71,4 +72,19 @@ export function buildBnplSchedule(opts: {
     });
   }
   return rows;
+}
+
+// Installment N+1's due date on a plan the household anchored at setup
+// (DebtPayment.scheduleAnchorDate = installment 1's date): anchor + paidCount
+// cadences, independent of what day each real payment posted. A PayPal Pay
+// in 4 bought Oct 9 whose first payment cleared the bank Oct 13 is still
+// next due Oct 23, not Oct 27 (2026-10-15). Null when there's no anchor or
+// no known payment count — the caller falls back to last-payment + cadence.
+export function anchoredInstallmentDueDate(
+  anchor: Date | null,
+  cadence: BillCadence,
+  paidCount: number | null,
+): Date | null {
+  if (!anchor || paidCount === null || paidCount < 0) return null;
+  return stepCadence(anchor, cadence, paidCount);
 }

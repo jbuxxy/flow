@@ -231,6 +231,8 @@ async function upsertInstallmentDebtPayment(
     categoryId: string | null;
   },
 ): Promise<void> {
+  const previousPurchaseDate = (await db.debt.findUnique({ where: { id: debtId }, select: { purchaseDate: true } }))
+    ?.purchaseDate;
   if (purchaseDate) {
     await db.debt.update({ where: { id: debtId }, data: { purchaseDate } });
   }
@@ -271,6 +273,17 @@ async function upsertInstallmentDebtPayment(
     // kept showing on September's Bills because nextDueDate stuck at the
     // purchase date and no edit ever moved it).
     const notStarted = existing.lastPaidDate === null;
+    // The edit form resubmits the dates on every save, so only (re)anchor the
+    // schedule when the household actually set it: a plan not yet started, or
+    // a first-payment / purchase date that differs from what's stored. An
+    // already-running plan with no anchor (irregular Klarna first gap) keeps
+    // advancing off real payment dates through an unrelated edit.
+    const sameDay = (a: Date | null | undefined, b: Date | null | undefined) =>
+      (a?.getTime() ?? null) === (b?.getTime() ?? null);
+    const datesChanged = firstDueDate
+      ? !sameDay(firstDueDate, existing.scheduleAnchorDate)
+      : !!purchaseDate && !sameDay(purchaseDate, previousPurchaseDate);
+    const reanchor = !!firstPaymentDate && (notStarted || datesChanged);
     await db.debtPayment.update({
       where: { id: existing.id },
       data: {
@@ -290,6 +303,9 @@ async function upsertInstallmentDebtPayment(
         ...(notStarted && firstPaymentDate
           ? { nextDueDate: firstPaymentDate, dueDateLocked: true }
           : {}),
+        // A started plan's nextDueDate is re-derived from this by
+        // matchInstallmentPayments below.
+        ...(reanchor ? { scheduleAnchorDate: firstPaymentDate } : {}),
       },
     });
   } else {
@@ -309,6 +325,7 @@ async function upsertInstallmentDebtPayment(
         // else the purchase date (Pay-in-4), else today for a legacy plan
         // opting in with neither.
         nextDueDate: firstPaymentDate ?? todayAsUTCDate(),
+        scheduleAnchorDate: firstPaymentDate,
         // A human just typed the purchase date/cadence right here, same
         // "explicitly typed = confirmed" convention upsertDebtPayment uses
         // above — but only when they actually gave one; editing a legacy

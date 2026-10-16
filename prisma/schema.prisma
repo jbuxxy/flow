@@ -1492,6 +1492,14 @@ model DebtPayment {
 
   nextDueDate   DateTime  @db.Date
   lastPaidDate  DateTime? @db.Date
+  // INSTALLMENT only: the household-entered due date of installment 1 (the
+  // First Payment Date, else the purchase date). When set, installment N is
+  // due exactly anchor + N cadences, whatever day the bank happens to post
+  // each payment (matchInstallmentPayments). Null = a plan set up before
+  // this existed and already under way — its next date still advances off
+  // the last real payment date. Household request, 2026-10-15: "it should be
+  // based on when I set it up".
+  scheduleAnchorDate DateTime? @db.Date
   // Set when a REVOLVING card at $0 regains a balance after its statement
   // closed (unhideDebtPaymentIfBalanceReturned): the first due date of the
   // restarted cycle. No minimum occurrence exists before it — the passed-over

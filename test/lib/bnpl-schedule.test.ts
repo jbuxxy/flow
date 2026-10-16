@@ -1,6 +1,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { buildBnplSchedule } from "@/lib/bnpl-schedule";
+import { anchoredInstallmentDueDate, buildBnplSchedule } from "@/lib/bnpl-schedule";
+import { utc } from "../helpers.ts";
 
 const base = {
   installmentsTotal: 4,
@@ -87,5 +88,18 @@ describe("buildBnplSchedule", () => {
   test("no total or no next due date: nothing projected", () => {
     assert.deepEqual(buildBnplSchedule({ ...base, installmentsTotal: null }), []);
     assert.equal(buildBnplSchedule({ ...base, nextDueDate: null }).length, 2);
+  });
+});
+
+describe("anchoredInstallmentDueDate", () => {
+  test("next due is anchor + paid installments, not last posting date + cadence", () => {
+    // PayPal Pay in 4 bought Oct 9; installment 1 cleared the bank Oct 13.
+    assert.equal(anchoredInstallmentDueDate(utc(2026, 10, 9), "BIWEEKLY", 1)?.toISOString().slice(0, 10), "2026-10-23");
+    assert.equal(anchoredInstallmentDueDate(utc(2026, 10, 9), "BIWEEKLY", 3)?.toISOString().slice(0, 10), "2026-11-20");
+    assert.equal(anchoredInstallmentDueDate(utc(2026, 8, 31), "MONTHLY", 1)?.toISOString().slice(0, 10), "2026-09-30");
+  });
+  test("no anchor or unknown count -> null (caller falls back)", () => {
+    assert.equal(anchoredInstallmentDueDate(null, "BIWEEKLY", 1), null);
+    assert.equal(anchoredInstallmentDueDate(utc(2026, 10, 9), "BIWEEKLY", null), null);
   });
 });

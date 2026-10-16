@@ -59,6 +59,7 @@ import { classifyCadence, MIN_OCCURRENCES, getDismissedBillKeys, type BillSugges
 import { mapConcurrent } from "@/lib/concurrency";
 import { SPEND_TX_SELECT, netChargeCents } from "@/lib/spend";
 import { stepCadence } from "@/lib/cadence-step";
+import { anchoredInstallmentDueDate } from "@/lib/bnpl-schedule";
 import type { BillCadence } from "@prisma/client";
 import { ymd } from "@/lib/ics";
 
@@ -1375,7 +1376,12 @@ export async function matchInstallmentPayments(householdId: string): Promise<voi
       // real Nike Klarna plan, 2026-08-20: purchased Aug 3, 1st payment Aug
       // 5, but the 2nd/3rd/4th real payments land Aug 21/Sep 4/Sep 18 —
       // exactly 14 days apart from each other despite the irregular start).
-      s.nextDueDate = nextBillDueDate(dp.cadence, candidate.occurredOn, []);
+      // A plan anchored at setup ignores the posting date entirely — see
+      // anchoredInstallmentDueDate / DebtPayment.scheduleAnchorDate.
+      const paidSoFar = s.installmentsTotal === null ? null : s.installmentsTotal - s.installmentsRemaining;
+      s.nextDueDate =
+        anchoredInstallmentDueDate(dp.scheduleAnchorDate, dp.cadence, paidSoFar) ??
+        nextBillDueDate(dp.cadence, candidate.occurredOn, []);
       s.cursor = candidate.occurredOn;
       // Installment 1's real date is routinely off-cadence from the rest
       // (see comment above), so the date projected right after it — for
@@ -1401,7 +1407,10 @@ export async function matchInstallmentPayments(householdId: string): Promise<voi
     // Affirm - Dick's, 3 of 4 installments already matched, still showing
     // "~Sep 15" because nothing new matched this sweep to trigger the write).
     const paidCount = s.installmentsTotal === null ? null : s.installmentsTotal - s.installmentsRemaining;
-    const dueDateLocked = paidCount !== null && paidCount >= 2;
+    const anchoredDue = anchoredInstallmentDueDate(dp.scheduleAnchorDate, dp.cadence, paidCount);
+    // The household's own schedule is a confirmed date from the first
+    // installment on, not a projection.
+    const dueDateLocked = anchoredDue !== null || (paidCount !== null && paidCount >= 2);
     if (s.matchedAny) {
       await db.debtPayment.update({
         where: { id: dp.id },
@@ -1438,6 +1447,11 @@ export async function matchInstallmentPayments(householdId: string): Promise<voi
       // didn't enter by hand — same "Debt Paid Off!" push sync sends for a
       // synced balance reaching $0 (it used to only ever come from there).
       await notifyIfDebtJustPaidOff(dp.debtId, dp.debt.balanceCents, s.balanceCents);
+    } else if (anchoredDue && anchoredDue.getTime() !== dp.nextDueDate.getTime()) {
+      // Self-heal: a plan anchored (or re-anchored by an edit) after its
+      // installments already matched gets its date put back on schedule
+      // without waiting for the next real payment.
+      await db.debtPayment.update({ where: { id: dp.id }, data: { nextDueDate: anchoredDue, dueDateLocked } });
     } else if (dueDateLocked !== dp.dueDateLocked) {
       await db.debtPayment.update({ where: { id: dp.id }, data: { dueDateLocked } });
     }
