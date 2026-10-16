@@ -372,15 +372,24 @@ export default async function Home() {
     // bucket (a down payment saved toward over months) is left out of both
     // the count and the denominator.
     const paceBuckets = buckets.filter((b) => !b.excludedFromAllocation);
-    const attentionCount = paceBuckets.filter((b) => b.onPaceToOvershoot).length;
+    // Past over pace: already spent more than the cap (top-ups included) —
+    // red, not amber (household request, 2026-10-15). Counted even when the
+    // bucket's pace alert is off; being over budget isn't a pace guess.
+    const isOverBudget = (b: (typeof paceBuckets)[number]) => b.monthlyCapCents > 0 && b.remainingCents < 0;
+    const isFlagged = (b: (typeof paceBuckets)[number]) => b.onPaceToOvershoot || isOverBudget(b);
+    const attentionCount = paceBuckets.filter(isFlagged).length;
+    const overBudgetCount = paceBuckets.filter(isOverBudget).length;
     statTiles.push({
       key: "buckets",
       label: attentionCount === 1 ? "Bucket Over Pace" : "Buckets Over Pace",
       value: `${attentionCount}/${paceBuckets.length}`,
+      caption: overBudgetCount > 0 ? `${overBudgetCount} Over Budget` : undefined,
       icon: Gauge,
-      accent: attentionCount > 0 ? "amber" : "emerald",
+      accent: overBudgetCount > 0 ? "red" : attentionCount > 0 ? "amber" : "emerald",
       href: "/buckets",
-      segments: paceBuckets.map((b) => (b.onPaceToOvershoot ? STATUS_BAR_CLASS.warning : STATUS_BAR_CLASS.ok)),
+      segments: paceBuckets.map((b) =>
+        isOverBudget(b) ? STATUS_BAR_CLASS.exceeded : b.onPaceToOvershoot ? STATUS_BAR_CLASS.warning : STATUS_BAR_CLASS.ok,
+      ),
     });
   } else {
     statTiles.push({
