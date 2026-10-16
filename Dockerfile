@@ -34,6 +34,10 @@ FROM node:22-alpine AS runner
 LABEL org.opencontainers.image.source=https://github.com/jbuxxy/flow
 WORKDIR /app
 ENV NODE_ENV=production
+# The commit this image was built from, shown beside the version in Settings
+# (src/lib/app-version.ts). Set by the GHCR workflow; empty for a local build.
+ARG FLOW_BUILD_SHA=""
+ENV FLOW_BUILD_SHA=${FLOW_BUILD_SHA}
 
 RUN addgroup -g 1001 -S nodejs && adduser -S flow -u 1001
 

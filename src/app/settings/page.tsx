@@ -15,6 +15,7 @@ import { NotificationSettingsCard } from "@/components/notification-settings-car
 import { GOAL_POSTURE_LABEL } from "@/lib/goal-posture";
 import { DangerZone } from "./danger-zone";
 import { InstallAppCard } from "./install-app-card";
+import { APP_VERSION, RELEASES_URL, appBuildCommit } from "@/lib/app-version";
 
 const INCOME_METHOD_LABEL: Record<string, string> = {
   MONTHLY_AVERAGE: "Monthly Average",
@@ -177,6 +178,7 @@ export default async function SettingsPage() {
       )}
 
       {isOwner && household && <DangerZone householdName={household.name} />}
+      <AppVersionLine />
     </AppShell>
   );
 }
@@ -222,3 +224,17 @@ function SettingsLink({
   );
 }
 
+
+// Which build is running — the release version (links to the release notes)
+// plus the commit, since main ships between releases too.
+function AppVersionLine() {
+  const commit = appBuildCommit();
+  return (
+    <p className="mt-8 mb-2 text-center text-xs text-gray-400 dark:text-neutral-500">
+      <a href={RELEASES_URL} target="_blank" rel="noopener noreferrer" className="hover:underline">
+        Version {APP_VERSION}
+      </a>
+      {commit && <> · Build {commit}</>}
+    </p>
+  );
+}

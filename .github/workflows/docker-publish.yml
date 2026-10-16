@@ -3,6 +3,9 @@ name: Build and publish Docker image
 on:
   push:
     branches: [main]
+    # A release: tagging a commit vYYYY.M.N publishes it as :YYYY.M.N and
+    # :stable on top of the :latest every push to main already gets.
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
@@ -34,14 +37,24 @@ jobs:
       # with everything else the build touches — see Dockerfile's own
       # comment on why it has to be a build arg (NEXT_PUBLIC_* vars are
       # inlined by `next build`, too late to supply at container runtime).
+      # main -> :latest (what an always-current deploy pulls); a vX tag ->
+      # :X + :stable (what a self-hoster pins to). Both also get :<sha>.
+      - id: tags
+        run: |
+          img="ghcr.io/${GITHUB_REPOSITORY,,}"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "tags=$img:${GITHUB_REF#refs/tags/v},$img:stable,$img:$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          else
+            echo "tags=$img:latest,$img:$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: docker/build-push-action@v7
         with:
           context: .
           push: true
           build-args: |
             NEXT_PUBLIC_VAPID_PUBLIC_KEY=${{ secrets.NEXT_PUBLIC_VAPID_PUBLIC_KEY }}
-          tags: |
-            ghcr.io/${{ github.repository }}:latest
-            ghcr.io/${{ github.repository }}:${{ github.sha }}
+            FLOW_BUILD_SHA=${{ github.sha }}
+          tags: ${{ steps.tags.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
