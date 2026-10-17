@@ -99,6 +99,13 @@ export async function connectEmail(
     });
   }
 
+  // Go back through the new inbox's last 90 days right away — the same
+  // fire-and-forget full scan "Scan Now" runs — instead of leaving the
+  // backfill to a few batches per 20-minute sync, which took hours to reach
+  // older receipts (household report, 2026-10-17: a second member's inbox,
+  // just connected, matched nothing). Also covers re-saved credentials.
+  void runFullScan(session.user.householdId);
+
   revalidateHousehold();
   return {};
 }
