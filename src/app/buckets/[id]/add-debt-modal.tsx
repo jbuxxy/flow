@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useRef, useState } from "react";
+import { startTransition, useActionState, useRef, useState } from "react";
 import { createDebt, type DebtFormState } from "@/app/debts/actions";
 import { RevolvingDebtFields } from "@/app/debts/revolving-debt-fields";
 import { Modal } from "@/components/modal";
@@ -60,7 +60,21 @@ export function AddDebtModal({
 
   return (
     <Modal open={open} onClose={onClose} title="Add a Loan or Card">
-      <form ref={formRef} action={formAction} className="flex flex-col gap-3">
+      {/* Submitted by hand, not via the `action` prop: React resets an
+          action form's fields after every submission, including one that
+          comes back with an error — which silently put the typed name back
+          to the transaction's merchant ("Kohl's" saved as "Capital One
+          Credit Card Payment" on the retry, household report 2026-10-17).
+          A successful add still resets the form below (onSuccess). */}
+      <form
+        ref={formRef}
+        onSubmit={(e) => {
+          e.preventDefault();
+          const formData = new FormData(e.currentTarget);
+          startTransition(() => formAction(formData));
+        }}
+        className="flex flex-col gap-3"
+      >
         <input type="hidden" name="debtType" value="REVOLVING" />
         <div className="flex gap-2 text-sm">
           <label className="flex items-center gap-1.5">
@@ -82,7 +96,7 @@ export function AddDebtModal({
           className="rounded-lg border border-neutral-300 dark:border-neutral-700 px-3 py-2.5 text-base focus:border-blue-900 focus:outline-none"
         />
 
-        <RevolvingDebtFields key={fieldsKey} showDueDay={false} />
+        <RevolvingDebtFields key={`fields-${fieldsKey}`} showDueDay={false} />
 
         {state.error && (
           <p className="text-sm text-red-600 dark:text-red-400" role="alert">

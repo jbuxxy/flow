@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useRef, useState } from "react";
+import { startTransition, useActionState, useRef, useState } from "react";
 import { createDebt, type DebtFormState } from "./actions";
 import { RevolvingDebtFields } from "./revolving-debt-fields";
 import { MoneyInput } from "@/components/money-input";
@@ -61,7 +61,17 @@ export function AddDebtForm({
     <>
       <AddButton label="Add a Debt" onClick={() => setOpen(true)} />
       <Modal open={open} onClose={() => setOpen(false)} title="Add a Debt">
-      <form ref={formRef} action={formAction} className="flex flex-col gap-3">
+      {/* Submitted by hand so a failed add keeps what was typed — see
+          AddDebtModal's identical form for why the `action` prop doesn't. */}
+      <form
+        ref={formRef}
+        onSubmit={(e) => {
+          e.preventDefault();
+          const formData = new FormData(e.currentTarget);
+          startTransition(() => formAction(formData));
+        }}
+        className="flex flex-col gap-3"
+      >
       <input type="hidden" name="debtType" value={debtType} />
       <div className="flex gap-2 text-sm">
         <label className="flex items-center gap-1.5">
