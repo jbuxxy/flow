@@ -38,6 +38,10 @@ ENV NODE_ENV=production
 # (src/lib/app-version.ts). Set by the GHCR workflow; empty for a local build.
 ARG FLOW_BUILD_SHA=""
 ENV FLOW_BUILD_SHA=${FLOW_BUILD_SHA}
+# The release version (vYYYY.M.N tag minus the v), also from the workflow;
+# empty falls back to package.json's.
+ARG FLOW_VERSION=""
+ENV FLOW_VERSION=${FLOW_VERSION}
 
 RUN addgroup -g 1001 -S nodejs && adduser -S flow -u 1001
 

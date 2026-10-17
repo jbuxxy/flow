@@ -39,13 +39,20 @@ jobs:
       # inlined by `next build`, too late to supply at container runtime).
       # main -> :latest (what an always-current deploy pulls); a vX tag ->
       # :X + :stable (what a self-hoster pins to). Both also get :<sha>.
+      # The version comes from the tag (main builds: the latest release's),
+      # not package.json — the nightly release (release.yml) only tags.
       - id: tags
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           img="ghcr.io/${GITHUB_REPOSITORY,,}"
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             echo "tags=$img:${GITHUB_REF#refs/tags/v},$img:stable,$img:$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+            echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
           else
             echo "tags=$img:latest,$img:$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+            latest=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name 2>/dev/null || true)
+            echo "version=${latest#v}" >> "$GITHUB_OUTPUT"
           fi
 
       - uses: docker/build-push-action@v7
@@ -55,6 +62,7 @@ jobs:
           build-args: |
             NEXT_PUBLIC_VAPID_PUBLIC_KEY=${{ secrets.NEXT_PUBLIC_VAPID_PUBLIC_KEY }}
             FLOW_BUILD_SHA=${{ github.sha }}
+            FLOW_VERSION=${{ steps.tags.outputs.version }}
           tags: ${{ steps.tags.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
