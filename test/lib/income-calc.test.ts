@@ -8,6 +8,8 @@ import {
   semiMonthlyDaysOrDefault,
   inferSemiMonthlyDays,
   formatSemiMonthlyDays,
+  learnedPaycheckCents,
+  paychecksMatch,
 } from "@/lib/income-calc";
 import { utc } from "../helpers.ts";
 
@@ -123,5 +125,41 @@ describe("inferSemiMonthlyDays", () => {
   test("labels", () => {
     assert.equal(formatSemiMonthlyDays([1, 15]), "1st & 15th");
     assert.equal(formatSemiMonthlyDays([15, 31]), "15th & Last Day");
+  });
+});
+
+describe("learnedPaycheckCents", () => {
+  test("two matching deposits that differ from the stored amount set it to their average", () => {
+    assert.equal(learnedPaycheckCents([470069, 470068], 477061), 470069);
+  });
+
+  test("no change once the stored amount already matches", () => {
+    assert.equal(learnedPaycheckCents([470069, 470069], 470069), null);
+  });
+
+  test("a lone larger paycheck doesn't move it, nor does the ordinary one right after it", () => {
+    // Newest first: outlier on top, then the outlier one deposit back.
+    assert.equal(learnedPaycheckCents([519596, 469774], 469774), null);
+    assert.equal(learnedPaycheckCents([470070, 519596], 469774), null);
+  });
+
+  test("two ordinary deposits after an outlier adjust again", () => {
+    assert.equal(learnedPaycheckCents([470070, 470069, 519596], 469774), 470070);
+  });
+
+  test("needs at least two deposits", () => {
+    assert.equal(learnedPaycheckCents([470069], 477061), null);
+    assert.equal(learnedPaycheckCents([], 477061), null);
+  });
+});
+
+describe("paychecksMatch", () => {
+  test("cents of wobble match; a several-hundred-dollar bump doesn't", () => {
+    assert.equal(paychecksMatch(470069, 470071), true);
+    assert.equal(paychecksMatch(519596, 469774), false);
+  });
+
+  test("small deposits get the $5 floor", () => {
+    assert.equal(paychecksMatch(322, 356), true);
   });
 });

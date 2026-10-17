@@ -16,9 +16,9 @@ export type ExpectedIncomeEntry = {
 export function ExpectedIncomeThisMonth({ incomes }: { incomes: ExpectedIncomeEntry[] }) {
   if (incomes.length === 0) return null;
 
-  // The total set at the start of the month — every tracked income's full
-  // amount, received or not. Doesn't shrink as paychecks land; that's what
-  // the per-row checkmarks are for.
+  // Every paycheck this month, received or not — a received one at what
+  // actually landed, a still-expected one at its expected amount. Doesn't
+  // shrink as paychecks land; that's what the per-row checkmarks are for.
   const totalExpectedCents = incomes.reduce((s, i) => s + i.amountCents, 0);
 
   return (

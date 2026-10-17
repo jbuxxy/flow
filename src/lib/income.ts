@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { monthlyEquivalentCents, addPaycheckCadence } from "@/lib/income-calc";
+import { monthlyEquivalentCents, addPaycheckCadence, learnedPaycheckCents } from "@/lib/income-calc";
 import { currentPeriodKey, utcPeriodBounds } from "@/lib/period";
 import { offsetSumByCreditId, countedIncomeCents } from "@/lib/reimbursements";
 import { detectRecurringIncome } from "@/lib/income-detect";
@@ -125,7 +125,9 @@ export async function getIncomeThisMonth(householdId: string): Promise<MonthlyIn
 
   const incomes = await db.income.findMany({
     where: { householdId, nextPayDate: { not: null } },
-    include: { payments: { where: { occurredOn: { gte: utcStart, lt: utcEnd } }, select: { occurredOn: true } } },
+    include: {
+      payments: { where: { occurredOn: { gte: utcStart, lt: utcEnd } }, select: { occurredOn: true, amountCents: true } },
+    },
   });
 
   const entries: MonthlyIncomeStatus[] = [];
@@ -135,7 +137,9 @@ export async function getIncomeThisMonth(householdId: string): Promise<MonthlyIn
       entries.push({
         id: `${income.id}:${payment.occurredOn.toISOString()}`,
         name: income.name,
-        amountCents: income.amountCents,
+        // What actually landed, not the expected per-paycheck amount
+        // (household request, 2026-10-17). Credits are stored negative.
+        amountCents: Math.abs(payment.amountCents),
         received: true,
         receivedDate: payment.occurredOn,
         expectedDate: payment.occurredOn,
@@ -427,6 +431,24 @@ export async function matchIncomePayments(householdId: string): Promise<void> {
 
       cyclePayDate = nextCyclePayDate;
       if (cyclePayDate > now) break; // caught up to real time
+    }
+
+    // Keep the expected per-paycheck amount in step with what really lands
+    // — see learnedPaycheckCents (two matching deposits in a row move it; a
+    // one-off bigger paycheck doesn't). Runs every sync, not only on a new
+    // match, so an amount that's already drifted corrects itself.
+    const recent = await db.transaction.findMany({
+      where: { incomeId: income.id },
+      orderBy: { occurredOn: "desc" },
+      take: 2,
+      select: { amountCents: true },
+    });
+    const learned = learnedPaycheckCents(
+      recent.map((t) => Math.abs(t.amountCents)),
+      income.amountCents,
+    );
+    if (learned !== null) {
+      await db.income.update({ where: { id: income.id }, data: { amountCents: learned } });
     }
   }
 }

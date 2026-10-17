@@ -148,3 +148,26 @@ export function monthlyEquivalentCents(
   }
   return Math.round((income.amountCents * paychecksPerYear(income.cadence)) / 12);
 }
+
+// Two deposits count as "the same paycheck" within 2% or $5, whichever is
+// wider — General Atomics' biweekly deposit wobbles by a few cents; a bonus
+// or a third-paycheck-of-the-month bump is hundreds off.
+export function paychecksMatch(aCents: number, bCents: number): boolean {
+  return Math.abs(aCents - bCents) <= Math.max(Math.round(Math.max(aCents, bCents) * 0.02), 500);
+}
+
+// The expected per-paycheck amount an Income should carry, learned from its
+// real deposits (household request, 2026-10-17): once the two most recent
+// deposits agree with each other (paychecksMatch) and the stored amount
+// doesn't, the expected amount becomes their average. A lone outlier never
+// moves it — the outlier and the deposit before it disagree, and so do the
+// outlier and the one after it, so the stored amount holds until two
+// ordinary deposits land in a row again. `recentCents` is newest first.
+// Returns null when nothing should change.
+export function learnedPaycheckCents(recentCents: readonly number[], currentCents: number): number | null {
+  if (recentCents.length < 2) return null;
+  const [latest, previous] = recentCents;
+  if (latest <= 0 || previous <= 0 || !paychecksMatch(latest, previous)) return null;
+  const learned = Math.round((latest + previous) / 2);
+  return learned === currentCents ? null : learned;
+}
