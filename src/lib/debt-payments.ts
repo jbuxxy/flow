@@ -555,6 +555,50 @@ export async function backfillDebtPaymentHistory(
   });
 }
 
+// When a tracker is created from one real payment, the same payment's
+// earlier months are usually sitting right there unlinked — backfill
+// DebtPaymentHistory only reaches one cycle back (household report,
+// 2026-10-17: a $29/mo card tracked from its Sep 29 payment left May–Aug's
+// identical $29 payments in the "Possible Debt Payment" queue). Links every
+// earlier, still-unattributed transaction from the same account with the
+// same merchant text and amount, up to a year back, as history only — it
+// never touches nextDueDate/lastPaidDate/amountDueCents (those already
+// describe the cycle the anchor paid). A generic issuer line ("Capital One
+// Credit Card Payment") names no card, so it must match to the cent — a
+// sibling card at the same issuer pays a different amount.
+export async function linkEarlierMatchingPayments(
+  householdId: string,
+  dp: { id: string; debtId: string; amountCents: number; toleranceCents: number | null },
+  anchor: { id: string; merchant: string; accountId: string | null; amountCents: number; occurredOn: Date },
+): Promise<number> {
+  const tolerance = isGenericCardPaymentDescriptor(anchor.merchant)
+    ? 0
+    : Math.min(dp.toleranceCents ?? amountToleranceCents(dp.amountCents), Math.floor(Math.abs(anchor.amountCents) / 2));
+  const amount = anchor.amountCents;
+  const since = new Date(anchor.occurredOn.getTime() - 365 * 86_400_000);
+  const earlier = await db.transaction.findMany({
+    where: {
+      householdId,
+      id: { not: anchor.id },
+      debtId: null,
+      debtPaymentId: null,
+      billId: null,
+      patternId: null,
+      accountId: anchor.accountId,
+      merchant: { equals: anchor.merchant, mode: "insensitive" },
+      amountCents: { gte: amount - tolerance, lte: amount + tolerance },
+      occurredOn: { gte: since, lt: anchor.occurredOn },
+    },
+    select: { id: true },
+  });
+  if (earlier.length === 0) return 0;
+  await db.transaction.updateMany({
+    where: { id: { in: earlier.map((t) => t.id) } },
+    data: { debtId: dp.debtId, debtPaymentId: dp.id, isTransfer: true, bucketId: null, categoryId: null, isIncome: false },
+  });
+  return earlier.length;
+}
+
 // "Which debt is the paydown plan currently attacking" — same attack-order
 // notion payoff-planner.tsx computes client-side for its priority badge,
 // re-derived here from the household's live saved settings (not gated on

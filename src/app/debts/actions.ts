@@ -1,5 +1,6 @@
 "use server";
 
+import { isGenericCardPaymentDescriptor } from "@/lib/debt-payment-pattern";
 import { CLEARED_CLASSIFICATION } from "@/lib/classification-reset";
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
@@ -16,6 +17,7 @@ import { releaseBnplCluster, allBnplKeywords, resolveBnplKeyword } from "@/lib/b
 import {
   defaultDebtPaymentBucketId,
   backfillDebtPaymentHistory,
+  linkEarlierMatchingPayments,
   filterDebtPaymentTwins,
   unhideDebtPaymentIfBalanceReturned,
   matchInstallmentPayments,
@@ -1384,12 +1386,23 @@ export async function createDebtPaymentFromTransaction(
     });
   }
 
-  await upsertMerchantRule(
-    session.user.householdId,
-    transaction.merchant,
-    { bucketId: null, debtId, categoryId: null, isTransfer: true, isIncome: false },
-    { confidence: 1, source: "USER" },
-  );
+  // This payment's earlier months, as history (see linkEarlierMatchingPayments).
+  await linkEarlierMatchingPayments(session.user.householdId, debtPayment, transaction);
+
+  // No learned rule for a generic issuer line ("Capital One Credit Card
+  // Payment") — it names no card, so every sibling card's payment at that
+  // issuer would be filed onto this debt (same guard as
+  // linkUnclassifiedLenderPayments; real report 2026-10-17, a Kohl's card
+  // tracked from Capital One's generic line next to two other Capital One
+  // cards). Those stay attributed per payment by amount instead.
+  if (!isGenericCardPaymentDescriptor(transaction.merchant)) {
+    await upsertMerchantRule(
+      session.user.householdId,
+      transaction.merchant,
+      { bucketId: null, debtId, categoryId: null, isTransfer: true, isIncome: false },
+      { confidence: 1, source: "USER" },
+    );
+  }
 
   revalidateHousehold();
   return {};
