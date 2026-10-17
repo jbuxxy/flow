@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
+import { useLiveNotificationLock } from "@/lib/use-live-notification-lock";
 import { ChevronDown } from "lucide-react";
 import type { NotificationType } from "@prisma/client";
 import { updateNotificationPreference, setNotificationsEnabled, setNotificationsLocked } from "./actions";
@@ -56,6 +57,17 @@ export function MemberNotificationPrefs({
   const open = !collapsible || expanded;
   const [master, setMaster] = useState(member.notificationsEnabled);
   const [locked, setLocked] = useState(member.notificationsLocked);
+  // A member's own card (anyone who can't set locks only ever sees their
+  // own): follow the owner's lock/unlock live instead of only on reload.
+  const live = useLiveNotificationLock(
+    { enabled: member.notificationsEnabled, locked: member.notificationsLocked },
+    !canLock,
+  );
+  useEffect(() => {
+    if (canLock) return;
+    setMaster(live.enabled);
+    setLocked(live.locked);
+  }, [canLock, live.enabled, live.locked]);
   const [masterPending, startMaster] = useTransition();
   // Locked + not the owner = this member's own view of an owner's lock.
   const masterEditable = canEdit && (!locked || canLock);

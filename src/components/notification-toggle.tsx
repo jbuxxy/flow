@@ -7,6 +7,7 @@ import { Switch } from "@/components/switch";
 import { NotificationPushWarning } from "@/components/notification-push-warning";
 import { showToast } from "@/lib/toast";
 import { LockableSwitch } from "@/components/lockable-switch";
+import { useLiveNotificationLock } from "@/lib/use-live-notification-lock";
 
 export function NotificationToggle({
   hideWhenEnabled = false,
@@ -21,6 +22,10 @@ export function NotificationToggle({
   lockedOn?: boolean;
 }) {
   const [status, setStatus] = usePushStatus();
+  // `lockedOn` is the server render; this keeps it live (an owner locking or
+  // unlocking shows up here within seconds).
+  const live = useLiveNotificationLock({ enabled: lockedOn, locked: lockedOn });
+  lockedOn = live.locked && live.enabled;
   const [pending, startTransition] = useTransition();
 
   function toggle() {

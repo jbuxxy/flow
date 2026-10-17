@@ -28,6 +28,13 @@ import {
 } from "@/lib/email-provider";
 import { looksLikeReceipt, looksLikeBillNotice } from "@/lib/receipt-parse";
 import {
+  amazonOrderNumber,
+  amazonSummaryItems,
+  isAmazonSender,
+  mergeAmazonProductNames,
+  parseAmazonSubject,
+} from "@/lib/amazon-email";
+import {
   receiptChargeScopeWhere,
   receiptAmountWhere,
   receiptMatchWindow,
@@ -79,6 +86,7 @@ export async function runFullScan(householdId: string): Promise<void> {
       await matchBillNoticeAmounts(householdId);
       if (!more) break;
     }
+    await backfillAmazonEmails(householdId);
     await purgeStaleReceipts(householdId);
     await purgeStaleBillNotices(householdId);
     const { categorizeUncategorizedTransactions } = await import("@/lib/simplefin-sync");
@@ -241,7 +249,16 @@ async function processBatch(
     ).map((r) => r.messageId),
   );
 
-  const candidates = messages.filter((m) => !seen.has(m.messageId) && (looksLikeReceipt(m) || looksLikeBillNotice(m)));
+  // Amazon's product-naming emails ("Delivery update: "…"", return/refund
+  // notices) carry no amount, so they never clear the receipt prefilter —
+  // stored straight from the subject, no AI (see amazon-email.ts).
+  const fresh = messages.filter((m) => !seen.has(m.messageId));
+  const amazonHints = fresh.filter((m) => storeAmazonProductHint(householdId, connectionId, m, "check"));
+  for (const m of amazonHints) await storeAmazonProductHint(householdId, connectionId, m, "store");
+
+  const candidates = fresh.filter(
+    (m) => !amazonHints.includes(m) && (looksLikeReceipt(m) || looksLikeBillNotice(m)),
+  );
   if (candidates.length === 0) return { unresolvedUids: [] };
 
   const parsed = await extractReceipts(householdId, candidates);
@@ -252,6 +269,7 @@ async function processBatch(
       unresolvedUids.push(msg.uid);
       continue;
     }
+    if (isAmazonSender(msg.from)) fillFromAmazonSubject(p, msg);
     const usable = p.isReceipt && (!p.currency || p.currency === "USD");
     await db.receipt.upsert({
       where: { emailConnectionId_messageId: { emailConnectionId: connectionId, messageId: msg.messageId } },
@@ -282,6 +300,151 @@ async function processBatch(
     }
   }
   return { unresolvedUids };
+}
+
+// An Amazon order/shipment email the AI found no items in: the subject's
+// "N items: Category, …" stands in (all Amazon still says), and the order
+// number comes off the body if the AI missed it.
+function fillFromAmazonSubject(p: ParsedReceipt, msg: RawEmail): void {
+  const subject = parseAmazonSubject(msg.subject);
+  if (subject?.type === "summary" && p.lineItems.length === 0) {
+    p.lineItems = amazonSummaryItems(subject, p.totalCents ?? null) as ParsedReceiptLineItem[];
+  }
+  if (!p.orderNumber) p.orderNumber = amazonOrderNumber(msg.text) ?? p.orderNumber;
+}
+
+// "check": whether `msg` is an Amazon email naming a product for a known
+// order. "store": saves it as a total-less Receipt (never matched or queued
+// — every match/queue reader requires totalCents) whose only job is to hand
+// that name to the order's charge (applyAmazonProductNames).
+function storeAmazonProductHint(householdId: string, connectionId: string, msg: RawEmail, mode: "check"): boolean;
+function storeAmazonProductHint(householdId: string, connectionId: string, msg: RawEmail, mode: "store"): Promise<void>;
+function storeAmazonProductHint(
+  householdId: string,
+  connectionId: string,
+  msg: RawEmail,
+  mode: "check" | "store",
+): boolean | Promise<void> {
+  const subject = isAmazonSender(msg.from) ? parseAmazonSubject(msg.subject) : null;
+  const orderNumber = amazonOrderNumber(msg.text);
+  const ok = subject?.type === "product" && orderNumber !== null;
+  if (mode === "check") return ok;
+  if (!ok || subject?.type !== "product") return Promise.resolve();
+  const data = {
+    kind: "SHIPPING" as const,
+    party: "Amazon",
+    totalCents: null,
+    occurredOn: toUTCDate(msg.receivedAt),
+    orderNumber,
+    lineItems: toJson([{ description: subject.productName, qty: 1, totalCents: null, unitPriceCents: null }]),
+    matchState: "UNMATCHED" as const,
+  };
+  return db.receipt
+    .upsert({
+      where: { emailConnectionId_messageId: { emailConnectionId: connectionId, messageId: msg.messageId } },
+      create: { householdId, emailConnectionId: connectionId, messageId: msg.messageId, receivedAt: msg.receivedAt, ...data },
+      update: data,
+    })
+    .then(() => undefined);
+}
+
+const NON_PRODUCT_LINE = /^(tax|sales tax|shipping|delivery|discount|promotion|tip|fee|total|subtotal)\b/i;
+
+// Carries Amazon product names onto the charge their order matched — from
+// the hint receipts above and from refund receipts (Amazon's refund emails
+// do name the item). Keyed by order number; idempotent.
+export async function applyAmazonProductNames(householdId: string): Promise<void> {
+  const sources = await db.receipt.findMany({
+    where: {
+      householdId,
+      orderNumber: { not: null },
+      party: { contains: "amazon", mode: "insensitive" },
+      OR: [{ totalCents: null }, { isRefund: true }],
+      NOT: { lineItems: { equals: Prisma.JsonNull } },
+    },
+    select: { orderNumber: true, lineItems: true },
+  });
+  const namesByOrder = new Map<string, string[]>();
+  for (const s of sources) {
+    const items = Array.isArray(s.lineItems) ? (s.lineItems as { description?: unknown }[]) : [];
+    const names = items
+      .map((i) => (typeof i?.description === "string" ? i.description.trim() : ""))
+      .filter((n) => n && !NON_PRODUCT_LINE.test(n));
+    if (names.length > 0) namesByOrder.set(s.orderNumber!, [...(namesByOrder.get(s.orderNumber!) ?? []), ...names]);
+  }
+  if (namesByOrder.size === 0) return;
+
+  const purchases = await db.receipt.findMany({
+    where: {
+      householdId,
+      orderNumber: { in: [...namesByOrder.keys()] },
+      isRefund: false,
+      transactionId: { not: null },
+    },
+    select: { orderNumber: true, transaction: { select: { id: true, receiptItems: true } } },
+  });
+  for (const r of purchases) {
+    if (!r.transaction) continue;
+    const existing = Array.isArray(r.transaction.receiptItems)
+      ? (r.transaction.receiptItems as { description: string }[])
+      : null;
+    const merged = mergeAmazonProductNames(existing, namesByOrder.get(r.orderNumber!) ?? []);
+    if (merged) await db.transaction.update({ where: { id: r.transaction.id }, data: { receiptItems: toJson(merged) } });
+  }
+}
+
+// One pass over each inbox's Amazon mail from the last 90 days (an IMAP
+// FROM search — cheap, no AI): fills order/shipment receipts that were
+// parsed before amazon-email.ts existed and came back with no items, saves
+// the product-naming emails the prefilter used to drop, then carries the
+// names over. Runs with every full scan ("Scan Now", a newly connected
+// inbox), so it also catches up a backfill that's already done.
+export async function backfillAmazonEmails(householdId: string): Promise<void> {
+  const sinceDate = new Date(Date.now() - FIRST_POLL_LOOKBACK_MS);
+  for (const conn of await getEmailConnections(householdId)) {
+    try {
+      const mb = await openMailbox(conn.config);
+      try {
+        const { messages } = await mb.fetchWindow({ sinceDate, from: "amazon.com", limit: 1000 });
+        const existing = new Map(
+          (
+            await db.receipt.findMany({
+              where: { emailConnectionId: conn.id, messageId: { in: messages.map((m) => m.messageId) } },
+              select: { id: true, messageId: true, lineItems: true, totalCents: true, orderNumber: true, transactionId: true },
+            })
+          ).map((r) => [r.messageId, r]),
+        );
+        for (const msg of messages) {
+          const row = existing.get(msg.messageId);
+          if (!row) {
+            if (storeAmazonProductHint(householdId, conn.id, msg, "check")) {
+              await storeAmazonProductHint(householdId, conn.id, msg, "store");
+            }
+            continue;
+          }
+          const subject = parseAmazonSubject(msg.subject);
+          const hasItems = Array.isArray(row.lineItems) && row.lineItems.length > 0;
+          if (subject?.type !== "summary" || hasItems) continue;
+          const items = toJson(amazonSummaryItems(subject, row.totalCents));
+          await db.receipt.update({
+            where: { id: row.id },
+            data: { lineItems: items, orderNumber: row.orderNumber ?? amazonOrderNumber(msg.text) },
+          });
+          if (row.transactionId) {
+            await db.transaction.updateMany({
+              where: { id: row.transactionId, receiptItems: { equals: Prisma.DbNull } },
+              data: { receiptItems: items },
+            });
+          }
+        }
+      } finally {
+        await mb.close();
+      }
+    } catch (err) {
+      console.error(`[receipt-sync] Amazon backfill failed for connection ${conn.id}:`, err);
+    }
+  }
+  await applyAmazonProductNames(householdId);
 }
 
 // Truncate a DateTime to a UTC calendar day (for the @db.Date `occurredOn`).
@@ -330,6 +493,7 @@ export async function matchReceipts(householdId: string): Promise<void> {
     await matchOneReceipt(householdId, receipt);
   }
   await retryRefundPurchaseLinks(householdId);
+  await applyAmazonProductNames(householdId);
 }
 
 async function setAmbiguous(receipt: Receipt): Promise<void> {

@@ -179,34 +179,47 @@ export function ensurePushSubscription(): Promise<EnsureResult> {
       const active = await registerWithServer(existing, false).catch(() => false);
       return active ? "on" : "off";
     }
-    // iOS sometimes reports no subscription for one that's still live — trust
-    // the server's record of this device's endpoint over that.
+    // iOS reports no subscription, yet the server still holds this device's
+    // endpoint. That used to be trusted as "still live" — but it's usually a
+    // subscription iOS dropped: Apple keeps accepting pushes for the old
+    // endpoint (HTTP 201) and the phone shows nothing, while Settings reads
+    // "on" (household report, 2026-10-17: a member locked on hadn't received
+    // a push since Oct 8, and being locked she couldn't toggle it to fix).
+    // Quietly subscribe again; the new endpoint takes over the old row
+    // (registerWithServer's `replaces`). If iOS refuses, trust the server.
     const remembered = storedEndpoint();
     if (Notification.permission === "granted" && remembered && (await subscriptionIsLive(remembered))) {
       setExpectedOn(true);
-      return "on";
+      return (await resubscribeQuietly()) ? "repaired" : "on";
     }
     if (Notification.permission !== "granted" || !isExpectedOn()) return "off";
 
-    const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
-    if (!publicKey) return "off";
-    try {
-      const registration = await navigator.serviceWorker.ready;
-      const subscription = await registration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(publicKey),
-      });
-      if (!(await registerWithServer(subscription, false))) {
-        await subscription.unsubscribe().catch(() => {});
-        return "off";
-      }
-      showToast("Notifications Reconnected");
-      return "repaired";
-    } catch {
-      return "off";
-    }
+    return (await resubscribeQuietly()) ? "repaired" : "off";
   })();
   return ensureOnce;
+}
+
+// A gesture-less subscribe (permission is already granted) registered as a
+// repair of this device's existing server row — never a new row. True when
+// the server now holds the fresh subscription.
+async function resubscribeQuietly(): Promise<boolean> {
+  const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+  if (!publicKey) return false;
+  try {
+    const registration = await navigator.serviceWorker.ready;
+    const subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(publicKey),
+    });
+    if (!(await registerWithServer(subscription, false))) {
+      await subscription.unsubscribe().catch(() => {});
+      return false;
+    }
+    showToast("Notifications Reconnected");
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function currentPushSubscription(): Promise<PushSubscription | null> {

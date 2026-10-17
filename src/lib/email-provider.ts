@@ -189,6 +189,9 @@ export type WindowOpts = {
   // backfill. "asc" = oldest first, for draining a forward gap
   // chronologically so a forward-only cursor never skips the middle.
   order?: "asc" | "desc";
+  // Only messages whose From contains this (IMAP FROM search) — the Amazon
+  // backfill (backfillAmazonEmails, receipt-sync.ts).
+  from?: string;
 };
 
 export type MailboxSession = {
@@ -226,6 +229,7 @@ export async function openMailbox(config: EmailConfig): Promise<MailboxSession> 
   return {
     async fetchWindow(opts) {
       const query: Record<string, unknown> = { since: opts.sinceDate };
+      if (opts.from) query.from = opts.from;
       if (opts.newerThanUid != null) query.uid = `${opts.newerThanUid + 1}:*`;
       else if (opts.olderThanUid != null) query.uid = `1:${Math.max(1, opts.olderThanUid - 1)}`;
 
