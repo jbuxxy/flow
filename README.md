@@ -3,6 +3,13 @@
   <img src="public/icons/flowText.png" alt="Flow" width="240">
 </p>
 
+<p align="center">
+  <a href="https://github.com/jbuxxy/flow/actions/workflows/docker-publish.yml"><img src="https://github.com/jbuxxy/flow/actions/workflows/docker-publish.yml/badge.svg" alt="Build"></a>
+  <a href="https://github.com/jbuxxy/flow/releases"><img src="https://img.shields.io/github/v/release/jbuxxy/flow?color=10b981" alt="Latest release"></a>
+  <a href="https://github.com/jbuxxy/flow/pkgs/container/flow"><img src="https://img.shields.io/badge/ghcr.io-jbuxxy%2Fflow-10b981?logo=docker&logoColor=white" alt="Docker image"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-10b981" alt="AGPL-3.0 license"></a>
+</p>
+
 A self-hosted household finance app: bills, envelope-style budgeting,
 debt payoff planning, net worth tracking, and savings goals — built around
 automatic bank sync via [SimpleFIN](https://www.simplefin.org/).
