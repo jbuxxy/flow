@@ -113,8 +113,8 @@ export function BucketBillsSection({
         (b): SortableItem => ({ kind: "bill", sortName: b.name, dueDay: dueDayOf(b.nextDueDate), sinks: b.canceled, bill: b }),
       ),
       ...debtPayments.map((dp): SortableItem => {
-        const dormantPaidOff =
-          dp.paidOff && !dp.slots.some((s) => s.payment) && dp.extraPayments.length === 0;
+        const lastPaidSlot = dp.slots.findLast((s) => s.payment);
+        const dormantPaidOff = dp.paidOff && !lastPaidSlot && dp.extraPayments.length === 0;
         return {
           kind: "debt",
           sortName: dp.debtName,
@@ -123,8 +123,12 @@ export function BucketBillsSection({
           // 2026-09-29), so it orders by its payoff date down there. One with
           // a payment this cycle stays in the list and sorts by its real due
           // date like any other row — not the day it was paid (Sam's Club,
-          // due Oct 4, paid Oct 1, sat at the 1st — 2026-10-03).
-          dueDay: dueDayOf(dormantPaidOff && dp.paidOffDate ? dp.paidOffDate : dp.nextDueDate),
+          // due Oct 4, paid Oct 1, sat at the 1st — 2026-10-03). That due date
+          // is the final slot's, not nextDueDate: a paid-off tracker's
+          // nextDueDate has already rolled one cadence past the last payment
+          // (Klarna - Puma, every 2 weeks, final payment due Oct 13, sat at
+          // the 27th — 2026-10-17).
+          dueDay: dueDayOf(dp.paidOff ? (lastPaidSlot?.date ?? dp.paidOffDate ?? dp.nextDueDate) : dp.nextDueDate),
           sinks: dormantPaidOff,
           debtPayment: dp,
         };
