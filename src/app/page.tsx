@@ -5,7 +5,7 @@ import { TrendingUp, TrendingDown, Minus, Gauge, Receipt, PiggyBank, Landmark, S
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getBucketsWithProgress, getActiveUncategorizedCount } from "@/lib/buckets";
-import { STATUS_BAR_CLASS } from "@/lib/bucket-status";
+import { STATUS_BAR_CLASS, isBucketOverBudget } from "@/lib/bucket-status";
 import { getNetWorth, getActiveStaleAssets } from "@/lib/networth";
 import { getNetWorthDailyHistory, netWorthWindow, recordNetWorthSnapshot } from "@/lib/networth-history";
 import { getSavingsGoalsWithProgress, checkAndSendGoalReminders } from "@/lib/savings";
@@ -375,7 +375,7 @@ export default async function Home() {
     // Past over pace: already spent more than the cap (top-ups included) —
     // red, not amber (household request, 2026-10-15). Counted even when the
     // bucket's pace alert is off; being over budget isn't a pace guess.
-    const isOverBudget = (b: (typeof paceBuckets)[number]) => b.monthlyCapCents > 0 && b.remainingCents < 0;
+    const isOverBudget = isBucketOverBudget;
     const isFlagged = (b: (typeof paceBuckets)[number]) => b.onPaceToOvershoot || isOverBudget(b);
     const attentionCount = paceBuckets.filter(isFlagged).length;
     const overBudgetCount = paceBuckets.filter(isOverBudget).length;

@@ -9,6 +9,7 @@ import {
   overageBlendColor,
   OVERAGE_ORANGE,
   OVERAGE_RED,
+  isBucketOverBudget,
 } from "@/lib/bucket-status";
 
 describe("bucketStatus", () => {
@@ -118,5 +119,18 @@ describe("overageBlendColor", () => {
     const mid = overageBlendColor(0.5);
     assert.notEqual(mid, OVERAGE_ORANGE);
     assert.notEqual(mid, OVERAGE_RED);
+  });
+});
+
+describe("isBucketOverBudget", () => {
+  test("over once spent past the (top-up-inclusive) cap", () => {
+    assert.equal(isBucketOverBudget({ monthlyCapCents: 10000, remainingCents: -1 }), true);
+  });
+  test("not over at exactly the cap or under it", () => {
+    assert.equal(isBucketOverBudget({ monthlyCapCents: 10000, remainingCents: 0 }), false);
+    assert.equal(isBucketOverBudget({ monthlyCapCents: 10000, remainingCents: 500 }), false);
+  });
+  test("a $0-cap bucket is never over budget", () => {
+    assert.equal(isBucketOverBudget({ monthlyCapCents: 0, remainingCents: -2500 }), false);
   });
 });

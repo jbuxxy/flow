@@ -3,12 +3,15 @@ import { Gauge } from "lucide-react";
 import { formatDollars } from "@/lib/money";
 import { BucketIcon } from "./bucket-icon";
 import { CircularProgress } from "./circular-progress";
+import { isBucketOverBudget } from "@/lib/bucket-status";
 import type { BucketProgress } from "@/lib/buckets";
 
 export function BucketCard({ progress }: { progress: BucketProgress }) {
   if (progress.excludedFromAllocation) {
     return <OneTimePurchaseCard progress={progress} />;
   }
+  const overBudget = isBucketOverBudget(progress);
+  const gaugeLabel = overBudget ? "Over Budget" : "On Pace To Go Over";
 
   return (
     <Link
@@ -28,10 +31,10 @@ export function BucketCard({ progress }: { progress: BucketProgress }) {
               {/* The same onPaceToOvershoot flag (and Gauge icon) behind the
                   "Buckets Over Pace" count on the dashboard and the allocation
                   card — marks *which* buckets those are (household request,
-                  2026-10-03). */}
-              {progress.onPaceToOvershoot && (
-                <span title="On Pace To Go Over" aria-label="On Pace To Go Over" className="shrink-0">
-                  <Gauge size={15} className="text-amber-500 dark:text-amber-400" />
+                  2026-10-03). Red once already over budget (2026-10-16). */}
+              {(progress.onPaceToOvershoot || overBudget) && (
+                <span title={gaugeLabel} aria-label={gaugeLabel} className="shrink-0">
+                  <Gauge size={15} className={overBudget ? "text-red-600 dark:text-red-500" : "text-amber-500 dark:text-amber-400"} />
                 </span>
               )}
               {progress.needsAttention && (

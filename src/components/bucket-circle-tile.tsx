@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Gauge } from "lucide-react";
 import { CircularProgress } from "./circular-progress";
+import { isBucketOverBudget } from "@/lib/bucket-status";
 import type { BucketProgress } from "@/lib/buckets";
 
 export function BucketCircleTile({
@@ -21,8 +22,10 @@ export function BucketCircleTile({
   // Same flag + Gauge icon as the dashboard's "Buckets Over Pace" tile and
   // BucketCard — marks *which* rings that count refers to (household
   // request, 2026-10-05). One-time buckets are excluded from that count, so
-  // they never get the icon here either.
-  const overPace = progress.onPaceToOvershoot && !progress.excludedFromAllocation;
+  // they never get the icon here either. Already over budget → the icon
+  // goes red, matching that tile's red state (household request, 2026-10-16).
+  const overBudget = isBucketOverBudget(progress) && !progress.excludedFromAllocation;
+  const overPace = (progress.onPaceToOvershoot || overBudget) && !progress.excludedFromAllocation;
   return (
     <Link
       href={`/buckets/${progress.id}`}
@@ -37,7 +40,11 @@ export function BucketCircleTile({
             overPace ? (
               <span className="flex flex-col items-center leading-none">
                 {Math.round(Math.max(progress.spentPct, 0))}%
-                <Gauge size={11} className="mt-0.5 text-amber-500 dark:text-amber-400" aria-label="On Pace To Go Over" />
+                <Gauge
+                  size={11}
+                  className={overBudget ? "mt-0.5 text-red-600 dark:text-red-500" : "mt-0.5 text-amber-500 dark:text-amber-400"}
+                  aria-label={overBudget ? "Over Budget" : "On Pace To Go Over"}
+                />
               </span>
             ) : undefined
           }

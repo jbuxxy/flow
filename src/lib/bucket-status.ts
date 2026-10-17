@@ -12,6 +12,14 @@ export const STATUS_BAR_CLASS: Record<BucketStatus, string> = {
   ok: "bg-emerald-600",
 };
 
+// Already spent past the cap (top-ups included) — the "Over Budget" state
+// that turns the dashboard's Buckets Over Pace tile and every bucket's Gauge
+// icon red instead of amber (household request, 2026-10-15/16). Not gated
+// on paceAlertEnabled: being over budget isn't a pace guess.
+export function isBucketOverBudget(p: { monthlyCapCents: number; remainingCents: number }): boolean {
+  return p.monthlyCapCents > 0 && p.remainingCents < 0;
+}
+
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
 }
