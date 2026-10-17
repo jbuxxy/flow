@@ -5,6 +5,7 @@ import {
   plannedExtraByDebtInPeriod,
   postedExtraNettedByDebt,
   getSkippedMinimumKeys,
+  getSkippedPaymentsByDebt,
   supersededPayoffExtraByDebtInPeriod,
   planExtraTargetsByDebt,
 } from "@/lib/debt-payments";
@@ -208,12 +209,14 @@ export async function buildDebtPaymentCards(
     skippedMinimumKeys,
     postedExtraNettedByDebtId,
     planExtrasByDebtId,
+    skippedPaymentsByDebtId,
   ] = await Promise.all([
     plannedExtraByDebtInPeriod(householdId, monthStart, monthEnd),
     supersededPayoffExtraByDebtInPeriod(householdId, monthStart, monthEnd),
     getSkippedMinimumKeys(householdId, monthStart, monthEnd),
     postedExtraNettedByDebt(householdId),
     planExtraTargetsByDebt(householdId, monthStart, monthEnd),
+    getSkippedPaymentsByDebt(householdId, monthStart, monthEnd),
   ]);
   return debtPayments.map((p): DebtPaymentWithName => {
     // A card/loan payment can post on the debt's own liability account as a
@@ -358,6 +361,7 @@ export async function buildDebtPaymentCards(
       projectedExtras,
       coveredMinimums,
       coveredOpenSlots,
+      skippedPayments: skippedPaymentsByDebtId.get(p.debtId) ?? [],
       balanceOnlyPayoff: unsyncedPayoff
         ? { date: unsyncedPayoff.date.toISOString().slice(0, 10), amountCents: unsyncedPayoff.amountCents }
         : null,

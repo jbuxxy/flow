@@ -675,10 +675,9 @@ export type UpcomingBill = {
   // owed either way. `dueDate` for a skipped row is the cycle that got
   // skipped, not nextDueDate (already advanced past it), same "which week
   // this row belongs to" convention `paid` already gets from lastPaidDate.
-  // For a debt row (getDebtPaymentsThisWeek), true only for a covered
-  // minimum the household skipped on /debts (DebtMinimumSkip) — a payoff-plan
-  // extra has its own separate skip mechanism (PayoffExtraSkip), shown
-  // directly on /debts, not folded into this weekly card.
+  // For a debt row (getDebtPaymentsThisWeek), a covered minimum the household
+  // skipped on /debts (DebtMinimumSkip), or a payoff-plan extra skipped for a
+  // payday this week (PayoffExtraSkip) — the latter as its own row.
   skipped: boolean;
   // This week's payment(s) took the debt's balance to zero — the card swaps
   // the check for the amber "pays off" star, same convention as

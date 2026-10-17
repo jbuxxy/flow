@@ -105,6 +105,12 @@ export type DebtPaymentData = {
   // plan extra covered — drawn from coveredMinimums (bucket variant) or not
   // at all, never as a plain due line.
   coveredOpenSlots: string[];
+  // Minimums and payoff-plan extras skipped this month (on /debts) — both
+  // drop out of coveredMinimums/projectedExtras, so the bucket variant lists
+  // them as their own struck-through lines, the same as /debts shows them
+  // (household request, 2026-10-17). Optional so a caller without it
+  // renders exactly as before.
+  skippedPayments?: { date: string; amountCents: number; kind: "minimum" | "extra" }[];
   // The synced balance hit $0 this month but the payment that did it hasn't
   // synced as a transaction yet — see balanceOnlyPayoff (debt-payoff.ts).
   // Rendered as a pending payoff line, same as DebtRow on /debts.
@@ -621,6 +627,24 @@ export function DebtPaymentRow({
                           Already covered by an earlier payment.
                         </p>
                       </EntryLine>
+                    ),
+                  });
+                }
+              }
+              // Skipped this month on /debts — display only here; Undo stays
+              // on /debts. A skipped extra keeps the green extra line's look.
+              if (bucket) {
+                for (const skip of debtPayment.skippedPayments ?? []) {
+                  rows.push({
+                    sortMs: at(skip.date),
+                    el: (
+                      <EntryLine
+                        key={`skipped-${skip.kind}-${skip.date}`}
+                        state={skip.kind === "extra" ? "expected" : "due"}
+                        date={new Date(skip.date)}
+                        amountCents={skip.amountCents}
+                        muted
+                      />
                     ),
                   });
                 }

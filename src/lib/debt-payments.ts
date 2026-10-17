@@ -2533,7 +2533,41 @@ export async function getDebtPaymentsThisWeek(householdId: string, weekOf: Date 
       skipped: false,
     }));
 
-  return [...rows, ...untrackedExtraRows];
+  // A payoff-plan extra the household skipped on /debts for a payday this
+  // week — it drops out of plannedExtraByDebt, so it used to vanish from the
+  // card instead of reading "Skipped" like a skipped bill or covered minimum
+  // (household request, 2026-10-17). Its own struck-through row at the
+  // frozen skipped amount; skipped rows count toward nothing owed.
+  const skippedExtras = await db.payoffExtraSkip.findMany({
+    where: { householdId, paycheckDate: { gte: start, lt: end }, amountCents: { not: null }, debt: { hiddenAt: null } },
+    select: {
+      debtId: true,
+      paycheckDate: true,
+      amountCents: true,
+      debt: { select: { name: true, account: { select: { displayName: true } } } },
+    },
+  });
+  const skippedExtraRows: UpcomingBill[] = skippedExtras.map((x) => ({
+    id: `payoff-extra-skip-${x.debtId}-${x.paycheckDate.toISOString().slice(0, 10)}`,
+    name: debtDisplayName(x.debt),
+    kind: "debt" as const,
+    expectedCents: x.amountCents!,
+    paidCents: 0,
+    extraCents: 0,
+    plannedExtraCents: x.amountCents!,
+    minimumDueCents: 0,
+    reimbursedCents: 0,
+    dueDate: x.paycheckDate,
+    paid: false,
+    paysOff: false,
+    plannedPayoff: false,
+    inPayoffPlan: true,
+    dueDateConfirmed: true,
+    pendingBalanceConfirmation: false,
+    skipped: true,
+  }));
+
+  return [...rows, ...untrackedExtraRows, ...skippedExtraRows];
 }
 
 // A household-set friendly nickname on the linked Account (/settings/accounts)
@@ -3307,6 +3341,36 @@ export async function getSkippedMinimumKeys(householdId: string, monthStart: Dat
     select: { debtId: true, dueDate: true },
   });
   return new Set(rows.map((r) => `${r.debtId}:${r.dueDate.toISOString().slice(0, 10)}`));
+}
+
+// Every payment the household skipped in [start, end) — covered minimums
+// (DebtMinimumSkip) and payoff-plan extras (PayoffExtraSkip) — per debt,
+// for surfaces that list the skip itself rather than just leaving the line
+// out (a bucket page's debt card, This Week's Bills). An extra skipped
+// before PayoffExtraSkip froze its amount (amountCents null) has no figure
+// to show and is left out.
+export type SkippedDebtPayment = { date: string; amountCents: number; kind: "minimum" | "extra" };
+export async function getSkippedPaymentsByDebt(
+  householdId: string,
+  start: Date,
+  end: Date,
+): Promise<Map<string, SkippedDebtPayment[]>> {
+  const [minimums, extras] = await Promise.all([
+    db.debtMinimumSkip.findMany({
+      where: { householdId, dueDate: { gte: start, lt: end } },
+      select: { debtId: true, dueDate: true, amountCents: true },
+    }),
+    db.payoffExtraSkip.findMany({
+      where: { householdId, paycheckDate: { gte: start, lt: end }, amountCents: { not: null } },
+      select: { debtId: true, paycheckDate: true, amountCents: true },
+    }),
+  ]);
+  const byDebt = new Map<string, SkippedDebtPayment[]>();
+  const push = (debtId: string, row: SkippedDebtPayment) => byDebt.set(debtId, [...(byDebt.get(debtId) ?? []), row]);
+  for (const m of minimums) push(m.debtId, { date: m.dueDate.toISOString().slice(0, 10), amountCents: m.amountCents, kind: "minimum" });
+  for (const x of extras) push(x.debtId, { date: x.paycheckDate.toISOString().slice(0, 10), amountCents: x.amountCents!, kind: "extra" });
+  for (const rows of byDebt.values()) rows.sort((a, b) => a.date.localeCompare(b.date));
+  return byDebt;
 }
 
 async function getPayoffExtraSkips(householdId: string): Promise<Set<string>> {

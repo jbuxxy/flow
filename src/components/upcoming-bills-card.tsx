@@ -287,7 +287,13 @@ export function UpcomingBillsCard({
                 </p>
               )}
               {showExtraLine && (
-                <p className="flex items-center gap-1 pl-6 text-xs text-emerald-700 dark:text-emerald-400">
+                // A skipped payoff-plan extra (its own row) keeps the line so
+                // it still reads as an extra, muted like the amount above.
+                <p
+                  className={`flex items-center gap-1 pl-6 text-xs text-emerald-700 dark:text-emerald-400 ${
+                    b.skipped ? "opacity-50" : ""
+                  }`}
+                >
                   <ExtraPaymentIcon poolBreakdown={b.poolBreakdown} />
                   {formatCents(extraCents)} Extra
                 </p>
