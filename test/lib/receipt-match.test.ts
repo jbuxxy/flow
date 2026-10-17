@@ -2,6 +2,7 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import {
   aliasKey,
+  inOrderChargeGrace,
   isP2PReceipt,
   plausibleReceiptCharge,
   receiptAmountWhere,
@@ -124,6 +125,30 @@ describe("plausibleReceiptCharge", () => {
     assert.equal(
       plausibleReceiptCharge(receipt({ party: "Blue Bottle" }), { merchant: "SQ *The Coffee Bar", rawDescription: null }, aliases),
       true,
+    );
+  });
+});
+
+describe("inOrderChargeGrace", () => {
+  const now = new Date("2026-10-17T20:00:00Z");
+  test("a fresh unmatched order confirmation waits for its charge", () => {
+    assert.equal(
+      inOrderChargeGrace({ kind: "ORDER_CONFIRMATION", matchState: "UNMATCHED", occurredOn: new Date("2026-10-17"), receivedAt: now }, now),
+      true,
+    );
+  });
+  test("after the grace window, or once ambiguous, or any other kind, it shows", () => {
+    assert.equal(
+      inOrderChargeGrace({ kind: "ORDER_CONFIRMATION", matchState: "UNMATCHED", occurredOn: new Date("2026-10-10"), receivedAt: now }, now),
+      false,
+    );
+    assert.equal(
+      inOrderChargeGrace({ kind: "ORDER_CONFIRMATION", matchState: "AMBIGUOUS", occurredOn: new Date("2026-10-17"), receivedAt: now }, now),
+      false,
+    );
+    assert.equal(
+      inOrderChargeGrace({ kind: "PAYMENT_SENT", matchState: "UNMATCHED", occurredOn: new Date("2026-10-17"), receivedAt: now }, now),
+      false,
     );
   });
 });

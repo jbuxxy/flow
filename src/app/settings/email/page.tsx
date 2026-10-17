@@ -12,6 +12,7 @@ import {
   plausibleReceiptCharge,
   aliasKey,
   RECEIPT_WIDE_MATCH_AFTER_DAYS,
+  inOrderChargeGrace,
 } from "@/lib/receipt-match";
 import { getCuratedDomain } from "@/lib/merchant-domains";
 import {
@@ -164,6 +165,7 @@ export default async function EmailSettingsPage() {
             occurredOn: true,
             receivedAt: true,
             kind: true,
+            matchState: true,
             noteText: true,
             isRefund: true,
             refundTo: true,
@@ -180,9 +182,9 @@ export default async function EmailSettingsPage() {
   // caught up to a receipt's date there's simply nothing for it to match, so
   // don't nag about it — matchReceipts keeps retrying it silently every sync.
   const bankCaughtUpTo = latestTxn._max.occurredOn;
-  const unmatched = bankCaughtUpTo
-    ? unmatchedAll.filter((r) => (r.occurredOn ?? r.receivedAt) <= bankCaughtUpTo)
-    : unmatchedAll;
+  const unmatched = (
+    bankCaughtUpTo ? unmatchedAll.filter((r) => (r.occurredOn ?? r.receivedAt) <= bankCaughtUpTo) : unmatchedAll
+  ).filter((r) => !inOrderChargeGrace(r));
 
   // BNPL installment plans a receipt with no bank charge could belong to
   // instead — see bnpl-plan-match.ts / matchReceiptToBnplPlan. Fetched once;

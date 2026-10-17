@@ -302,6 +302,44 @@ async function processBatch(
   return { unresolvedUids };
 }
 
+// A second email about an order that already matched — the shipping or
+// delivery notice for the same order number and the same total as the
+// order confirmation that took the charge — can never match (the charge is
+// taken) and just sat in the unmatched queue (household report, 2026-10-17:
+// a $48.34 Amazon shipping email beside its matched order). Its items carry
+// over if the charge has none, then it's retired. A shipment for a
+// different amount (part of a split order) is its own charge and is left
+// alone.
+async function retireDuplicateOrderNotices(householdId: string): Promise<void> {
+  const open = await db.receipt.findMany({
+    where: {
+      householdId,
+      matchState: { in: ["UNMATCHED", "AMBIGUOUS"] },
+      orderNumber: { not: null },
+      totalCents: { not: null },
+    },
+    select: { id: true, orderNumber: true, totalCents: true, lineItems: true },
+  });
+  if (open.length === 0) return;
+  const matched = await db.receipt.findMany({
+    where: {
+      householdId,
+      orderNumber: { in: [...new Set(open.map((r) => r.orderNumber!))] },
+      transactionId: { not: null },
+    },
+    select: { orderNumber: true, totalCents: true, transaction: { select: { id: true, receiptItems: true } } },
+  });
+  for (const r of open) {
+    const sibling = matched.find((m) => m.orderNumber === r.orderNumber && m.totalCents === r.totalCents);
+    if (!sibling?.transaction) continue;
+    const items = Array.isArray(r.lineItems) && r.lineItems.length > 0 ? r.lineItems : null;
+    if (items && sibling.transaction.receiptItems == null) {
+      await db.transaction.update({ where: { id: sibling.transaction.id }, data: { receiptItems: toJson(items) } });
+    }
+    await db.receipt.update({ where: { id: r.id }, data: { matchState: "DISMISSED" } });
+  }
+}
+
 // An Amazon order/shipment email the AI found no items in: the subject's
 // "N items: Category, …" stands in (all Amazon still says), and the order
 // number comes off the body if the AI missed it.
@@ -482,6 +520,7 @@ function receiptDataFrom(
 // Match
 
 export async function matchReceipts(householdId: string): Promise<void> {
+  await retireDuplicateOrderNotices(householdId);
   const receipts = await db.receipt.findMany({
     where: {
       householdId,

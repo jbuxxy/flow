@@ -192,3 +192,20 @@ export function refundItemsMatch(
     purchased.some((p) => norm(p) === norm(r) || nameSimilarity(p, r) >= 0.8),
   );
 }
+
+// How long a still-unmatched order confirmation stays out of the "Receipts
+// We Couldn't Match" list. Amazon (and most online stores) charge when an
+// order ships, not when it's placed — often days later — so a fresh order
+// with no charge yet isn't something a human can act on (household report,
+// 2026-10-17: same-day Amazon orders listed as unmatched). matchReceipts
+// keeps trying it every sync regardless; this only hides it from the queue.
+export const ORDER_CHARGE_GRACE_DAYS = 5;
+
+export function inOrderChargeGrace(
+  r: { kind: string; matchState: string; occurredOn: Date | null; receivedAt: Date },
+  now: Date = new Date(),
+): boolean {
+  if (r.kind !== "ORDER_CONFIRMATION" || r.matchState !== "UNMATCHED") return false;
+  const placed = r.occurredOn ?? r.receivedAt;
+  return now.getTime() - placed.getTime() < ORDER_CHARGE_GRACE_DAYS * 86_400_000;
+}

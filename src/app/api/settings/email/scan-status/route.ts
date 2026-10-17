@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { emailInboxScope, hasFullAccess } from "@/lib/access";
 import { isHouseholdScanning } from "@/lib/receipt-sync";
+import { ORDER_CHARGE_GRACE_DAYS } from "@/lib/receipt-match";
 import type { ReceiptScanStatus } from "@/app/settings/email/actions";
 
 // Lightweight receipt counts for the settings panel to poll while a scan
@@ -37,11 +38,18 @@ export async function GET() {
   // receipt whose date is ahead of the newest synced transaction has nothing
   // to match yet, so it isn't counted as "awaiting" a human.
   const bankCaughtUpTo = latestTxn._max.occurredOn;
+  const graceCutoff = new Date(Date.now() - ORDER_CHARGE_GRACE_DAYS * 86_400_000);
   const awaitingCount = await db.receipt.count({
     where: {
       emailConnection: inboxScope,
       matchState: { in: ["UNMATCHED", "AMBIGUOUS"] },
       totalCents: { not: null },
+      // Same order-charge grace the page applies (inOrderChargeGrace).
+      NOT: {
+        kind: "ORDER_CONFIRMATION",
+        matchState: "UNMATCHED",
+        OR: [{ occurredOn: { gt: graceCutoff } }, { occurredOn: null, receivedAt: { gt: graceCutoff } }],
+      },
       ...(bankCaughtUpTo
         ? {
             OR: [
