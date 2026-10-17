@@ -2,7 +2,7 @@
 
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { requireFullAccess, belongsToHousehold } from "@/lib/access";
+import { requireFullAccess, belongsToHousehold, emailInboxScope } from "@/lib/access";
 import { encrypt, decrypt } from "@/lib/crypto";
 import { verifyEmailConfig } from "@/lib/email-provider";
 import { runFullScan } from "@/lib/receipt-sync";
@@ -119,8 +119,10 @@ export async function scanMyEmailNow() {
   const session = await requireFullAccess();
   const householdId = session.user.householdId;
 
+  // Any inbox this member can see (emailInboxScope) — a spouse looking at
+  // the family's inboxes can scan them without one of their own.
   const connected = await db.emailConnection.findFirst({
-    where: { userId: session.user.id },
+    where: emailInboxScope(session.user),
     select: { id: true },
   });
   if (!connected) return;
@@ -148,7 +150,14 @@ export async function disconnectEmail(connectionId: string) {
   // delete) so an already-gone/already-someone-else's id is a silent no-op
   // rather than a thrown NotFoundError — same ownership-scoped-in-the-where
   // convention as every other action here.
-  await db.emailConnection.deleteMany({ where: { id: connectionId, userId: session.user.id } });
+  // The owner can disconnect any family member's inbox (household request,
+  // 2026-10-17); anyone else only their own.
+  await db.emailConnection.deleteMany({
+    where:
+      session.user.role === "OWNER"
+        ? { id: connectionId, householdId: session.user.householdId }
+        : { id: connectionId, userId: session.user.id },
+  });
   revalidateHousehold();
 }
 

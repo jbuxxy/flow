@@ -45,3 +45,15 @@ export function belongsToHousehold<T extends { householdId: string } | null | un
 ): record is NonNullable<T> {
   return record != null && record.householdId === householdId;
 }
+
+// Whose connected email inboxes (and the receipts/bill notices read from
+// them) a member sees on /settings/email: the owner and a parent (spouse)
+// see every family member's, anyone else just their own (household request,
+// 2026-10-17). A plain where-fragment for EmailConnection.
+export function emailInboxScope(user: {
+  id: string;
+  householdId: string;
+  role: string;
+}): { householdId: string } | { userId: string } {
+  return user.role === "OWNER" || user.role === "PARENT" ? { householdId: user.householdId } : { userId: user.id };
+}

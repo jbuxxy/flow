@@ -29,6 +29,9 @@ export type ReceiptToLink = {
   isRefund?: boolean;
   refundTo?: string | null;
   refundToLast4?: string | null;
+  // Whose inbox it came from ("Emily · emily@…"), when the page lists more
+  // than one family member's inboxes; null/omitted otherwise.
+  sourceLabel?: string | null;
 };
 
 export type LinkCandidateTransaction = {
@@ -118,6 +121,7 @@ export function ReceiptLinker({
           </p>
           <p className="mt-0.5 truncate text-xs text-gray-500 dark:text-neutral-400">
             {receipt.occurredOn ?? "No Date"}
+            {receipt.sourceLabel ? ` · From ${receipt.sourceLabel}` : ""}
             {receipt.noteText
               ? ` · "${receipt.noteText}"`
               : receipt.itemSummary

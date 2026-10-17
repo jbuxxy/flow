@@ -2,7 +2,13 @@ import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { belongsToHousehold, hasFullAccess } from "@/lib/access-rules";
 
-export { belongsToHousehold, canViewAccountBalance, canViewNetWorth, hasFullAccess } from "@/lib/access-rules";
+export {
+  belongsToHousehold,
+  canViewAccountBalance,
+  canViewNetWorth,
+  emailInboxScope,
+  hasFullAccess,
+} from "@/lib/access-rules";
 
 // Shared server-action guard for anything owner-only — was previously
 // duplicated locally in settings/accounts/actions.ts; now also used by

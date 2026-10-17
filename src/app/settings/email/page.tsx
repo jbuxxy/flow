@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { requireFullAccess } from "@/lib/access";
+import { emailInboxScope, requireFullAccess } from "@/lib/access";
 import { AppShell } from "@/components/app-shell";
 import { isHouseholdScanning } from "@/lib/receipt-sync";
 import { EmailSettingsPanel } from "./email-settings-panel";
@@ -110,15 +110,31 @@ export default async function EmailSettingsPage() {
 
   const userId = session.user.id;
   const householdId = session.user.householdId;
+  const isOwner = session.user.role === "OWNER";
 
-  // A member can have more than one connected inbox (household request,
-  // 2026-09-11) — everything below that used to key off "the" single
-  // connection now aggregates across all of this member's rows instead.
+  // The owner and a parent (spouse) see every family member's connected
+  // inbox, and every receipt still needing a match across all of them, each
+  // labeled with whose inbox it came from (household request, 2026-10-17).
+  // Anyone else sees only their own. A member can have more than one inbox
+  // (2026-09-11), so everything below aggregates across rows.
+  const inboxScope = emailInboxScope(session.user);
   const connections = await db.emailConnection.findMany({
-    where: { userId },
+    where: inboxScope,
     orderBy: { createdAt: "asc" },
-    select: { id: true, imapUser: true, status: true, lastError: true, lastPolledAt: true },
+    select: {
+      id: true,
+      userId: true,
+      imapUser: true,
+      status: true,
+      lastError: true,
+      lastPolledAt: true,
+      user: { select: { name: true } },
+    },
   });
+  const inboxLabelById = new Map(
+    connections.map((c) => [c.id, c.userId === userId ? c.imapUser : `${c.user.name ?? "Member"} · ${c.imapUser}`]),
+  );
+  const showInboxLabels = new Set(connections.map((c) => c.userId)).size > 1;
   const hasConnection = connections.length > 0;
   const lastPolledAt = connections.reduce<Date | null>(
     (latest, c) => (c.lastPolledAt && (!latest || c.lastPolledAt > latest) ? c.lastPolledAt : latest),
@@ -128,11 +144,11 @@ export default async function EmailSettingsPage() {
   const [parsedCount, unmatchedAll, latestTxn] = hasConnection
     ? await Promise.all([
         db.receipt.count({
-          where: { emailConnection: { userId }, matchState: { notIn: ["STALE", "DISMISSED"] } },
+          where: { emailConnection: inboxScope, matchState: { notIn: ["STALE", "DISMISSED"] } },
         }),
         db.receipt.findMany({
           where: {
-            emailConnection: { userId },
+            emailConnection: inboxScope,
             matchState: { in: ["UNMATCHED", "AMBIGUOUS"] },
             totalCents: { not: null },
           },
@@ -140,6 +156,7 @@ export default async function EmailSettingsPage() {
           take: 25,
           select: {
             id: true,
+            emailConnectionId: true,
             party: true,
             partyIsPerson: true,
             p2pApp: true,
@@ -330,6 +347,7 @@ export default async function EmailSettingsPage() {
         isRefund: r.isRefund,
         refundTo: r.refundTo,
         refundToLast4: r.refundToLast4,
+        sourceLabel: showInboxLabels ? (inboxLabelById.get(r.emailConnectionId) ?? null) : null,
       },
       candidates: cands.map((c) => ({
         id: c.id,
@@ -375,7 +393,7 @@ export default async function EmailSettingsPage() {
     });
   }
 
-  const unmatchedBillNotices = hasConnection ? await getUnmatchedBillNotices(userId) : [];
+  const unmatchedBillNotices = hasConnection ? await getUnmatchedBillNotices(inboxScope) : [];
   const [billCandidates, debtCandidates] =
     unmatchedBillNotices.length > 0
       ? await Promise.all([
@@ -401,6 +419,12 @@ export default async function EmailSettingsPage() {
           imapUser: c.imapUser,
           status: c.status,
           lastError: c.lastError,
+          // Someone else's inbox: their name on the row; only they can
+          // replace its app password or retest it, only the owner can
+          // disconnect it. Your own inbox you can always disconnect.
+          ownerName: c.userId === userId ? null : (c.user.name ?? "Member"),
+          canManage: c.userId === userId,
+          canDisconnect: c.userId === userId || isOwner,
         }))}
         initialStatus={{
           connected: hasConnection,

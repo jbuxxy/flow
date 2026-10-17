@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { hasFullAccess } from "@/lib/access";
+import { emailInboxScope, hasFullAccess } from "@/lib/access";
 import { isHouseholdScanning } from "@/lib/receipt-sync";
 import type { ReceiptScanStatus } from "@/app/settings/email/actions";
 
@@ -15,16 +15,16 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const userId = session.user.id;
   const householdId = session.user.householdId;
-  // A member can have more than one connected inbox — aggregate across all
-  // of them (household request, 2026-09-11).
+  // Same inboxes the page shows (emailInboxScope) — every family member's
+  // for the owner/a parent, else just this member's own, all aggregated.
+  const inboxScope = emailInboxScope(session.user);
   const [conns, parsedCount, latestTxn] = await Promise.all([
-    db.emailConnection.findMany({ where: { userId }, select: { lastPolledAt: true } }),
+    db.emailConnection.findMany({ where: inboxScope, select: { lastPolledAt: true } }),
     // Real receipts only — STALE (junk that cleared the prefilter, non-USD)
     // and DISMISSED don't count as "read".
     db.receipt.count({
-      where: { emailConnection: { userId }, matchState: { notIn: ["STALE", "DISMISSED"] } },
+      where: { emailConnection: inboxScope, matchState: { notIn: ["STALE", "DISMISSED"] } },
     }),
     db.transaction.aggregate({ where: { householdId }, _max: { occurredOn: true } }),
   ]);
@@ -39,7 +39,7 @@ export async function GET() {
   const bankCaughtUpTo = latestTxn._max.occurredOn;
   const awaitingCount = await db.receipt.count({
     where: {
-      emailConnection: { userId },
+      emailConnection: inboxScope,
       matchState: { in: ["UNMATCHED", "AMBIGUOUS"] },
       totalCents: { not: null },
       ...(bankCaughtUpTo

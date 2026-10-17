@@ -233,9 +233,12 @@ export type UnmatchedBillNotice = {
 // Scoped to one member's own connected mailbox(es), same as /settings/email's
 // existing receipt-linker query (unmatchedAll in that page) — this page is
 // specifically about "my mailbox connections," not a household-wide view.
-export async function getUnmatchedBillNotices(userId: string): Promise<UnmatchedBillNotice[]> {
+// `inboxScope`: whose inboxes — see emailInboxScope (access-rules.ts).
+export async function getUnmatchedBillNotices(
+  inboxScope: { householdId: string } | { userId: string },
+): Promise<UnmatchedBillNotice[]> {
   const notices = await db.billNoticeEmail.findMany({
-    where: { emailConnection: { userId }, status: { in: ["AMBIGUOUS", "UNMATCHED"] } },
+    where: { emailConnection: inboxScope, status: { in: ["AMBIGUOUS", "UNMATCHED"] } },
     orderBy: { receivedAt: "desc" },
   });
   return notices.map((n) => ({

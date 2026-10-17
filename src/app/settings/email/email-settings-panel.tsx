@@ -170,6 +170,13 @@ type EmailConnectionRow = {
   imapUser: string;
   status: EmailConnectionStatus;
   lastError: string | null;
+  // Another family member's inbox (shown to the owner/a parent): their name,
+  // or null for the viewer's own.
+  ownerName: string | null;
+  // Replace app password / retest — the inbox's own member only.
+  canManage: boolean;
+  // The owner can disconnect anyone's; a member always their own.
+  canDisconnect: boolean;
 };
 
 // One connected inbox's own status/controls — a member can have several
@@ -195,7 +202,12 @@ function ConnectionRow({ connection }: { connection: EmailConnectionRow }) {
       <div className="flex items-center justify-between gap-3">
         <p className="flex min-w-0 items-center gap-1.5 text-sm text-neutral-900 dark:text-neutral-100">
           <Mail size={14} className="shrink-0 text-blue-900 dark:text-blue-400" />
-          <span className="min-w-0 truncate font-medium">{connection.imapUser}</span>
+          <span className="min-w-0 truncate">
+            {connection.ownerName && (
+              <span className="block text-xs text-gray-500 dark:text-neutral-400">{connection.ownerName}</span>
+            )}
+            <span className="block truncate font-medium">{connection.imapUser}</span>
+          </span>
           {connection.status === "ERROR" ? (
             <span className="shrink-0 text-xs font-medium text-red-600 dark:text-red-400">Error</span>
           ) : (
@@ -208,7 +220,7 @@ function ConnectionRow({ connection }: { connection: EmailConnectionRow }) {
           )}
         </p>
         <div className="flex shrink-0 items-center gap-2">
-          {connection.status === "ERROR" && (
+          {connection.status === "ERROR" && connection.canManage && (
             <button
               onClick={() =>
                 startRetest(async () => {
@@ -228,21 +240,26 @@ function ConnectionRow({ connection }: { connection: EmailConnectionRow }) {
               <RotateCw size={15} className={retestPending ? "animate-spin" : undefined} />
             </button>
           )}
-          <button
-            onClick={() => setReplacing(true)}
-            aria-label="Replace App Password"
-            title="Replace App Password"
-            className="rounded-lg border border-neutral-300 p-2 text-neutral-500 dark:border-neutral-700 dark:text-neutral-400"
-          >
-            <Pencil size={15} />
-          </button>
+          {connection.canManage && (
+            <button
+              onClick={() => setReplacing(true)}
+              aria-label="Replace App Password"
+              title="Replace App Password"
+              className="rounded-lg border border-neutral-300 p-2 text-neutral-500 dark:border-neutral-700 dark:text-neutral-400"
+            >
+              <Pencil size={15} />
+            </button>
+          )}
           {/* Text, not icon-only — destructive settings actions keep a label
               (WORKING_ON.md UI conventions). */}
+          {connection.canDisconnect && (
           <button
             onClick={() => {
               if (
                 !confirm(
-                  "Disconnect this inbox? Flow will stop reading new receipts from it. Item detail already attached to your transactions stays.",
+                  connection.ownerName
+                    ? `Disconnect ${connection.ownerName}'s inbox? Flow will stop reading new receipts from it. Item detail already attached to your transactions stays.`
+                    : "Disconnect this inbox? Flow will stop reading new receipts from it. Item detail already attached to your transactions stays.",
                 )
               )
                 return;
@@ -260,6 +277,7 @@ function ConnectionRow({ connection }: { connection: EmailConnectionRow }) {
           >
             {disconnectPending ? "Disconnecting…" : "Disconnect"}
           </button>
+          )}
         </div>
       </div>
 
