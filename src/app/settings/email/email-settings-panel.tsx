@@ -3,7 +3,8 @@
 import { useActionState, useEffect, useState, useTransition } from "react";
 import { useActionToast } from "@/lib/use-action-toast";
 import { showToast } from "@/lib/toast";
-import { AlertTriangle, Mail, Pencil, Plus, RefreshCw, RotateCw } from "lucide-react";
+import { AlertTriangle, ChevronDown, Mail, Pencil, Plus, RefreshCw, RotateCw } from "lucide-react";
+import { useStoredBoolean } from "@/lib/use-stored-boolean";
 import {
   connectEmail,
   disconnectEmail,
@@ -299,6 +300,7 @@ export function EmailSettingsPanel({
   initialStatus: ReceiptScanStatus;
 }) {
   const [addingAnother, setAddingAnother] = useState(false);
+  const [expanded, setExpanded] = useStoredBoolean("flow:settings-email:inbox-status-expanded", false);
 
   // Live counts. `initialStatus` is the server render; `polled` is whatever
   // the poller last read (always at least as fresh). Render whichever we
@@ -342,52 +344,91 @@ export function EmailSettingsPanel({
   }
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between gap-2">
+    <section className="flex flex-col gap-3 rounded-xl border border-blue-100 p-4 dark:border-neutral-800">
+      {/* Collapsed by default (household request, 2026-10-17): just which
+          inboxes are connected. Expanded: each inbox's controls and Connect
+          Another Inbox. */}
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        aria-expanded={expanded}
+        className="flex w-full items-center justify-between gap-3 text-left"
+      >
         <h3 className="text-base font-semibold text-emerald-700 dark:text-emerald-400">Inbox Status</h3>
+        <ChevronDown
+          size={18}
+          className={`shrink-0 text-neutral-400 transition-transform dark:text-neutral-500 ${expanded ? "rotate-180" : ""}`}
+        />
+      </button>
+
+      {expanded ? (
+        connections.map((c) => <ConnectionRow key={c.id} connection={c} />)
+      ) : (
+        <ul className="flex flex-col gap-1.5">
+          {connections.map((c) => (
+            <li key={c.id} className="flex min-w-0 items-center gap-1.5 text-sm text-neutral-900 dark:text-neutral-100">
+              <Mail size={14} className="shrink-0 text-blue-900 dark:text-blue-400" />
+              <span className="min-w-0 truncate">
+                {c.ownerName && <span className="text-gray-500 dark:text-neutral-400">{c.ownerName} · </span>}
+                {c.imapUser}
+              </span>
+              {c.status === "ERROR" ? (
+                <span className="shrink-0 text-xs font-medium text-red-600 dark:text-red-400">Error</span>
+              ) : (
+                <span
+                  role="img"
+                  aria-label="Connected"
+                  title="Connected"
+                  className="h-2 w-2 shrink-0 rounded-full bg-emerald-500 shadow-[0_0_6px_var(--color-emerald-500)]"
+                />
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0 text-xs text-gray-500 dark:text-neutral-400">
+          <p>
+            {scanning ? (
+              <span className="text-blue-900 dark:text-blue-300">Checking Inboxes…</span>
+            ) : status.lastPolledAt ? (
+              `Last checked ${new Date(status.lastPolledAt).toLocaleString()}`
+            ) : (
+              "Not checked yet — Flow will scan the last 90 days on its next sync."
+            )}
+          </p>
+          <p>
+            <span className={scanning ? "font-medium text-emerald-700 dark:text-emerald-400" : undefined}>
+              {status.parsedCount} receipt{status.parsedCount === 1 ? "" : "s"} read
+            </span>
+            {status.awaitingCount > 0 ? ` · ${status.awaitingCount} awaiting a matching charge` : ""}
+          </p>
+        </div>
         <button
           onClick={onScan}
           disabled={scanning}
-          aria-label={scanning ? "Scanning" : "Scan My Email Now"}
-          title={scanning ? "Scanning…" : "Scan My Email Now"}
-          className="rounded-lg bg-blue-900 p-2 text-white disabled:opacity-50 dark:bg-blue-700"
+          aria-label={scanning ? "Scanning" : "Scan Email Now"}
+          title={scanning ? "Scanning…" : "Scan Email Now"}
+          className="shrink-0 rounded-lg bg-blue-900 p-2 text-white disabled:opacity-50 dark:bg-blue-700"
         >
           <RefreshCw size={15} className={scanning ? "animate-spin" : undefined} />
         </button>
       </div>
 
-      {connections.map((c) => (
-        <ConnectionRow key={c.id} connection={c} />
-      ))}
-
-      <p className="text-xs text-gray-500 dark:text-neutral-400">
-        {scanning ? (
-          <span className="text-blue-900 dark:text-blue-300">Checking your inbox…</span>
-        ) : status.lastPolledAt ? (
-          `Last checked ${new Date(status.lastPolledAt).toLocaleString()}`
+      {expanded &&
+        (addingAnother ? (
+          <EmailConnectForm onCancel={() => setAddingAnother(false)} onSaved={() => setAddingAnother(false)} />
         ) : (
-          "Not checked yet — Flow will scan the last 90 days on its next sync."
-        )}
-      </p>
-      <p className="-mt-2 text-xs text-gray-500 dark:text-neutral-400">
-        <span className={scanning ? "font-medium text-emerald-700 dark:text-emerald-400" : undefined}>
-          {status.parsedCount} receipt{status.parsedCount === 1 ? "" : "s"} read
-        </span>
-        {status.awaitingCount > 0 ? ` · ${status.awaitingCount} awaiting a matching charge` : ""}
-      </p>
-
-      {addingAnother ? (
-        <EmailConnectForm onCancel={() => setAddingAnother(false)} onSaved={() => setAddingAnother(false)} />
-      ) : (
-        <button
-          type="button"
-          onClick={() => setAddingAnother(true)}
-          className="flex items-center justify-center gap-1.5 rounded-lg border border-dashed border-neutral-300 px-3 py-2 text-sm font-medium text-blue-900 dark:border-neutral-700 dark:text-blue-300"
-        >
-          <Plus size={15} />
-          Connect Another Inbox
-        </button>
-      )}
-    </div>
+          <button
+            type="button"
+            onClick={() => setAddingAnother(true)}
+            className="flex items-center justify-center gap-1.5 rounded-lg border border-dashed border-neutral-300 px-3 py-2 text-sm font-medium text-blue-900 dark:border-neutral-700 dark:text-blue-300"
+          >
+            <Plus size={15} />
+            Connect Another Inbox
+          </button>
+        ))}
+    </section>
   );
 }
