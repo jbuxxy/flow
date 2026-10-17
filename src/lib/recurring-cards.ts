@@ -15,6 +15,7 @@ import { balanceOnlyPayoff, confirmProjectedExtras, capAtPayoffCents } from "@/l
 import { splitPlanExtraPayments, buildCycleSlots, slotBounds, cyclePaymentStatus, recentPaymentsWhere } from "@/lib/cycle-slots";
 import { skipShownOnBillRow } from "@/lib/recurring-bills";
 import { dueStatus } from "@/lib/date";
+import { debtIsPaidOff } from "@/lib/debt-balance";
 import { serializePatternDates } from "@/lib/pattern-data";
 import { currentPeriodPatternWhere } from "@/lib/pattern-match";
 import type { BillData } from "@/app/bills/bill-row";
@@ -71,6 +72,7 @@ export function debtPaymentCardInclude() {
         debtType: true,
         purchaseDate: true,
         balanceCents: true,
+        balanceUnknown: true,
         termsConfirmed: true,
         minPaymentCents: true,
         aprBasisPoints: true,
@@ -269,7 +271,7 @@ export async function buildDebtPaymentCards(
       slots,
       extraPayments,
       minimumCents: ledgerMinimumCents({
-        paidOff: p.debt.balanceCents <= 0,
+        paidOff: debtIsPaidOff(p.debt),
         nextDueThisMonth: p.nextDueDate >= monthStart && p.nextDueDate < monthEnd,
         amountDueCents: p.amountDueCents,
         minimumCents: tracksMinimum(p.debt, p) ? p.amountCents : 0,
@@ -347,7 +349,8 @@ export async function buildDebtPaymentCards(
       needsAttention: debtNeedsSetup(p.debt, p.dueDateLocked, debtIdsWithPendingReview.has(p.debtId)),
       accountBudgetTracked: p.debt.account?.budgetTracked ?? false,
       bucketId: p.bucketId,
-      paidOff: p.debt.balanceCents === 0,
+      paidOff: debtIsPaidOff(p.debt),
+      balanceUnknown: p.debt.balanceUnknown,
       paidOffDate: p.debt.paidOffDate ? p.debt.paidOffDate.toISOString().slice(0, 10) : null,
       linked: p.debt.source === "SIMPLEFIN",
       includeInPayoffPlan: p.debt.includeInPayoffPlan,

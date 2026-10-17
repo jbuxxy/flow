@@ -2415,7 +2415,7 @@ export async function syncAllHouseholds(): Promise<void> {
 async function stampFreedMinimums(householdId: string): Promise<void> {
   await db.$executeRaw`
     UPDATE "Debt" SET "freedMinimumCents" = "minPaymentCents"
-    WHERE "householdId" = ${householdId} AND "balanceCents" <= 0 AND "minPaymentCents" > 0
+    WHERE "householdId" = ${householdId} AND "balanceCents" <= 0 AND NOT "balanceUnknown" AND "minPaymentCents" > 0
       AND "freedMinimumCents" IS DISTINCT FROM "minPaymentCents"`;
   await db.debt.updateMany({
     where: { householdId, balanceCents: { gt: 0 }, freedMinimumCents: { not: null } },

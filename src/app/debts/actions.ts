@@ -449,11 +449,17 @@ export async function createDebt(
     });
     if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
 
-    const aprBasisPoints = parsePercentToBasisPoints(parsed.data.apr);
-    const balanceCents = parseDollarsToCents(parsed.data.balance);
+    // Balance and APR may be left blank (household request, 2026-10-17: a
+    // store card where only the $29 monthly payment is known). A blank
+    // balance marks it Balance Unknown — see Debt.balanceUnknown; a blank
+    // APR is stored as 0%.
+    const balanceBlank = !parsed.data.balance.trim();
+    const aprBlank = !parsed.data.apr.trim();
+    const aprBasisPoints = aprBlank ? 0 : parsePercentToBasisPoints(parsed.data.apr);
+    const balanceCents = balanceBlank ? 0 : parseDollarsToCents(parsed.data.balance);
     const minPaymentCents = parseDollarsToCents(parsed.data.minPayment);
     if (aprBasisPoints === null || balanceCents === null || minPaymentCents === null) {
-      return { error: "Enter valid balance, APR, and minimum payment." };
+      return { error: "Enter a valid minimum payment (and balance/APR, if you know them)." };
     }
 
     // Validated before the Debt row exists — an invalid date used to return
@@ -477,6 +483,12 @@ export async function createDebt(
         kind: parsed.data.kind,
         aprBasisPoints,
         balanceCents,
+        balanceUnknown: balanceBlank,
+        // Nothing to project a payoff from without a balance.
+        ...(balanceBlank ? { includeInPayoffPlan: false } : {}),
+        // A blank APR keeps asking — unless the balance is unknown too, when
+        // there's nothing an APR would feed (no projection, no interest).
+        termsConfirmed: !aprBlank || balanceBlank,
         minPaymentCents,
         sortOrder,
       },
@@ -523,6 +535,9 @@ export async function updateDebtBalance(
   const debt = await db.debt.findUnique({ where: { id: parsed.data.debtId } });
   if (!belongsToHousehold(debt, session.user.householdId)) return { error: "Not found" };
 
+  // Left blank on a Balance Unknown card — still unknown, nothing to save.
+  if (debt.balanceUnknown && !parsed.data.balance.trim()) return {};
+
   const balanceCents = parseDollarsToCents(parsed.data.balance);
   if (balanceCents === null) return { error: "Enter a valid balance." };
 
@@ -530,6 +545,9 @@ export async function updateDebtBalance(
     where: { id: debt.id },
     data: {
       ...debtBalanceUpdate(debt, balanceCents),
+      // A real balance replaces "unknown" — and a card that had to sit out
+      // of the payoff plan for lack of one rejoins it.
+      ...(debt.balanceUnknown ? { balanceUnknown: false, includeInPayoffPlan: true } : {}),
     },
   });
   await unhideDebtPaymentIfBalanceReturned(debt.id, debt.balanceCents, balanceCents, debt.paidOffDate);
@@ -954,6 +972,8 @@ export async function linkDebtAccount(debtId: string, accountId: string) {
       accountId,
       source: "SIMPLEFIN",
       ...debtBalanceUpdate(debt, balanceCents),
+      // The linked account's synced balance is a real one from here on.
+      ...(debt.balanceUnknown ? { balanceUnknown: false, includeInPayoffPlan: true } : {}),
     },
   });
   // Unconditional, not gated on wasAlreadyLinked — a re-point (SimpleFIN

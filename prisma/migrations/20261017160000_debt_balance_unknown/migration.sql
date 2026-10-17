@@ -1,0 +1,1 @@
+ALTER TABLE "Debt" ADD COLUMN "balanceUnknown" BOOLEAN NOT NULL DEFAULT false;

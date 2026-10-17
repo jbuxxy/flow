@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { debtIsPaidOff } from "@/lib/debt-balance";
 import { PartyPopper, EyeOff, Target, Landmark, PiggyBank, CreditCard, Wallet, Binoculars } from "lucide-react";
 import { buildBnplSchedule } from "@/lib/bnpl-schedule";
 import { db } from "@/lib/db";
@@ -103,6 +104,7 @@ export default async function AccountsSettingsPage() {
       orderBy: { sortOrder: "asc" },
       select: {
         id: true,
+        balanceUnknown: true,
         accountId: true,
         name: true,
         debtType: true,
@@ -255,7 +257,7 @@ export default async function AccountsSettingsPage() {
   // The debt half of an expanded card — shared by synced cards/loans and
   // manual ones (BNPL gets its own layout below).
   const debtTermsTiles = (d: DebtRow, dp: TrackedPayment | null) => {
-    const isPaidOff = d.balanceCents === 0;
+    const isPaidOff = debtIsPaidOff(d);
     return (
       <DetailGrid>
         <DetailTile label="APR" value={`${formatBasisPoints(d.aprBasisPoints)}`} />

@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { OWED_DEBT_WHERE } from "@/lib/debt-balance";
 import { daysAgo, periodBounds, currentPeriodKey } from "@/lib/period";
 import { detectMerchantBillSuggestions } from "@/lib/bill-detect";
 import { nameSimilarity } from "@/lib/fuzzy-match";
@@ -164,7 +165,7 @@ async function buildMonthlyReportContent(householdId: string, current: MonthRepo
       loadHouseholdProfile(householdId),
       getRecentTrend(householdId),
       db.debt.aggregate({
-        where: { householdId, balanceCents: { gt: 0 } },
+        where: { householdId, ...OWED_DEBT_WHERE },
         _sum: { balanceCents: true, minPaymentCents: true },
       }),
       getHouseholdSavingsCapacity(householdId),

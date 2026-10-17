@@ -1,4 +1,5 @@
 import { Prisma, type BudgetPlan, type BucketTrackingMode, type PaycheckCadence } from "@prisma/client";
+import { OWED_DEBT_WHERE } from "@/lib/debt-balance";
 import { db } from "@/lib/db";
 import { currentPeriodKey, periodKeyOfUTCDate, periodBounds, utcPeriodBounds } from "@/lib/period";
 import { monthsAgoPeriodKey, periodLabel, getMonthReport } from "@/lib/monthly-report";
@@ -374,7 +375,8 @@ export async function assembleBudgetPlanInputs(
       getIncomeSummary(householdId),
       getPrimaryIncomeSchedule(householdId),
       db.debt.findMany({
-        where: { householdId, balanceCents: { gt: 0 } },
+        // Still owed — a Balance Unknown card's regular payment counts too.
+        where: { householdId, ...OWED_DEBT_WHERE },
         select: {
           id: true,
           name: true,

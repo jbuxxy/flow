@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { debtHasBalance } from "@/lib/debt-balance";
 import { Settings } from "lucide-react";
 import { db } from "@/lib/db";
 import { requireFullAccess } from "@/lib/access";
@@ -432,6 +433,7 @@ export default async function DebtsPage() {
       name: d.name,
       label: d.label,
       balanceCents: d.balanceCents,
+      balanceUnknown: d.balanceUnknown,
       aprBasisPoints: d.aprBasisPoints,
       minPaymentCents: d.minPaymentCents,
       freedMinimumCents: d.freedMinimumCents,
@@ -459,7 +461,7 @@ export default async function DebtsPage() {
   });
 
   const totalBalanceCents = debts.reduce((s, d) => s + d.balanceCents, 0);
-  const activeCount = debts.filter((d) => d.balanceCents > 0).length;
+  const activeCount = debts.filter((d) => debtHasBalance(d)).length;
   const allDebtsPaidOff = debts.length > 0 && activeCount === 0;
 
   // Snapshot today's total (upserted — see recordDebtSnapshot), then read
@@ -533,6 +535,7 @@ export default async function DebtsPage() {
                 id: d.id,
                 name: d.name,
                 balanceCents: d.balanceCents,
+                balanceUnknown: d.balanceUnknown,
                 aprBasisPoints: d.aprBasisPoints,
                 debtType: d.debtType,
                 kind: d.kind,

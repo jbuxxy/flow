@@ -1,4 +1,5 @@
 import { cache } from "react";
+import { debtHasBalance, debtIsPaidOff } from "@/lib/debt-balance";
 import { db } from "@/lib/db";
 import { sendPushToHouseholdForType } from "@/lib/push";
 import { formatCents } from "@/lib/money";
@@ -1794,6 +1795,7 @@ export async function getDebtPaymentsThisWeek(householdId: string, weekOf: Date 
           name: true,
           debtType: true,
           balanceCents: true,
+          balanceUnknown: true,
           ignoreMinimumPayment: true,
           aprBasisPoints: true,
           includeInPayoffPlan: true,
@@ -1827,6 +1829,7 @@ export async function getDebtPaymentsThisWeek(householdId: string, weekOf: Date 
         purchaseDate: dp.debt.purchaseDate,
         installmentsRemaining: dp.debt.installmentsRemaining,
         balanceCents: dp.debt.balanceCents,
+        balanceUnknown: dp.debt.balanceUnknown,
         paidOffDate: dp.debt.paidOffDate,
         ignoreMinimumPayment: dp.debt.ignoreMinimumPayment,
       },
@@ -2023,7 +2026,7 @@ export async function getDebtPaymentsThisWeek(householdId: string, weekOf: Date 
         if (
           dueDateInWeek &&
           tracksMinimumPayment &&
-          dp.debt.balanceCents > 0 &&
+          debtHasBalance(dp.debt) &&
           receivedCents >= owedThisWeekCents
         ) {
           return start;
@@ -2034,7 +2037,7 @@ export async function getDebtPaymentsThisWeek(householdId: string, weekOf: Date 
         // it (see parkedOccurrenceSettledLate, real report 2026-10-05).
         if (
           tracksMinimumPayment &&
-          dp.debt.balanceCents > 0 &&
+          debtHasBalance(dp.debt) &&
           parkedOccurrenceSettledLate({
             nextDueDate: dp.nextDueDate,
             weekStart: start,
@@ -2269,7 +2272,7 @@ export async function getDebtPaymentsThisWeek(householdId: string, weekOf: Date 
         receivedCents === 0 &&
         skippedMinimumKeys.has(`${dp.debtId}:${dp.nextDueDate.toISOString().slice(0, 10)}`);
 
-      const paysOff = dp.debt.balanceCents <= 0 && (receivedCents > 0 || paidOffThisWeek);
+      const paysOff = debtIsPaidOff(dp.debt) && (receivedCents > 0 || paidOffThisWeek);
       // The star icon (row.paysOff below) is a plain factual "this closed
       // the balance" signal and stays for any debt. The celebratory
       // "Paid Off!" / "+$X For Payoff!" sub-line is reserved for genuinely
@@ -2363,6 +2366,7 @@ export async function getDebtPaymentsThisWeek(householdId: string, weekOf: Date 
         row,
         debtId: dp.debt.id,
         balanceCents: dp.debt.balanceCents,
+        balanceUnknown: dp.debt.balanceUnknown,
         minimumMet,
         paidThisWeek: receivedCents > 0 || paidOffThisWeek,
         // The plan's own paycheck date for this week's payoff allocation —
@@ -2384,7 +2388,7 @@ export async function getDebtPaymentsThisWeek(householdId: string, weekOf: Date 
     // — paidThisWeek now also covers "the balance sync confirmed the payoff
     // this week," not just "a linked payment landed this week" (see
     // paidOffThisWeek above).
-    if (c.balanceCents <= 0 && !c.paidThisWeek && c.row.plannedExtraCents === 0) continue;
+    if (debtIsPaidOff(c) && !c.paidThisWeek && c.row.plannedExtraCents === 0) continue;
     // A payoff whose *balance-sync confirmation* merely landed this week —
     // paidOffThisWeek above, with no payment of its own posting this week
     // and nothing left owed or planned — is already fully told elsewhere
@@ -2469,7 +2473,7 @@ export async function getDebtPaymentsThisWeek(householdId: string, weekOf: Date 
       // Sam's Club $140.80 payoff posted Sep 08 (this week, 9/6-9/12) but
       // the split "-payoff" row for last week (8/30-9/5) kept showing as
       // pending because paidOffDate (Sep 08) was outside the 8/30-9/5 window.
-      if (c.balanceCents <= 0 && c.paidOffDate != null && c.paidOffDate >= end) continue;
+      if (debtIsPaidOff(c) && c.paidOffDate != null && c.paidOffDate >= end) continue;
       rows.push({
         ...c.row,
         id: `${c.row.id}-payoff`,
@@ -2487,7 +2491,7 @@ export async function getDebtPaymentsThisWeek(householdId: string, weekOf: Date 
         // above. Surfaces a "balance updated — payment details pending"
         // note instead of leaving "still due" sitting unexplained next to
         // the dashboard's own "Paid Off" badge.
-        pendingBalanceConfirmation: c.balanceCents <= 0,
+        pendingBalanceConfirmation: debtIsPaidOff(c),
         dueDate: c.plannedDueDate ?? c.row.dueDate,
       });
       continue;
@@ -2844,6 +2848,7 @@ const loadCyclePlanContext = cache(async function loadCyclePlanContext(household
         purchaseDate: d.purchaseDate,
         installmentsRemaining: d.installmentsRemaining,
         balanceCents: d.balanceCents,
+        balanceUnknown: d.balanceUnknown,
         paidOffDate: d.paidOffDate,
         ignoreMinimumPayment: d.ignoreMinimumPayment,
       },
@@ -3466,6 +3471,7 @@ function correctedDueDateByDebtId(
       purchaseDate: Date | null;
       installmentsRemaining?: number | null;
       balanceCents?: number;
+      balanceUnknown?: boolean;
       paidOffDate?: Date | null;
       ignoreMinimumPayment?: boolean;
     }
@@ -3553,7 +3559,7 @@ function correctedDueDateByDebtId(
       slots,
       extraPayments: [...planExtraThisMonth, ...extraPayments],
       minimumCents: ledgerMinimumCents({
-        paidOff: meta?.balanceCents !== undefined && meta.balanceCents <= 0,
+        paidOff: meta?.balanceCents !== undefined && debtIsPaidOff({ balanceCents: meta.balanceCents, balanceUnknown: meta.balanceUnknown }),
         nextDueThisMonth: p.nextDueDate >= monthStart && p.nextDueDate < monthEnd,
         amountDueCents: p.amountDueCents ?? 0,
         minimumCents: p.amountCents,
@@ -3785,13 +3791,13 @@ export async function getPaymentCalendarThisCycle(
       // debt (ignoreMinimumPayment / paid in full each cycle) still gets no
       // "$0.00 due" cell (household report, 2026-08-31).
       const owedCents = minimumOwedCents(p, d);
-      if (d.balanceCents > 0 && corrected && !corrected.cyclePaid && !corrected.dueCovered && owedCents > 0) {
+      if (debtHasBalance(d) && corrected && !corrected.cyclePaid && !corrected.dueCovered && owedCents > 0) {
         add(corrected.date, debtDisplayName(d), owedCents, "due", d.includeInPayoffPlan);
       }
       // A minimum an earlier, bigger payment already covered (a $177 payment
       // against an $84 minimum due the 27th) is still on the calendar until
       // skipped — same rule as /debts' ledger (household request, 2026-09-20).
-      if (d.balanceCents > 0 && corrected) {
+      if (debtHasBalance(d) && corrected) {
         const coveredCents = minimumOwedCents({ amountDueCents: 0, amountCents: p.amountCents }, d);
         for (const date of corrected.coveredSlotDates) {
           add(date, debtDisplayName(d), coveredCents, "due", d.includeInPayoffPlan);
@@ -3850,7 +3856,7 @@ export async function getPaymentCalendarThisCycle(
     // same calendar day — the live line and this stale-looking duplicate of
     // it (real report, 2026-09-14: Sam's Club Card). payoff-planner.tsx's
     // own client-side twin (thisCycleDayEvents) already has this guard.
-    if (d.balanceCents > 0) continue;
+    if (debtHasBalance(d)) continue;
     // Only trust this month's live snapshot while the debt is still actually
     // in the plan — once excluded, its last snapshot row just stops getting
     // refreshed (snapshotPlannedExtraForCurrentWeek's own comment) and can be

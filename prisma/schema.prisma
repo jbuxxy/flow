@@ -1977,6 +1977,14 @@ model Debt {
   // is only ever an approximation between manual corrections (the "Current
   // Balance" field) — see WORKING_ON.md's 2026-08-26 household discussion.
   balanceCents    Int
+  // The household added this card/loan without knowing its balance — they
+  // only know its regular payment (household request, 2026-10-17: a Kohl's
+  // card, $29 a month). balanceCents sits at 0 but means "unknown", never
+  // "paid off": it shows "Balance Unknown", stays out of the payoff plan,
+  // and still tracks its payment. Cleared the moment a real balance is
+  // entered. Every paid-off check goes through debtIsPaidOff/debtHasBalance
+  // (src/lib/debt-balance.ts) for exactly this.
+  balanceUnknown  Boolean @default(false)
   aprBasisPoints  Int // APR * 100 (e.g. 20.15% -> 2015), avoids float drift
   minPaymentCents Int
   // True unless this debt was quick-created with nothing but a name (the

@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { OWED_DEBT_WHERE } from "@/lib/debt-balance";
 import { isDemoHousehold } from "@/lib/demo";
 import { sendPushToHouseholdForType } from "@/lib/push";
 import { formatCents } from "@/lib/money";
@@ -221,7 +222,7 @@ export async function getHouseholdSavingsCapacity(householdId: string): Promise<
     getIncomeSummary(householdId),
     getBucketsWithProgress(householdId),
     db.debt.aggregate({
-      where: { householdId, balanceCents: { gt: 0 } },
+      where: { householdId, ...OWED_DEBT_WHERE },
       _sum: { minPaymentCents: true },
     }),
     db.household.findUniqueOrThrow({

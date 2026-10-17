@@ -33,17 +33,18 @@ export function RevolvingDebtFields({
       {/* Balance on its own row, APR/Min below it — three fields side
           by side (the old layout) didn't fit a phone-width modal
           without horizontal scrolling (real report, 2026-08-17). */}
+      {/* Balance and APR are optional (household request, 2026-10-17): a
+          card added with only its regular payment shows "Balance Unknown"
+          and still tracks that payment — see Debt.balanceUnknown. */}
       <MoneyInput
         name="balance"
-        placeholder="Balance $"
-        required
+        placeholder="Balance $ (Optional)"
         className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 px-3 py-2.5 text-base focus:border-blue-900 focus:outline-none"
       />
       <div className="flex gap-2">
         <PercentInput
           name="apr"
-          placeholder="APR %"
-          required
+          placeholder="APR % (Optional)"
           className="min-w-0 flex-1 rounded-lg border border-neutral-300 dark:border-neutral-700 px-3 py-2.5 text-base focus:border-blue-900 focus:outline-none"
         />
         <MoneyInput
@@ -53,6 +54,9 @@ export function RevolvingDebtFields({
           className="min-w-0 flex-1 rounded-lg border border-neutral-300 dark:border-neutral-700 px-3 py-2.5 text-base focus:border-blue-900 focus:outline-none"
         />
       </div>
+      <p className="text-xs text-gray-500 dark:text-neutral-400">
+        Don&apos;t know the balance? Leave it blank — Flow tracks the payment and shows Balance Unknown until you add one.
+      </p>
       {showDueDay && (
         <label className="flex flex-col gap-1 text-sm font-medium text-emerald-700 dark:text-emerald-400 font-comfortaa">
           First Due Date <span className="font-sans font-normal text-gray-500 dark:text-neutral-400">— optional, starts tracking the monthly payment</span>

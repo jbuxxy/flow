@@ -1,5 +1,6 @@
 "use client";
 
+import { debtIsPaidOff } from "@/lib/debt-balance";
 import { useActionState, useRef, useState, useTransition } from "react";
 import { CreditCard, EyeOff, Pencil, PartyPopper, Receipt, Target, X } from "lucide-react";
 import { formatCents, parseDollarsToCents, formatBasisPoints } from "@/lib/money";
@@ -50,6 +51,8 @@ export type ManualDebt = {
   // otherwise (see DebtKind's doc comment in schema.prisma).
   kind: "CARD" | "LOAN" | "BNPL";
   balanceCents: number;
+  // Added without a known balance — see Debt.balanceUnknown.
+  balanceUnknown?: boolean;
   aprBasisPoints: number;
   minPaymentCents: number;
   // REVOLVING only — see Debt.ignoreMinimumPayment in schema.prisma.
@@ -183,7 +186,7 @@ export function ManualDebtEditor({
   const [bucketId, setBucketId] = useState(trackedBucketId ?? defaultBucketId ?? buckets[0]?.id ?? "");
   const [ignoreMinimum, setIgnoreMinimum] = useState(debt.ignoreMinimumPayment);
   const isInstallment = debt.debtType === "INSTALLMENT";
-  const paidOff = debt.balanceCents === 0;
+  const paidOff = debtIsPaidOff(debt);
   // Receipt itemization for the original BNPL purchase — toggled from a
   // receipt icon up here in the title bar (next to the type/plan icons),
   // same affordance DebtRow uses on /debts and a /transactions row uses for
@@ -548,8 +551,8 @@ export function ManualDebtEditor({
                 {payoffToggle}
                 <MoneyInput
                   name="balance"
-                  defaultCents={debt.balanceCents}
-                  placeholder="Balance $"
+                  defaultCents={debt.balanceUnknown ? undefined : debt.balanceCents}
+                  placeholder={debt.balanceUnknown ? "Balance $ (Unknown)" : "Balance $"}
                   className="min-w-0 flex-1 rounded-lg border border-neutral-300 dark:border-neutral-700 px-2 py-2 text-sm focus:border-blue-900 focus:outline-none"
                 />
               </div>
@@ -687,9 +690,13 @@ export function ManualDebtEditor({
           )
         }
         balance={
-          <span className={`font-medium ${paidOff ? "text-emerald-700 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
-            {paidOff ? formatCents(0) : `-${formatCents(debt.balanceCents)}`}
-          </span>
+          debt.balanceUnknown ? (
+            <span className="text-xs font-medium text-neutral-500 dark:text-neutral-400">Balance Unknown</span>
+          ) : (
+            <span className={`font-medium ${paidOff ? "text-emerald-700 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
+              {paidOff ? formatCents(0) : `-${formatCents(debt.balanceCents)}`}
+            </span>
+          )
         }
         footer={
           isInstallment &&

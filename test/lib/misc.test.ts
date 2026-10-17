@@ -343,8 +343,11 @@ describe("access-level helpers", () => {
 });
 
 describe("debt-reassign.pickableDebtWhere", () => {
-  test("excludes hidden debts and paid-off loans/BNPL, keeps paid-off cards", () => {
-    assert.deepEqual(pickableDebtWhere(), { hiddenAt: null, OR: [{ kind: "CARD" }, { balanceCents: { gt: 0 } }] });
+  test("excludes hidden debts and paid-off loans/BNPL, keeps paid-off cards and Balance Unknown debts", () => {
+    assert.deepEqual(pickableDebtWhere(), {
+      hiddenAt: null,
+      OR: [{ kind: "CARD" }, { balanceCents: { gt: 0 } }, { balanceUnknown: true }],
+    });
   });
 });
 

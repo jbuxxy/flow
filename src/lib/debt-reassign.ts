@@ -15,7 +15,7 @@ import type { Prisma } from "@prisma/client";
 //     "done" for it. Nothing here is a data mutation: the moment a loan's
 //     balance goes positive again it reappears in the pickers on its own.
 export function pickableDebtWhere(): Prisma.DebtWhereInput {
-  return { hiddenAt: null, OR: [{ kind: "CARD" }, { balanceCents: { gt: 0 } }] };
+  return { hiddenAt: null, OR: [{ kind: "CARD" }, { balanceCents: { gt: 0 } }, { balanceUnknown: true }] };
 }
 
 // Runs once, right when a debt gets tracked or linked to an account — catches

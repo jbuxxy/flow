@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useMemo, useState, useTransition, type ComponentProps } from "react";
+import { debtHasBalance, debtIsPaidOff } from "@/lib/debt-balance";
 import { useRouter } from "next/navigation";
 import type { BillCadence } from "@prisma/client";
 import { CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, FlaskConical, List, Zap } from "lucide-react";
@@ -42,6 +43,8 @@ const STRATEGY_STORAGE_KEY = "flow:debts:strategy-expanded";
 
 export type PlannerDebt = DebtInput & {
   debtType: "REVOLVING" | "INSTALLMENT";
+  // Added without a known balance — see Debt.balanceUnknown / debt-balance.ts.
+  balanceUnknown?: boolean;
   kind: "CARD" | "LOAN" | "BNPL";
   // The household's own free-text note for this debt ("Sam's Kobes") — see
   // Debt.label. Shown inline after the name on the row, same as DebtPaymentCard.
@@ -244,11 +247,11 @@ export function PayoffPlanner({
   const [projectedPayoffCollapsed, setProjectedPayoffCollapsed] = useCollapsedState("projected-payoff");
 
   const activeDebts = useMemo(
-    () => debts.filter((d) => d.balanceCents > 0 && d.includeInPayoffPlan && !d.hiddenAt),
+    () => debts.filter((d) => !d.balanceUnknown && d.balanceCents > 0 && d.includeInPayoffPlan && !d.hiddenAt),
     [debts],
   );
   const trailingDebts = useMemo(
-    () => debts.filter((d) => !(d.balanceCents > 0 && d.includeInPayoffPlan) && !d.hiddenAt),
+    () => debts.filter((d) => !(!d.balanceUnknown && d.balanceCents > 0 && d.includeInPayoffPlan) && !d.hiddenAt),
     [debts],
   );
   // Still owed, but the household excluded it from the attack order
@@ -258,13 +261,13 @@ export function PayoffPlanner({
   const notInPlanDebts = useMemo(
     () =>
       debts
-        .filter((d) => d.balanceCents > 0 && !d.includeInPayoffPlan && !d.hiddenAt)
+        .filter((d) => debtHasBalance(d) && !(d.includeInPayoffPlan && !d.balanceUnknown) && !d.hiddenAt)
         .sort((a, b) => a.name.localeCompare(b.name)),
     [debts],
   );
   // Fully paid off (any includeInPayoffPlan value) — always last, alphabetical.
   const paidOffDebts = useMemo(
-    () => debts.filter((d) => d.balanceCents <= 0 && !d.hiddenAt).sort((a, b) => a.name.localeCompare(b.name)),
+    () => debts.filter((d) => debtIsPaidOff(d) && !d.hiddenAt).sort((a, b) => a.name.localeCompare(b.name)),
     [debts],
   );
   // Minimum-payment dollars already freed by debts that are paid off
@@ -790,7 +793,7 @@ export function PayoffPlanner({
         // all (real report, 2026-09-06: Nike - Klarna's Sep 7 installment
         // showed on the dashboard's Payment Calendar and the /debts list
         // view — both of which walk every slot — but not here).
-        if (debt.balanceCents > 0 && cm.amountCents > 0) {
+        if (debtHasBalance(debt) && cm.amountCents > 0) {
           // Capped at the payoff amount, same as every other due line (minimumOwedCents).
           const dueCents = minimumOwedCents({ amountDueCents: 0, amountCents: cm.amountCents }, debt);
           // Open slots plus the ones an earlier, bigger payment already
@@ -819,7 +822,7 @@ export function PayoffPlanner({
       // this month (the date the household actually expected, not whenever
       // the balance sync happened to notice), falling back to
       // Debt.paidOffDate only when there's no such snapshot.
-      if (!payoffShown && debt.balanceCents === 0) {
+      if (!payoffShown && debtIsPaidOff(debt)) {
         const snapshot = payoffSnapshotByDebtIdAndMonth.get(`${debt.id}:${now.getFullYear() * 12 + now.getMonth()}`);
         if (snapshot) {
           // pendingConfirmation: true — neither branch here has an actual
@@ -947,7 +950,7 @@ export function PayoffPlanner({
       // same PayoffExtraSnapshot preference as thisCycleDayEvents above
       // (the plan's own expected date, not whenever the balance sync
       // happened to notice), falling back to Debt.paidOffDate.
-      if (!payoffShown && debt.balanceCents === 0) {
+      if (!payoffShown && debtIsPaidOff(debt)) {
         const snapshot = payoffSnapshotByDebtIdAndMonth.get(`${debt.id}:${lmYear * 12 + lmMonth}`);
         if (snapshot) {
           add(snapshot.dueDate, debt.name, snapshot.amountCents, debt.includeInPayoffPlan, true, true);

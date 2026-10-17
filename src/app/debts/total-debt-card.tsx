@@ -15,6 +15,7 @@ type Debt = {
   id: string;
   name: string;
   balanceCents: number;
+  balanceUnknown?: boolean;
   aprBasisPoints: number;
   debtType: "REVOLVING" | "INSTALLMENT";
   // CARD/LOAN are both REVOLVING (same interest/minimum mechanics), split

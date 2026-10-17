@@ -34,6 +34,9 @@ export type DebtPaymentWithName = DebtPaymentData & {
   accountOrgName: string | null;
   debtLabel: string | null;
   balanceCents: number;
+  // Added without a known balance (Debt.balanceUnknown) — shows "Balance
+  // Unknown" in place of the amount.
+  balanceUnknown?: boolean;
   // Debt.source === "SIMPLEFIN" — drives the same blue "Synced from a
   // Connected Account" indicator debt-row.tsx shows on /debts, propagated
   // here (2026-08-26 household request) so a synced debt reads the same way
@@ -192,6 +195,8 @@ export function DebtPaymentCard({
               <PartyPopper size={12} />
               Paid Off
             </span>
+          ) : debtPayment.balanceUnknown ? (
+            <span className="shrink-0 text-xs font-medium text-neutral-500 dark:text-neutral-400">Balance Unknown</span>
           ) : (
             <span
               className={`shrink-0 text-sm font-semibold ${

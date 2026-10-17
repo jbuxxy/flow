@@ -1,5 +1,6 @@
 "use client";
 
+import { debtIsPaidOff } from "@/lib/debt-balance";
 import { type ReactNode, useState, useTransition } from "react";
 import type { BillCadence } from "@prisma/client";
 import Link from "next/link";
@@ -184,6 +185,9 @@ export function DebtRow({
     // The household's own free-text note ("Sam's Kobes") — see Debt.label.
     label?: string | null;
     balanceCents: number;
+    // Added without a known balance (Debt.balanceUnknown) — "Balance
+    // Unknown" in place of the figure, never "paid off".
+    balanceUnknown?: boolean;
     aprBasisPoints: number;
     minPaymentCents: number;
     // See Debt.ignoreMinimumPayment in schema.prisma — optional since some
@@ -259,7 +263,7 @@ export function DebtRow({
   const [receiptOpen, setReceiptOpen] = useState(false);
   const hasReceipt = (debt.receiptItems?.length ?? 0) > 0;
   const linked = debt.source === "SIMPLEFIN";
-  const paidOff = debt.balanceCents === 0;
+  const paidOff = debtIsPaidOff(debt);
   // For a paid-off debt, the one payment that actually took the balance to
   // $0 gets a green star in the ledger below instead of the plain check —
   // see pickPayoffPaymentTime (debt-payoff.ts) for why that's not just
@@ -777,9 +781,13 @@ export function DebtRow({
           </div>
         </div>
         <div className="shrink-0 text-right">
-          <p className={`leading-tight font-medium ${paidOff ? "text-emerald-700 dark:text-emerald-400" : ""}`}>
-            {formatCents(debt.balanceCents)}
-          </p>
+          {debt.balanceUnknown ? (
+            <p className="leading-tight text-xs font-medium text-neutral-500 dark:text-neutral-400">Balance Unknown</p>
+          ) : (
+            <p className={`leading-tight font-medium ${paidOff ? "text-emerald-700 dark:text-emerald-400" : ""}`}>
+              {formatCents(debt.balanceCents)}
+            </p>
+          )}
         </div>
       </div>
 

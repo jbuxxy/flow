@@ -368,6 +368,7 @@ export type FreedMinimumCandidate = {
   id: string;
   name: string;
   balanceCents: number;
+  balanceUnknown?: boolean;
   minPaymentCents: number;
   // Debt.freedMinimumCents — the last real minimum, used when the current
   // minPaymentCents has dropped to $0 after payoff.
@@ -402,7 +403,7 @@ export function freedMinimumOf(d: { minPaymentCents: number; freedMinimumCents?:
 // Club Card's payoff calendar despite their own toggle being off).
 export function computeAlreadyFreedMinimums(debts: FreedMinimumCandidate[]): FreedMinimumSource[] {
   return debts
-    .filter((d) => d.balanceCents <= 0 && freedMinimumOf(d) > 0 && d.includeInPayoffPlan)
+    .filter((d) => d.balanceCents <= 0 && !d.balanceUnknown && freedMinimumOf(d) > 0 && d.includeInPayoffPlan)
     // Earliest payoff first — the rollover waterfall (projectCyclePlan)
     // consumes freed minimums in this order, so a debt paid off longer ago
     // is the first to roll.
