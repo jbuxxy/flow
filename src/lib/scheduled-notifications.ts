@@ -130,8 +130,12 @@ async function sendMonthlyReportAndPlan(householdId: string, periodKey: string):
 }
 
 async function checkWeeklyBucketDigests(): Promise<void> {
+  // Claimed once per new week (weekKey), but it reports the week that just
+  // ENDED: the first hourly check of a week lands right after Sunday
+  // midnight, so the current week's spend was always $0.00 (household
+  // report, 2026-10-18: "Amazon: $0.00 spent this week").
   const weekKey = currentWeekKey();
-  const { start, end } = currentWeekBounds();
+  const { start, end } = currentWeekBounds(new Date(Date.now() - 7 * 86_400_000));
 
   const flagged = await db.bucket.findMany({
     where: { weeklyReportEnabled: true, household: { isDemo: false } },
@@ -180,7 +184,7 @@ async function checkWeeklyBucketDigestsForHousehold(
         sendPushToBucketForType(bucket.id, householdId, "WEEKLY_BUCKET_REPORT", {
           title: `${bucket.name}: Weekly Update`,
           body:
-            `${formatCents(weekSpend.get(bucket.id) ?? 0)} spent this week. ` +
+            `${formatCents(weekSpend.get(bucket.id) ?? 0)} spent last week. ` +
             `${formatCents(Math.max(p.remainingCents, 0))} left this month. ${paceNote}`,
           url: `/buckets/${bucket.id}`,
         }),
