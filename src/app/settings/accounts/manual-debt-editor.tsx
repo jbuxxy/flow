@@ -2,7 +2,7 @@
 
 import { debtIsPaidOff } from "@/lib/debt-balance";
 import { useActionState, useRef, useState, useTransition } from "react";
-import { CreditCard, EyeOff, Pencil, PartyPopper, Receipt, Target, X } from "lucide-react";
+import { CalendarDays, CreditCard, EyeOff, Pencil, PartyPopper, Receipt, Target, X } from "lucide-react";
 import { formatCents, parseDollarsToCents, formatBasisPoints } from "@/lib/money";
 import { formatDate, dayOfMonthUTC, ordinal, nextOccurrenceOfDay, currentMonthOccurrenceOfDay } from "@/lib/date";
 import { DayOfMonthPicker } from "@/components/day-of-month-picker";
@@ -682,9 +682,20 @@ export function ManualDebtEditor({
                   the same convention too) so a manual card/loan's due day is
                   visible right here instead of only on /debts. */}
               {!isInstallment && nextDueDate && (
-                <span title={dueDateLocked ? undefined : "Approximate — Not Yet Confirmed"}>
-                  {` · due on the ${dueDateLocked ? "" : "~"}${ordinal(dayOfMonthUTC(nextDueDate))}`}
-                </span>
+                <>
+                  {" · "}
+                  <span
+                    className="inline-flex items-center gap-0.5 whitespace-nowrap align-bottom"
+                    title={
+                      dueDateLocked
+                        ? `Due On The ${ordinal(dayOfMonthUTC(nextDueDate))} Each Month`
+                        : "Approximate — Not Yet Confirmed"
+                    }
+                  >
+                    <CalendarDays size={11} className="shrink-0" aria-label="Due" />
+                    {`${dueDateLocked ? "" : "~"}${ordinal(dayOfMonthUTC(nextDueDate))}`}
+                  </span>
+                </>
               )}
             </span>
           )

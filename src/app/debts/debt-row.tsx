@@ -6,7 +6,7 @@ import type { BillCadence } from "@prisma/client";
 import Link from "next/link";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Binoculars, Bookmark, CircleSlash, GripVertical, Link2, Link2Off, PartyPopper, Receipt, Repeat, Undo2, X } from "lucide-react";
+import { Binoculars, Bookmark, CalendarDays, CircleSlash, GripVertical, Link2, Link2Off, PartyPopper, Receipt, Repeat, Undo2, X } from "lucide-react";
 import { formatCents, formatBasisPoints } from "@/lib/money";
 import { withToast } from "@/lib/toast";
 import { formatDate, ordinal, dueDateProximity } from "@/lib/date";
@@ -833,10 +833,23 @@ export function DebtRow({
                 this cycle's specific date, which the ledger below
                 handles (and which can legitimately be in a different
                 month for a household paying ahead of schedule). */}
+            {/* A calendar glyph instead of the words "due on the"
+                (household request, 2026-10-18). */}
             {cycleMinimum && (
-              <span title={cycleMinimum.dueDateLocked ? undefined : "Approximate — Not Yet Confirmed"}>
-                {` · due on the ${cycleMinimum.dueDateLocked ? "" : "~"}${ordinal(cycleMinimum.dueDate.getUTCDate())}`}
-              </span>
+              <>
+                {" · "}
+                <span
+                  className="inline-flex items-center gap-0.5 whitespace-nowrap align-bottom"
+                  title={
+                    cycleMinimum.dueDateLocked
+                      ? `Due On The ${ordinal(cycleMinimum.dueDate.getUTCDate())} Each Month`
+                      : "Approximate — Not Yet Confirmed"
+                  }
+                >
+                  <CalendarDays size={11} className="shrink-0" aria-label="Due" />
+                  {`${cycleMinimum.dueDateLocked ? "" : "~"}${ordinal(cycleMinimum.dueDate.getUTCDate())}`}
+                </span>
+              </>
             )}
           </p>
           {payoffDate && (
