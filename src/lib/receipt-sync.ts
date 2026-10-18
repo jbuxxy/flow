@@ -302,14 +302,15 @@ async function processBatch(
   return { unresolvedUids };
 }
 
-// A second email about an order that already matched — the shipping or
-// delivery notice for the same order number and the same total as the
-// order confirmation that took the charge — can never match (the charge is
-// taken) and just sat in the unmatched queue (household report, 2026-10-17:
-// a $48.34 Amazon shipping email beside its matched order). Its items carry
-// over if the charge has none, then it's retired. A shipment for a
-// different amount (part of a split order) is its own charge and is left
-// alone.
+// Redundant emails about one order, retired so only the order itself is
+// matched and listed (household request, 2026-10-17: "compare order and
+// shipping receipts by order numbers and only show orders"):
+//   - a shipping/delivery notice whose order number has an order
+//     confirmation — whatever total it states (Amazon's shipping emails
+//     often don't agree with the order's: $33.08 vs a $15.99 order)
+//   - any other open receipt with the same order number and total as one
+//     that already took the charge (it can never match — the charge is taken)
+// Its items carry over to the order's charge if that has none.
 async function retireDuplicateOrderNotices(householdId: string): Promise<void> {
   const open = await db.receipt.findMany({
     where: {
@@ -318,23 +319,33 @@ async function retireDuplicateOrderNotices(householdId: string): Promise<void> {
       orderNumber: { not: null },
       totalCents: { not: null },
     },
-    select: { id: true, orderNumber: true, totalCents: true, lineItems: true },
+    select: { id: true, kind: true, orderNumber: true, totalCents: true, lineItems: true },
   });
   if (open.length === 0) return;
-  const matched = await db.receipt.findMany({
+  const siblings = await db.receipt.findMany({
     where: {
       householdId,
       orderNumber: { in: [...new Set(open.map((r) => r.orderNumber!))] },
-      transactionId: { not: null },
+      OR: [{ transactionId: { not: null } }, { kind: "ORDER_CONFIRMATION" }],
+      matchState: { notIn: ["DISMISSED", "STALE"] },
     },
-    select: { orderNumber: true, totalCents: true, transaction: { select: { id: true, receiptItems: true } } },
+    select: {
+      id: true,
+      kind: true,
+      orderNumber: true,
+      totalCents: true,
+      transaction: { select: { id: true, receiptItems: true } },
+    },
   });
   for (const r of open) {
-    const sibling = matched.find((m) => m.orderNumber === r.orderNumber && m.totalCents === r.totalCents);
-    if (!sibling?.transaction) continue;
+    const sameOrder = siblings.filter((m) => m.id !== r.id && m.orderNumber === r.orderNumber);
+    const order = r.kind === "SHIPPING" ? sameOrder.find((m) => m.kind === "ORDER_CONFIRMATION") : undefined;
+    const taken = sameOrder.find((m) => m.transaction && m.totalCents === r.totalCents);
+    const keeper = order ?? taken;
+    if (!keeper) continue;
     const items = Array.isArray(r.lineItems) && r.lineItems.length > 0 ? r.lineItems : null;
-    if (items && sibling.transaction.receiptItems == null) {
-      await db.transaction.update({ where: { id: sibling.transaction.id }, data: { receiptItems: toJson(items) } });
+    if (items && keeper.transaction && keeper.transaction.receiptItems == null) {
+      await db.transaction.update({ where: { id: keeper.transaction.id }, data: { receiptItems: toJson(items) } });
     }
     await db.receipt.update({ where: { id: r.id }, data: { matchState: "DISMISSED" } });
   }
@@ -1094,7 +1105,8 @@ export async function purgeStaleReceipts(householdId: string): Promise<void> {
 // queue shows, minus its per-user scoping.
 export async function getReceiptsAwaitingMatchCount(householdId: string): Promise<number> {
   return db.receipt.count({
-    where: { householdId, transactionId: null, matchState: "AMBIGUOUS", totalCents: { not: null } },
+    // Orders only — a shipping notice is never listed (see /settings/email).
+    where: { householdId, transactionId: null, matchState: "AMBIGUOUS", totalCents: { not: null }, kind: { not: "SHIPPING" } },
   });
 }
 

@@ -44,7 +44,9 @@ export async function GET() {
       emailConnection: inboxScope,
       matchState: { in: ["UNMATCHED", "AMBIGUOUS"] },
       totalCents: { not: null },
-      // Same order-charge grace the page applies (inOrderChargeGrace).
+      // Same filters the page applies: orders only, no shipping notices…
+      kind: { not: "SHIPPING" },
+      // …and the order-charge grace (inOrderChargeGrace).
       NOT: {
         kind: "ORDER_CONFIRMATION",
         matchState: "UNMATCHED",

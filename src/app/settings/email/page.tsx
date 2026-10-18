@@ -184,7 +184,10 @@ export default async function EmailSettingsPage() {
   const bankCaughtUpTo = latestTxn._max.occurredOn;
   const unmatched = (
     bankCaughtUpTo ? unmatchedAll.filter((r) => (r.occurredOn ?? r.receivedAt) <= bankCaughtUpTo) : unmatchedAll
-  ).filter((r) => !inOrderChargeGrace(r));
+  )
+    // Only orders are listed, never their shipping/delivery notices
+    // (household request, 2026-10-17) — those still auto-match silently.
+    .filter((r) => r.kind !== "SHIPPING" && !inOrderChargeGrace(r));
 
   // BNPL installment plans a receipt with no bank charge could belong to
   // instead — see bnpl-plan-match.ts / matchReceiptToBnplPlan. Fetched once;

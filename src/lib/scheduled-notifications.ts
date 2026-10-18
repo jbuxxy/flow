@@ -262,7 +262,13 @@ async function checkNeedsBucketNudge(householdId: string): Promise<void> {
 }
 
 async function checkReceiptReviewNudge(householdId: string): Promise<void> {
-  const where = { householdId, transactionId: null, matchState: "AMBIGUOUS" as const, totalCents: { not: null } };
+  const where = {
+    householdId,
+    transactionId: null,
+    matchState: "AMBIGUOUS" as const,
+    totalCents: { not: null },
+    kind: { not: "SHIPPING" as const },
+  };
   const [count, newest] = await Promise.all([
     db.receipt.count({ where }),
     // receivedAt (always set) rather than occurredOn (nullable) — it's the
