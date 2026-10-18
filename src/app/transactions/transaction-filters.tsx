@@ -322,18 +322,8 @@ export function TransactionFilters({
           Budget Accounts Only
         </label>
         <div className="flex gap-2">
-          <input
-            type="date"
-            value={from}
-            onChange={(e) => setFrom(e.target.value)}
-            className="flex-1 rounded-lg border border-neutral-300 dark:border-neutral-700 px-3 py-2 text-xs focus:border-blue-900 focus:outline-none"
-          />
-          <input
-            type="date"
-            value={to}
-            onChange={(e) => setTo(e.target.value)}
-            className="flex-1 rounded-lg border border-neutral-300 dark:border-neutral-700 px-3 py-2 text-xs focus:border-blue-900 focus:outline-none"
-          />
+          <DateFilterInput value={from} onChange={setFrom} hint="From Date" />
+          <DateFilterInput value={to} onChange={setTo} hint="To Date" />
         </div>
         <div className="flex gap-2">
           {[
@@ -352,5 +342,43 @@ export function TransactionFilters({
         </div>
       </div>
     </form>
+  );
+}
+
+// A date filter box with a visible hint while it's empty. iOS renders an
+// empty <input type="date"> as a blank box and ignores `placeholder`, so the
+// two date filters read as mystery boxes (household report, 2026-10-17). The
+// hint overlays the empty box (and the browser's own "mm/dd/yyyy" is hidden
+// beneath it) until the field is focused or filled.
+function DateFilterInput({
+  value,
+  onChange,
+  hint,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  hint: string;
+}) {
+  const [focused, setFocused] = useState(false);
+  const showHint = !value && !focused;
+  return (
+    <div className="relative min-w-0 flex-1">
+      <input
+        type="date"
+        value={value}
+        aria-label={hint}
+        onChange={(e) => onChange(e.target.value)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        className={`w-full rounded-lg border border-neutral-300 dark:border-neutral-700 px-3 py-2 text-xs focus:border-blue-900 focus:outline-none ${
+          showHint ? "text-transparent" : ""
+        }`}
+      />
+      {showHint && (
+        <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-base text-neutral-400 dark:text-neutral-500">
+          {hint}
+        </span>
+      )}
+    </div>
   );
 }
