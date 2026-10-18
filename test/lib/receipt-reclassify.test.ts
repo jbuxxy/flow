@@ -12,6 +12,7 @@ const buckets = new Map<string, ReclassBucket>([
   ["groceries", { id: "groceries", trackingMode: "SPEND", excludedFromAllocation: false }],
   ["bills", { id: "bills", trackingMode: "RECURRING", excludedFromAllocation: false }],
   ["tesla", { id: "tesla", trackingMode: "SPEND", excludedFromAllocation: true }],
+  ["amazon", { id: "amazon", name: "Amazon", trackingMode: "SPEND", excludedFromAllocation: false }],
 ]);
 
 // The Sam's Club fuel charge: filed under Groceries, receipt says unleaded.
@@ -36,6 +37,17 @@ const samsFuel: ReclassCandidateTx = {
 describe("isReceiptReclassCandidate", () => {
   test("a plain receipt-matched charge in an ordinary bucket is a candidate", () => {
     assert.equal(isReceiptReclassCandidate(samsFuel, buckets), true);
+  });
+
+  test("a charge sitting in the bucket named for its own merchant stays put", () => {
+    const amazonOrder = {
+      ...samsFuel,
+      merchant: "Amazon",
+      resolvedMerchant: "Amazon",
+      bucketId: "amazon",
+      receiptItems: [{ description: "Tops", qty: 1, unitPriceCents: null, totalCents: 867 }],
+    };
+    assert.equal(isReceiptReclassCandidate(amazonOrder, buckets), false);
   });
 
   test("already decided (or manually reassigned) is never revisited", () => {

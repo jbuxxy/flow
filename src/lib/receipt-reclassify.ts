@@ -59,7 +59,7 @@ export type ReclassCandidateTx = {
   account: { budgetTracked: boolean } | null;
 };
 
-export type ReclassBucket = { id: string; trackingMode: string; excludedFromAllocation: boolean };
+export type ReclassBucket = { id: string; name?: string; trackingMode: string; excludedFromAllocation: boolean };
 
 // Pure — whether a transaction is even eligible to be looked at.
 export function isReceiptReclassCandidate(t: ReclassCandidateTx, bucketById: Map<string, ReclassBucket>): boolean {
@@ -71,7 +71,14 @@ export function isReceiptReclassCandidate(t: ReclassCandidateTx, bucketById: Map
   // Can't verify the receipt belongs to this charge without its party.
   if (!t.resolvedMerchant || nameSimilarity(t.merchant, t.resolvedMerchant) < RECEIPT_MERCHANT_MIN_SIMILARITY) return false;
   if (!t.bucketId) return false; // uncategorized: the normal categorization flow owns it
-  return isOrdinaryBucket(bucketById.get(t.bucketId));
+  const bucket = bucketById.get(t.bucketId);
+  // A bucket named for the merchant itself ("Amazon" for an Amazon charge) is
+  // where the household wants all of that merchant's spend, whatever the
+  // items are — the receipt only says *what* was bought there (household
+  // report, 2026-10-17: Amazon orders moved to Retail / Shopping on the
+  // strength of "Tops" / "Clothing").
+  if (bucket?.name && nameSimilarity(bucket.name, t.merchant) >= RECEIPT_MERCHANT_MIN_SIMILARITY) return false;
+  return isOrdinaryBucket(bucket);
 }
 
 // A bucket that can be a source or target: not RECURRING (reachable only via a
