@@ -61,8 +61,27 @@ export type ReclassCandidateTx = {
 
 export type ReclassBucket = { id: string; name?: string; trackingMode: string; excludedFromAllocation: boolean };
 
+// The household's own amount-banded merchant rules ("Walmart $60+ → Groceries",
+// "Maverik under $15 → Dining") — a charge sitting where one of those put it
+// is a deliberate per-amount choice, not a guess for receipts to correct.
+export type AmountBandRule = { merchant: string; amountMinCents: number; amountMaxCents: number; bucketId: string | null };
+
+export function routedByAmountRule(
+  t: { merchant: string; amountCents: number; bucketId: string | null },
+  rules: AmountBandRule[],
+): boolean {
+  const key = t.merchant.trim().toLowerCase();
+  return rules.some(
+    (r) => r.merchant === key && r.bucketId === t.bucketId && t.amountCents >= r.amountMinCents && t.amountCents <= r.amountMaxCents,
+  );
+}
+
 // Pure — whether a transaction is even eligible to be looked at.
-export function isReceiptReclassCandidate(t: ReclassCandidateTx, bucketById: Map<string, ReclassBucket>): boolean {
+export function isReceiptReclassCandidate(
+  t: ReclassCandidateTx,
+  bucketById: Map<string, ReclassBucket>,
+  amountRules: AmountBandRule[] = [],
+): boolean {
   if (t.receiptReclassAt !== null) return false;
   if (t.amountCents <= 0 || t.isTransfer || t.isIncome) return false;
   if (t.debtId || t.debtPaymentId || t.patternId || t.incomeId || t.billId || t.reimbursesTransactionId) return false;
@@ -78,6 +97,9 @@ export function isReceiptReclassCandidate(t: ReclassCandidateTx, bucketById: Map
   // report, 2026-10-17: Amazon orders moved to Retail / Shopping on the
   // strength of "Tops" / "Clothing").
   if (bucket?.name && nameSimilarity(bucket.name, t.merchant) >= RECEIPT_MERCHANT_MIN_SIMILARITY) return false;
+  // Routed by the household's own amount-band rule (household request,
+  // 2026-10-17: Walmart orders over $60 go to Groceries on purpose).
+  if (routedByAmountRule(t, amountRules)) return false;
   return isOrdinaryBucket(bucket);
 }
 
@@ -101,7 +123,7 @@ export function decideReceiptReclass(opts: {
 
 export async function reclassifyFromReceipts(householdId: string): Promise<void> {
   const since = new Date(todayAsUTCDate().getTime() - LOOKBACK_DAYS * 86_400_000);
-  const [buckets, txns] = await Promise.all([
+  const [buckets, txns, bandRules] = await Promise.all([
     db.bucket.findMany({
       where: { householdId, retiredAt: null },
       select: { id: true, name: true, trackingMode: true, excludedFromAllocation: true, aiInstructions: true },
@@ -136,9 +158,19 @@ export async function reclassifyFromReceipts(householdId: string): Promise<void>
         account: { select: { budgetTracked: true } },
       },
     }),
+    db.merchantRule.findMany({
+      where: { householdId, amountMinCents: { not: null }, amountMaxCents: { not: null } },
+      select: { merchant: true, amountMinCents: true, amountMaxCents: true, bucketId: true },
+    }),
   ]);
   const bucketById = new Map(buckets.map((b) => [b.id, b]));
-  const candidates = txns.filter((t) => isReceiptReclassCandidate(t, bucketById)).slice(0, MAX_PER_RUN);
+  const amountRules: AmountBandRule[] = bandRules.map((r) => ({
+    merchant: r.merchant,
+    amountMinCents: r.amountMinCents!,
+    amountMaxCents: r.amountMaxCents!,
+    bucketId: r.bucketId,
+  }));
+  const candidates = txns.filter((t) => isReceiptReclassCandidate(t, bucketById, amountRules)).slice(0, MAX_PER_RUN);
   if (candidates.length === 0) return;
 
   const targets = buckets.filter((b) => isOrdinaryBucket(b));

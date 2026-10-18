@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   decideReceiptReclass,
   isReceiptReclassCandidate,
+  routedByAmountRule,
   RECLASS_MIN_CONFIDENCE,
   type ReclassBucket,
   type ReclassCandidateTx,
@@ -48,6 +49,14 @@ describe("isReceiptReclassCandidate", () => {
       receiptItems: [{ description: "Tops", qty: 1, unitPriceCents: null, totalCents: 867 }],
     };
     assert.equal(isReceiptReclassCandidate(amazonOrder, buckets), false);
+  });
+
+  test("a charge an amount-band rule routed stays put; one outside the band doesn't", () => {
+    const rules = [{ merchant: "walmart", amountMinCents: 6_000, amountMaxCents: 2_000_000_000, bucketId: "groceries" }];
+    const bigOrder = { ...samsFuel, merchant: "Walmart", resolvedMerchant: "Walmart", amountCents: 8_569 };
+    assert.equal(routedByAmountRule(bigOrder, rules), true);
+    assert.equal(isReceiptReclassCandidate(bigOrder, buckets, rules), false);
+    assert.equal(isReceiptReclassCandidate({ ...bigOrder, amountCents: 4_200 }, buckets, rules), true);
   });
 
   test("already decided (or manually reassigned) is never revisited", () => {
