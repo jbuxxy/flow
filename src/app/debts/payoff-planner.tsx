@@ -1169,14 +1169,14 @@ export function PayoffPlanner({
           entirely — TotalDebtCard no longer has a grid partner, so it just
           renders alone in the same capped-and-centered column the paid-off
           list below uses. */}
-      {allDebtsPaidOff && totalDebtCard && <div className="lg:mx-auto lg:max-w-3xl">{totalDebtCard}</div>}
+      {allDebtsPaidOff && totalDebtCard && <div className="lg:mx-auto lg:w-full lg:max-w-3xl">{totalDebtCard}</div>}
 
       {/* The paid-off cards themselves (now the whole of `debts`, since
           activeDebts is empty) still deserve a home, so they render
           standalone here instead of vanishing along with the collapsible
           region they'd otherwise live in. */}
       {allDebtsPaidOff && trailingDebts.length > 0 && (
-        <ul className="flex flex-col gap-3 lg:mx-auto lg:max-w-3xl">
+        <ul className="flex flex-col gap-3 lg:mx-auto lg:w-full lg:max-w-3xl">
           {trailingDebts.map((debt) => debtRow(debt))}
         </ul>
       )}

@@ -490,11 +490,14 @@ export default async function DebtsPage() {
     >
       {/* The alerts stay a readable single column, capped and centered like
           the dashboard's own alert stack — sequential notices, not a card
-          meant to spread out. TotalDebtCard is handed to PayoffPlanner
+          meant to spread out. lg:w-full matters: mx-auto alone shrink-wraps,
+          and the warning cards are @container size containers with no
+          intrinsic width, so they collapsed to a one-word-wide sliver
+          (2026-10-19). TotalDebtCard is handed to PayoffPlanner
           instead of rendered here, so it can sit side by side with the
           Payoff Strategy card on desktop (see PayoffPlanner's own comment on
           why). */}
-      <div className="flex flex-col gap-6 lg:mx-auto lg:max-w-3xl">
+      <div className="flex flex-col gap-6 lg:mx-auto lg:w-full lg:max-w-3xl">
         {isOwner && <DebtAmountReviewCard reviews={pendingDebtAmountReviews} />}
         {isOwner && <DebtBalanceReviewCard reviews={pendingDebtBalanceReviews} />}
 
