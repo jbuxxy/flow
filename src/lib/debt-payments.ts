@@ -2692,6 +2692,33 @@ export async function getPendingDebtAmountReviews(householdId: string): Promise<
   }));
 }
 
+export type PendingDebtDueDateReview = {
+  id: string;
+  debtName: string;
+  observedDueDate: Date;
+  expectedDueDate: Date;
+};
+
+// Dashboard card data (see debt-due-date-review-card.tsx) — every pending
+// "did your due date change?" question, oldest first.
+export async function getPendingDebtDueDateReviews(householdId: string): Promise<PendingDebtDueDateReview[]> {
+  const reviews = await db.debtDueDateReview.findMany({
+    where: { householdId },
+    orderBy: { createdAt: "asc" },
+    include: {
+      debtPayment: {
+        include: { debt: { select: { name: true, account: { select: { displayName: true } } } } },
+      },
+    },
+  });
+  return reviews.map((r) => ({
+    id: r.id,
+    debtName: debtDisplayName(r.debtPayment.debt),
+    observedDueDate: r.observedDueDate,
+    expectedDueDate: r.expectedDueDate,
+  }));
+}
+
 export type PendingDebtBalanceReview = {
   id: string;
   debtName: string;

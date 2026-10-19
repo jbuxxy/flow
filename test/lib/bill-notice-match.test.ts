@@ -124,6 +124,17 @@ describe("pickBillNoticeMatch", () => {
     assert.deepEqual(pickBillNoticeMatch("Payment Reminder", 45000, [], loanAndPlans, "1234"), { outcome: "MATCH", type: "DEBT", id: "autoloan" });
   });
 
+  // Regression 2026-10-19: same collision, but nothing tracked is named like
+  // the biller at all — the last-4 alone mustn't pin a $17 installment on a
+  // $450 loan.
+  test("a last-4 hit with no name support and a far-off amount stays unmatched", () => {
+    assert.deepEqual(pickBillNoticeMatch("Zip", 1750, [], loanAndPlans, "1234"), { outcome: "UNMATCHED" });
+  });
+
+  test("a last-4 hit with no name support still wins on a plausible amount", () => {
+    assert.deepEqual(pickBillNoticeMatch("Payment Reminder", 47000, [], loanAndPlans, "1234"), { outcome: "MATCH", type: "DEBT", id: "autoloan" });
+  });
+
   test("last4sIn pulls standalone 4-digit endings", () => {
     assert.deepEqual(last4sIn("Visa Signature (4321)", null, "Card 12345"), ["4321"]);
   });

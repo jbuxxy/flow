@@ -22,6 +22,7 @@ import {
 import { getPendingPatternPaymentReviews } from "@/lib/pattern-payments";
 import {
   getPendingDebtAmountReviews,
+  getPendingDebtDueDateReviews,
   getPendingDebtBalanceReviews,
   getDebtPaymentsThisWeek,
   getDebtsPaidOffThisWeek,
@@ -62,6 +63,7 @@ import { PaydayCard } from "@/components/payday-card";
 import { SavingsGoalsCard } from "@/components/savings-goals-card";
 import { SpendingTrendCard } from "@/components/spending-trend-card";
 import { DebtAmountReviewCard } from "@/components/debt-amount-review-card";
+import { DebtDueDateReviewCard } from "@/components/debt-due-date-review-card";
 import { BillAmountReviewCard } from "@/components/bill-amount-review-card";
 import { PatternPaymentReviewCard } from "@/components/pattern-payment-review-card";
 import { DebtBalanceReviewCard } from "@/components/debt-balance-review-card";
@@ -158,6 +160,7 @@ export default async function Home() {
     debtPaymentsLastWeek,
     paidOffDebts,
     pendingDebtAmountReviews,
+    pendingDebtDueDateReviews,
     pendingBillAmountReviews,
     pendingDebtBalanceReviews,
     pendingPatternPaymentReviews,
@@ -182,6 +185,7 @@ export default async function Home() {
     canSeeFullFinancials ? getDebtPaymentsThisWeek(session.user.householdId, daysAgo(7)) : [],
     canSeeFullFinancials ? getDebtsPaidOffThisWeek(session.user.householdId) : [],
     isOwner ? getPendingDebtAmountReviews(session.user.householdId) : [],
+    isOwner ? getPendingDebtDueDateReviews(session.user.householdId) : [],
     // hasFullAccess, not isOwner — /bills (where these are also resolvable)
     // is a full-access page, same reasoning as the pattern-payment reviews
     // just below.
@@ -766,6 +770,7 @@ export default async function Home() {
           />
         )}
         {isOwner && <DebtAmountReviewCard key="debt-amount-review" reviews={pendingDebtAmountReviews} />}
+        {isOwner && <DebtDueDateReviewCard key="debt-due-date-review" reviews={pendingDebtDueDateReviews} />}
         {canSeeFullFinancials && <BillAmountReviewCard key="bill-amount-review" reviews={pendingBillAmountReviews} />}
         {isOwner && <DebtBalanceReviewCard key="debt-balance-review" reviews={pendingDebtBalanceReviews} />}
         {canSeeFullFinancials && <PatternPaymentReviewCard key="pattern-payment-review" reviews={pendingPatternPaymentReviews} />}

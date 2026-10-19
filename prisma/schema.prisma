@@ -187,6 +187,7 @@ model Household {
   billCycleSkips  BillCycleSkip[]
   debtPayments    DebtPayment[]
   debtAmountReviews DebtAmountReview[]
+  debtDueDateReviews DebtDueDateReview[]
   debtBalanceReviews DebtBalanceReview[]
   billNoticeEmails  BillNoticeEmail[]
   billAmountReviews BillAmountReview[]
@@ -1552,9 +1553,44 @@ model DebtPayment {
 
   payments Transaction[]
   reviews  DebtAmountReview[]
+  dueDateReview DebtDueDateReview?
 
   @@index([householdId])
   @@index([bucketId])
+}
+
+// A pending "did your due date change?" question — a parsed bill-notice
+// email (see BillNoticeEmail) for a MONTHLY card/loan states a due date whose
+// day-of-month differs from the tracked DebtPayment.nextDueDate (household
+// request, 2026-10-19: a store card's statement said the 22nd, Flow tracked the
+// 4th). Always asks — card/loan due days are fixed, so a mismatch is worth
+// confirming, and email extraction isn't trusted to write on its own. Bills
+// don't get one: a utility's due date wobbles monthly, so their notices just
+// set that cycle's date quietly (applyBillNoticeMatch). One pending row per
+// tracker; a newer notice refreshes it in place. Resolving it
+// (confirm/declineDebtDueDateChanged, src/app/debts/actions.ts) deletes it; a
+// decline is remembered per day (SuggestionDismissal DEBT_DUE_DATE_EMAIL) so
+// next month's statement doesn't re-ask the same thing.
+model DebtDueDateReview {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  debtPaymentId String      @unique
+  debtPayment   DebtPayment @relation(fields: [debtPaymentId], references: [id], onDelete: Cascade)
+
+  // The statement's due date, as the notice states it.
+  observedDueDate DateTime @db.Date
+  // When the notice arrived — a payment posted on/after it paid this
+  // statement, so confirming rolls one cycle past observedDueDate.
+  statementDate   DateTime @db.Date
+  // Snapshot of DebtPayment.nextDueDate at detection time, for "was the Nth".
+  expectedDueDate DateTime @db.Date
+  accountLast4    String?
+
+  createdAt DateTime @default(now())
+
+  @@index([householdId])
 }
 
 enum DebtAmountReviewSource {

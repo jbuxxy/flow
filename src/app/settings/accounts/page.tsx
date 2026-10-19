@@ -13,6 +13,7 @@ import {
   getActiveInsufficientMinimumDebts,
   getActiveDebtsNeedingSetup,
   getPendingDebtAmountReviews,
+  getPendingDebtDueDateReviews,
   getPendingDebtBalanceReviews,
   debtSetupReason,
 } from "@/lib/debt-payments";
@@ -21,6 +22,7 @@ import { AddDebtForm } from "@/app/debts/add-debt-form";
 import { MinPaymentWarning } from "@/app/debts/min-payment-warning";
 import { NeedsSetupWarning } from "@/app/debts/needs-setup-warning";
 import { DebtAmountReviewCard } from "@/components/debt-amount-review-card";
+import { DebtDueDateReviewCard } from "@/components/debt-due-date-review-card";
 import { DebtBalanceReviewCard } from "@/components/debt-balance-review-card";
 import type { PlanReceiptItem } from "@/components/plan-receipt-section";
 import { ConnectForm } from "./connect-form";
@@ -93,6 +95,7 @@ export default async function AccountsSettingsPage() {
     categories,
     insufficientMinimumDebts,
     pendingDebtAmountReviews,
+    pendingDebtDueDateReviews,
     pendingDebtBalanceReviews,
   ] = await Promise.all([
     db.bankConnection.findUnique({
@@ -147,6 +150,7 @@ export default async function AccountsSettingsPage() {
     }),
     getActiveInsufficientMinimumDebts(householdId),
     isOwner ? getPendingDebtAmountReviews(householdId) : Promise.resolve([]),
+    isOwner ? getPendingDebtDueDateReviews(householdId) : Promise.resolve([]),
     isOwner ? getPendingDebtBalanceReviews(householdId) : Promise.resolve([]),
   ]);
   const debtsNeedingSetup = await getActiveDebtsNeedingSetup(householdId);
@@ -467,6 +471,7 @@ export default async function AccountsSettingsPage() {
           check for it), so without this the dot pointed here with nothing
           to actually show for it (real report, 2026-08-19). */}
       {isOwner && <DebtAmountReviewCard reviews={pendingDebtAmountReviews} />}
+      {isOwner && <DebtDueDateReviewCard reviews={pendingDebtDueDateReviews} />}
       {isOwner && <DebtBalanceReviewCard reviews={pendingDebtBalanceReviews} />}
 
       <NeedsSetupWarning debts={debtsNeedingSetup} />

@@ -12,6 +12,7 @@ import {
   getActiveInsufficientMinimumDebts,
   getActiveDebtsNeedingSetup,
   getPendingDebtAmountReviews,
+  getPendingDebtDueDateReviews,
   getPendingDebtBalanceReviews,
   getPayoffExtraSkipRows,
   supersededPayoffExtraByDebtInPeriod,
@@ -25,6 +26,7 @@ import { recordDebtSnapshot, getDebtTrend } from "@/lib/debt-history";
 import { getPrimaryIncomeSchedule } from "@/lib/income";
 import { BillSuggestions } from "@/app/bills/bill-suggestions";
 import { DebtAmountReviewCard } from "@/components/debt-amount-review-card";
+import { DebtDueDateReviewCard } from "@/components/debt-due-date-review-card";
 import { DebtBalanceReviewCard } from "@/components/debt-balance-review-card";
 import { PayoffPlanner, type PlannerDebt } from "./payoff-planner";
 import { TotalDebtCard } from "./total-debt-card";
@@ -51,6 +53,7 @@ export default async function DebtsPage() {
     debtSuggestions,
     insufficientMinimumDebts,
     pendingDebtAmountReviews,
+    pendingDebtDueDateReviews,
     pendingDebtBalanceReviews,
     payoffExtraSkips,
   ] =
@@ -84,6 +87,7 @@ export default async function DebtsPage() {
       isOwner ? detectDebtPaymentSuggestions(session.user.householdId) : Promise.resolve([]),
       isOwner ? getActiveInsufficientMinimumDebts(session.user.householdId) : Promise.resolve([]),
       isOwner ? getPendingDebtAmountReviews(session.user.householdId) : Promise.resolve([]),
+      isOwner ? getPendingDebtDueDateReviews(session.user.householdId) : Promise.resolve([]),
       isOwner ? getPendingDebtBalanceReviews(session.user.householdId) : Promise.resolve([]),
       getPayoffExtraSkipRows(session.user.householdId),
     ]);
@@ -499,6 +503,7 @@ export default async function DebtsPage() {
           why). */}
       <div className="flex flex-col gap-6 lg:mx-auto lg:w-full lg:max-w-3xl">
         {isOwner && <DebtAmountReviewCard reviews={pendingDebtAmountReviews} />}
+        {isOwner && <DebtDueDateReviewCard reviews={pendingDebtDueDateReviews} />}
         {isOwner && <DebtBalanceReviewCard reviews={pendingDebtBalanceReviews} />}
 
         <NeedsSetupWarning debts={debtsNeedingSetup} />

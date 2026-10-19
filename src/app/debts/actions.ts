@@ -9,6 +9,7 @@ import { db } from "@/lib/db";
 import { parseDollarsToCents, parseOptionalToleranceCents, parsePercentToBasisPoints } from "@/lib/money";
 import { reassignTransactionsForDebt } from "@/lib/debt-reassign";
 import { debtBalanceUpdate } from "@/lib/debt-payoff";
+import { confirmedDebtDueDate, debtDueDateDismissKey, DEBT_DUE_DATE_DISMISS_KIND } from "@/lib/bill-notice-due-date";
 import { nextBillDueDate } from "@/lib/recurring-bills";
 import { upsertMerchantRule } from "@/lib/merchant-rules";
 import { nextOccurrenceOfDay, currentMonthOccurrenceOfDay, todayAsUTCDate, parseDueDay } from "@/lib/date";
@@ -1660,6 +1661,53 @@ export async function declineDebtAmountChanged(reviewId: string) {
     await linkTxnToDebtPaymentGuarded(review.transactionId, review.debtPaymentId);
   }
   await db.debtAmountReview.delete({ where: { id: reviewId } });
+
+  revalidateHousehold();
+}
+
+// Household says yes, the statement's due date is the real one (see
+// DebtDueDateReview). Writes the next occurrence on the statement's day —
+// confirmedDebtDueDate decides whether the statement itself is still the
+// next one or already paid — and marks the date confirmed.
+export async function confirmDebtDueDateChanged(reviewId: string) {
+  const session = await requireOwner();
+
+  const review = await db.debtDueDateReview.findUnique({ where: { id: reviewId }, include: { debtPayment: true } });
+  if (!belongsToHousehold(review, session.user.householdId)) return;
+
+  await db.debtPayment.update({
+    where: { id: review.debtPaymentId },
+    data: {
+      nextDueDate: confirmedDebtDueDate({
+        observedDueDate: review.observedDueDate,
+        statementDate: review.statementDate,
+        lastPaidDate: review.debtPayment.lastPaidDate,
+        today: todayAsUTCDate(),
+      }),
+      dueDateLocked: true,
+    },
+  });
+  await db.debtDueDateReview.delete({ where: { id: reviewId } });
+
+  revalidateHousehold();
+}
+
+// Household says no, keep the tracked date — remembered for this statement
+// day, so next month's statement doesn't ask the same question again.
+export async function declineDebtDueDateChanged(reviewId: string) {
+  const session = await requireOwner();
+
+  const review = await db.debtDueDateReview.findUnique({ where: { id: reviewId } });
+  if (!belongsToHousehold(review, session.user.householdId)) return;
+
+  const householdId = session.user.householdId;
+  const key = debtDueDateDismissKey(review.debtPaymentId, review.observedDueDate);
+  await db.suggestionDismissal.upsert({
+    where: { householdId_kind_key: { householdId, kind: DEBT_DUE_DATE_DISMISS_KIND, key } },
+    create: { householdId, kind: DEBT_DUE_DATE_DISMISS_KIND, key },
+    update: {},
+  });
+  await db.debtDueDateReview.delete({ where: { id: reviewId } });
 
   revalidateHousehold();
 }

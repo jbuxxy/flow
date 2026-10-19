@@ -18,6 +18,13 @@ import { pickBillNoticeMatch, last4sIn } from "@/lib/bill-notice-match";
 import { debtDisplayName } from "@/lib/debt-payments";
 import { sendPushToHouseholdForType } from "@/lib/push";
 import { formatCents } from "@/lib/money";
+import { formatDate, ordinal, todayAsUTCDate } from "@/lib/date";
+import {
+  billNoticeDueDateUpdate,
+  dueDayDiffers,
+  debtDueDateDismissKey,
+  DEBT_DUE_DATE_DISMISS_KIND,
+} from "@/lib/bill-notice-due-date";
 
 const UNMATCHED_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -25,8 +32,11 @@ const UNMATCHED_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 // Match
 
 export async function matchBillNoticeAmounts(householdId: string): Promise<void> {
+  // Oldest first, so when one sync picks up several statements for the same
+  // debt, the newest is the one its review ends up holding.
   const notices = await db.billNoticeEmail.findMany({
     where: { householdId, status: { in: ["PENDING", "AMBIGUOUS", "UNMATCHED"] } },
+    orderBy: { receivedAt: "asc" },
   });
   if (notices.length === 0) return;
 
@@ -82,8 +92,18 @@ export async function applyBillNoticeMatch(
   target: { type: "BILL"; id: string } | { type: "DEBT"; id: string },
 ): Promise<void> {
   if (target.type === "BILL") {
-    const bill = await db.recurringBill.findUnique({ where: { id: target.id }, select: { id: true, name: true, amountCents: true } });
+    const bill = await db.recurringBill.findUnique({
+      where: { id: target.id },
+      select: { id: true, name: true, amountCents: true, nextDueDate: true },
+    });
     if (!bill) return;
+
+    // A bill's due date never asks — see bill-notice-due-date.ts. Applied
+    // whatever the amount turns out to be.
+    const quietDueDate = billNoticeDueDateUpdate(notice.dueDate, bill.nextDueDate, todayAsUTCDate());
+    if (quietDueDate) {
+      await db.recurringBill.update({ where: { id: bill.id }, data: { nextDueDate: quietDueDate } });
+    }
 
     if (notice.amountDueCents === bill.amountCents) {
       await db.billNoticeEmail.update({
@@ -135,10 +155,18 @@ export async function applyBillNoticeMatch(
 
   const debt = await db.debt.findUnique({
     where: { id: target.id },
-    select: { id: true, name: true, account: { select: { displayName: true } }, debtPayment: { select: { id: true, amountCents: true, amountDueCents: true } } },
+    select: {
+      id: true,
+      name: true,
+      debtType: true,
+      account: { select: { displayName: true } },
+      debtPayment: { select: { id: true, amountCents: true, amountDueCents: true, nextDueDate: true, cadence: true } },
+    },
   });
   if (!debt?.debtPayment) return;
   const dp = debt.debtPayment;
+
+  await reviewDebtNoticeDueDate(notice, debt, dp);
 
   if (notice.amountDueCents === dp.amountCents) {
     await db.billNoticeEmail.update({
@@ -193,6 +221,57 @@ export async function applyBillNoticeMatch(
   await db.billNoticeEmail.update({
     where: { id: notice.id },
     data: { status: "REVIEW_CREATED", targetType: "DEBT", debtId: debt.id },
+  });
+}
+
+// Opens (or refreshes) a "did the due date change?" question when a card/
+// loan statement names a different day than the one tracked. MONTHLY
+// REVOLVING trackers only: a BNPL plan bills every week or two, so its
+// day-of-month means nothing. Skipped once the household has declined that
+// same day for this debt (debtDueDateDismissKey).
+async function reviewDebtNoticeDueDate(
+  notice: BillNoticeEmail,
+  debt: { name: string; debtType: string; account: { displayName: string | null } | null },
+  dp: { id: string; nextDueDate: Date; cadence: string },
+): Promise<void> {
+  if (!notice.dueDate || debt.debtType !== "REVOLVING" || dp.cadence !== "MONTHLY") return;
+
+  const existing = await db.debtDueDateReview.findUnique({ where: { debtPaymentId: dp.id } });
+  if (!dueDayDiffers(notice.dueDate, dp.nextDueDate)) {
+    // A newer statement agrees with what's tracked — an open question from
+    // an older one is moot.
+    if (existing) await db.debtDueDateReview.delete({ where: { id: existing.id } });
+    return;
+  }
+  const declined = await db.suggestionDismissal.findUnique({
+    where: {
+      householdId_kind_key: {
+        householdId: notice.householdId,
+        kind: DEBT_DUE_DATE_DISMISS_KIND,
+        key: debtDueDateDismissKey(dp.id, notice.dueDate),
+      },
+    },
+  });
+  if (declined) return;
+
+  const data = {
+    observedDueDate: notice.dueDate,
+    statementDate: todayAsUTCDate(notice.receivedAt),
+    expectedDueDate: dp.nextDueDate,
+    accountLast4: notice.accountLast4,
+  };
+  if (existing) {
+    await db.debtDueDateReview.update({ where: { id: existing.id }, data });
+    return;
+  }
+  await db.debtDueDateReview.create({ data: { householdId: notice.householdId, debtPaymentId: dp.id, ...data } });
+  await sendPushToHouseholdForType(notice.householdId, "DEBT_AMOUNT_REVIEW", {
+    title: "Did your due date change?",
+    body: `${debtDisplayName(debt)}: its latest statement says it's due ${formatDate(notice.dueDate, {
+      month: "short",
+      day: "numeric",
+    })} (Flow has the ${ordinal(dp.nextDueDate.getUTCDate())}).`,
+    url: "/",
   });
 }
 

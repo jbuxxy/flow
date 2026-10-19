@@ -82,6 +82,15 @@ function pickAmountTiebreak(contenders: Scored[], noticeAmountCents: number): Sc
   return decisive ? closest : null;
 }
 
+// A last-4-only match's amount must sit within this of the notice's — wide
+// enough for the genuine minimum/bill drift this pipeline exists to catch
+// (a card minimum swings with its balance), narrow enough that a different
+// account's payment never passes for it.
+const LAST4_AMOUNT_RATIO = 0.5;
+function amountPlausible(trackedCents: number, noticeCents: number): boolean {
+  return Math.abs(trackedCents - noticeCents) <= Math.max(AMOUNT_TIEBREAK_ABS_CENTS, trackedCents * LAST4_AMOUNT_RATIO);
+}
+
 export function pickBillNoticeMatch(
   billerName: string,
   noticeAmountCents: number,
@@ -104,13 +113,23 @@ export function pickBillNoticeMatch(
   // notice matched an auto loan ending in the same four digits and asked
   // whether the loan's minimum had dropped to the installment amount). So the last-4 only decides when the hit's own name
   // resembles the biller, or when no candidate's name does at all.
+  //
+  // Nor does a last-4 alone carry a match whose amount is nowhere near the
+  // notice's (real case, 2026-10-19: a small BNPL installment notice
+  // quoting its funding card's ending matched a loan ~40x its amount ending
+  // in the same four digits — no tracked debt's name fit the BNPL provider,
+  // so the old "no name fits anything" escape let the last-4 decide alone). When the
+  // name doesn't vouch for the hit, its amount has to.
   if (accountLast4 && /^\d{4}$/.test(accountLast4)) {
     const hits = [
-      ...bills.filter((b) => b.last4s?.includes(accountLast4)).map((b) => ({ type: "BILL" as const, id: b.id, score: bestScore(b) })),
-      ...debts.filter((d) => d.last4s?.includes(accountLast4)).map((d) => ({ type: "DEBT" as const, id: d.id, score: bestScore(d) })),
+      ...bills.filter((b) => b.last4s?.includes(accountLast4)).map((b) => ({ type: "BILL" as const, id: b.id, amountCents: b.amountCents, score: bestScore(b) })),
+      ...debts.filter((d) => d.last4s?.includes(accountLast4)).map((d) => ({ type: "DEBT" as const, id: d.id, amountCents: d.amountCents, score: bestScore(d) })),
     ];
     const nameFitsSomething = scored.some((c) => c.score >= MATCH_FLOOR);
-    if (hits.length === 1 && (hits[0].score >= MATCH_FLOOR || !nameFitsSomething)) {
+    if (
+      hits.length === 1 &&
+      (hits[0].score >= MATCH_FLOOR || (!nameFitsSomething && amountPlausible(hits[0].amountCents, noticeAmountCents)))
+    ) {
       return { outcome: "MATCH", type: hits[0].type, id: hits[0].id };
     }
   }
