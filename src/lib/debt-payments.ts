@@ -3596,7 +3596,7 @@ function correctedDueDateByDebtId(
     // correctedNextDueDate's own comment (debt-payoff.ts) for the full
     // incident writeup (Amazon Card, 2026-09-11) this exists to fix, and
     // why it's a shared helper rather than hand-copied per call site.
-    const correctedNextDue = correctedNextDueDate(cyclePaid, p.nextDueDate, periodDate, p.cadence);
+    const correctedNextDue = correctedNextDueDate(slots, p.nextDueDate, p.cadence);
     // Minimums an earlier, bigger payment already covered — still shown on
     // the calendars unless skipped (resolveMinimumLedger, 2026-09-20).
     const ledgerOpts = {

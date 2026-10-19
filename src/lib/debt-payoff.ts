@@ -1,6 +1,7 @@
 import type { BillCadence, PaycheckCadence } from "@prisma/client";
 import { addPaycheckCadence, paychecksPerYear, subtractPaycheckCadence } from "@/lib/income-calc";
 import { stepCadence } from "@/lib/cadence-step";
+import { cycleDueDate } from "@/lib/cycle-slots";
 import { todayAsUTCDate } from "@/lib/date";
 
 // Pure module — no `db` import. simulatePayoff/projectPaymentCalendar run
@@ -1126,13 +1127,21 @@ export function addBillCadence(date: Date, cadence: BillCadence): Date {
 // paid ahead by more than one cadence (ordinary rollover) keeps its real,
 // further-out date. When the cycle isn't paid at all, there's nothing to
 // correct — `satisfiedOccurrence` is just the still-owed due date itself.
+//
+// No occurrence this month at all (`slots` empty) also means nothing to
+// correct: "paid" is only vacuously true there, and stepping a cadence past
+// trackedNextDueDate skipped a real future minimum (real report, 2026-10-19:
+// an auto loan added Oct 19, due the 14th — its Oct 14 occurrence predates
+// the tracker so it has no slot, and Nov 14 got pushed to Dec 14, leaving
+// November's Payoff Calendar without it).
 export function correctedNextDueDate(
-  cyclePaid: boolean,
+  slots: { date: Date; payment: unknown }[],
   trackedNextDueDate: Date,
-  satisfiedOccurrence: Date,
   cadence: BillCadence,
 ): Date {
-  if (!cyclePaid) return satisfiedOccurrence;
+  if (slots.length === 0) return trackedNextDueDate;
+  const satisfiedOccurrence = cycleDueDate(slots, trackedNextDueDate);
+  if (!slots.every((s) => s.payment !== null)) return satisfiedOccurrence;
   return new Date(Math.max(trackedNextDueDate.getTime(), addBillCadence(satisfiedOccurrence, cadence).getTime()));
 }
 

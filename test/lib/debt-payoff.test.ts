@@ -6,6 +6,7 @@ import {
   computeAlreadyFreedMinimums,
   computeAttackOrder,
   confirmProjectedExtras,
+  correctedNextDueDate,
   debtsWithInsufficientMinimum,
   billCadenceToMonthlyCents,
   monthlyRateOf,
@@ -52,6 +53,30 @@ describe("addBillCadence", () => {
     assert.deepEqual(addBillCadence(utc(2026, 1, 31), "WEEKLY"), utc(2026, 2, 7));
     assert.deepEqual(addBillCadence(utc(2026, 1, 31), "BIWEEKLY"), utc(2026, 2, 14));
     assert.deepEqual(addBillCadence(utc(2026, 1, 31), "ANNUAL"), utc(2027, 1, 31));
+  });
+});
+
+describe("correctedNextDueDate", () => {
+  test("no occurrence this month keeps the tracked date — not a cycle later", () => {
+    // Real report, 2026-10-19: a loan added Oct 19, due the 14th, has no
+    // October slot (Oct 14 predates the tracker). Vacuously "paid" used to
+    // push Nov 14 to Dec 14, so November's calendar never showed it.
+    assert.deepEqual(correctedNextDueDate([], utc(2026, 11, 14), "MONTHLY"), utc(2026, 11, 14));
+    assert.deepEqual(correctedNextDueDate([], utc(2027, 3, 1), "ANNUAL"), utc(2027, 3, 1));
+  });
+
+  test("unpaid slot returns that still-owed occurrence", () => {
+    assert.deepEqual(
+      correctedNextDueDate([{ date: utc(2026, 10, 14), payment: null }], utc(2026, 10, 14), "MONTHLY"),
+      utc(2026, 10, 14),
+    );
+  });
+
+  test("paid slot before the tracker rolls over steps one cadence past it", () => {
+    assert.deepEqual(
+      correctedNextDueDate([{ date: utc(2026, 10, 14), payment: {} }], utc(2026, 10, 14), "MONTHLY"),
+      utc(2026, 11, 14),
+    );
   });
 });
 

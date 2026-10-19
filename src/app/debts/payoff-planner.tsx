@@ -434,7 +434,7 @@ export function PayoffPlanner({
     for (const d of debts) {
       const cm = d.cycleMinimum;
       if (!cm) continue;
-      const date = correctedNextDueDate(cm.paidThisCycle, cm.nextDueDate, cm.dueDate, cm.cadence);
+      const date = correctedNextDueDate(cm.slots, cm.nextDueDate, cm.cadence);
       map.set(d.id, { date, cadence: cm.cadence });
     }
     return map;
