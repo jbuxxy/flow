@@ -11,8 +11,7 @@ import type { BillNeedingDueDate } from "@/lib/recurring-bills";
 // whose due date is still just the app's own approximation only ever fed a
 // generic boolean AttentionLinkCard on the dashboard before ("Bills need a
 // due date," no names), same gap the debts card had (2026-08-19 follow-up).
-// Yellow, matching NeedsSetupWarning/UnlabeledP2PWarning — administrative,
-// not urgent, so not the red reserved for the min-payment warning.
+// Yellow, matching UnlabeledP2PWarning — administrative, not urgent.
 export function BillsNeedDueDateWarning({
   bills,
   collapsed,

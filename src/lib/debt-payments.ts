@@ -1670,9 +1670,17 @@ export async function getActiveInsufficientMinimumDebts(householdId: string): Pr
       minPaymentCents: true,
       debtType: true,
       ignoreMinimumPayment: true,
+      termsConfirmed: true,
     },
   });
-  const flagged = debtsWithInsufficientMinimum(debts);
+  // A debt still missing its APR/minimum (the "Debts Need Setup" card's
+  // first two reasons, debtSetupReason) has placeholder $0 terms, so this
+  // read "$0.00 min < $0.00 interest/mo" right alongside the setup card
+  // asking for those same numbers (household report, 2026-10-19). Setup
+  // first; this re-evaluates once real terms are on file.
+  const flagged = debtsWithInsufficientMinimum(
+    debts.filter((d) => d.termsConfirmed && (d.minPaymentCents > 0 || d.ignoreMinimumPayment)),
+  );
   if (flagged.length === 0) return [];
 
   const [dismissals, debtPayments] = await Promise.all([

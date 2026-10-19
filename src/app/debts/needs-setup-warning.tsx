@@ -13,10 +13,10 @@ import type { DebtNeedingSetup } from "@/lib/debt-payments";
 // pill before (debt-row.tsx, settings/accounts/page.tsx), easy to miss
 // entirely when the actual "why does my profile have a red dot" question
 // starts from Settings, not a specific debt row (real report, 2026-08-19).
-// Yellow, not red (2026-08-19 follow-up, tuned from an initial amber that
-// read too close to red) — red is reserved for the min-payment-won't-
-// cover-interest warning, which is actually losing the household money; a
-// missing due date/APR is administrative, not urgent.
+// Red (household request, 2026-10-19) — it was yellow as "administrative,
+// not urgent," but a debt with no terms on file silently skews every payoff
+// projection and suppresses the min-payment-won't-cover-interest warning
+// until it's fixed.
 export function NeedsSetupWarning({
   debts,
   collapsed,
@@ -43,7 +43,7 @@ export function NeedsSetupWarning({
   return (
     <CollapsibleWarningCard
       storageKey="needs-setup"
-      color="yellow"
+      color="red"
       title="Debts Need Setup"
       collapsed={collapsed}
       onToggle={onToggle}
@@ -67,8 +67,8 @@ export function NeedsSetupWarning({
                 debts/debt-row.tsx, so it reads as a distinct status rather
                 than a trailing word. */}
             <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
-              <span className="min-w-0 truncate text-yellow-900 dark:text-yellow-200">{d.name}</span>
-              <span className="shrink-0 rounded-full bg-yellow-100 dark:bg-yellow-900/40 px-2 py-0.5 text-xs font-medium text-yellow-800 dark:text-yellow-200">
+              <span className="min-w-0 truncate text-red-900 dark:text-red-200">{d.name}</span>
+              <span className="shrink-0 rounded-full bg-red-100 dark:bg-red-900/40 px-2 py-0.5 text-xs font-medium text-red-800 dark:text-red-200">
                 {d.reason}
               </span>
             </span>
@@ -77,7 +77,7 @@ export function NeedsSetupWarning({
               onClick={() => dismiss(d.id)}
               aria-label={`Dismiss Needs-Setup Warning for ${d.name}`}
               title="Dismiss"
-              className="shrink-0 text-yellow-400 hover:text-yellow-700 dark:text-yellow-500 dark:hover:text-yellow-300"
+              className="shrink-0 text-red-400 hover:text-red-700 dark:text-red-500 dark:hover:text-red-300"
             >
               <X size={14} />
             </button>
