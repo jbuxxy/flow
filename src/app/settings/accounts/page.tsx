@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { debtIsPaidOff } from "@/lib/debt-balance";
-import { PartyPopper, EyeOff, Target, Landmark, PiggyBank, CreditCard, Wallet, Binoculars } from "lucide-react";
+import { CalendarDays, PartyPopper, EyeOff, Target, Landmark, PiggyBank, CreditCard, Wallet, Binoculars } from "lucide-react";
 import { buildBnplSchedule } from "@/lib/bnpl-schedule";
 import { db } from "@/lib/db";
 import { formatCents, formatBasisPoints } from "@/lib/money";
@@ -578,9 +578,22 @@ export default async function AccountsSettingsPage() {
                     ? null
                     : setupReason
                       ? `Needs Setup — ${setupReason}`
-                      : `${formatBasisPoints(debt.aprBasisPoints)} APR · ${
-                          debt.ignoreMinimumPayment ? "No Minimum" : `${formatCents(debt.minPaymentCents)}/mo`
-                        } · Due on the ${ordinal(dueDay!)}`;
+                      : (
+                          <>
+                            {`${formatBasisPoints(debt.aprBasisPoints)} APR · ${
+                              debt.ignoreMinimumPayment ? "No Minimum" : `${formatCents(debt.minPaymentCents)}/mo`
+                            } · `}
+                            {/* Calendar glyph instead of "Due on the" — same
+                                treatment as debt-row.tsx / manual-debt-editor.tsx. */}
+                            <span
+                              className="inline-flex items-center gap-0.5 whitespace-nowrap align-bottom"
+                              title={`Due On The ${ordinal(dueDay!)} Each Month`}
+                            >
+                              <CalendarDays size={11} className="shrink-0" aria-label="Due" />
+                              {ordinal(dueDay!)}
+                            </span>
+                          </>
+                        );
                   const debtNeedsSetupNow = Boolean(setupReason);
                   const paidOff = Boolean(debt) && a.balanceCents === 0;
                   // Classification badges — small icons up by the pencil
