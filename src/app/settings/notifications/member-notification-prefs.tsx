@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useLiveNotificationLock } from "@/lib/use-live-notification-lock";
 import { ChevronDown } from "lucide-react";
 import type { NotificationType } from "@prisma/client";
@@ -63,11 +63,14 @@ export function MemberNotificationPrefs({
     { enabled: member.notificationsEnabled, locked: member.notificationsLocked },
     !canLock,
   );
-  useEffect(() => {
-    if (canLock) return;
+  // Adjust-state-during-render (not an effect): when the polled lock state
+  // changes, adopt it once, leaving local optimistic toggles alone otherwise.
+  const [seenLive, setSeenLive] = useState(live);
+  if (!canLock && (seenLive.enabled !== live.enabled || seenLive.locked !== live.locked)) {
+    setSeenLive(live);
     setMaster(live.enabled);
     setLocked(live.locked);
-  }, [canLock, live.enabled, live.locked]);
+  }
   const [masterPending, startMaster] = useTransition();
   // Locked + not the owner = this member's own view of an owner's lock.
   const masterEditable = canEdit && (!locked || canLock);
