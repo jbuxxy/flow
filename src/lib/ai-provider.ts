@@ -107,15 +107,28 @@ function toGeminiSchema(schema: unknown): unknown {
   return out;
 }
 
+// What a provider call cost, as the provider itself reported it (see
+// AiUsage in schema.prisma). Any field a provider omits stays null.
+type AiUsageCounts = { inputTokens: number | null; outputTokens: number | null; thinkingTokens: number | null };
+type ProviderResult = { value: string | object | null; usage: AiUsageCounts | null };
+
+const num = (n: unknown): number | null => (typeof n === "number" && Number.isFinite(n) ? n : null);
+
 async function callGemini(
   apiKey: string,
   prompt: string,
-  schema?: object,
-): Promise<string | null> {
+  schema: object | undefined,
+  thinking: AiThinking,
+): Promise<ProviderResult> {
   const model = DEFAULT_MODEL.GEMINI;
-  const generationConfig = schema
-    ? { responseMimeType: "application/json", responseSchema: toGeminiSchema(schema) }
-    : undefined;
+  // Gemini 3 models think at "high" unless told otherwise, and thinking
+  // tokens bill at the output rate — measured 2026-10-20 on a one-line
+  // receipt prompt: 357 thinking tokens to write 18 of output by default,
+  // 0 at "low". Every call here sets a level (see AiThinking).
+  const generationConfig = {
+    thinkingConfig: { thinkingLevel: thinking },
+    ...(schema ? { responseMimeType: "application/json", responseSchema: toGeminiSchema(schema) } : {}),
+  };
 
   // The header form (not `?key=` in the URL) — Google supports both, but a
   // query-string key is far more likely to end up somewhere it shouldn't:
@@ -126,7 +139,7 @@ async function callGemini(
     headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
     body: JSON.stringify({
       contents: [{ parts: [{ text: prompt }] }],
-      ...(generationConfig ? { generationConfig } : {}),
+      generationConfig,
     }),
   });
   if (!res.ok) {
@@ -134,18 +147,27 @@ async function callGemini(
   }
   const data = await res.json();
   const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-  return typeof text === "string" ? text : null;
+  const u = data?.usageMetadata;
+  return {
+    value: typeof text === "string" ? text : null,
+    usage: u
+      ? { inputTokens: num(u.promptTokenCount), outputTokens: num(u.candidatesTokenCount), thinkingTokens: num(u.thoughtsTokenCount) }
+      : null,
+  };
 }
 
 // OpenAI and Grok (xAI) both speak the OpenAI Chat Completions shape —
 // xAI's API is explicitly OpenAI-compatible at a different base URL.
+// `reasoningEffort` is OpenAI-only (gpt-5-mini reasons at "medium" by
+// default); Grok's endpoint isn't sent it — not verified that it accepts it.
 async function callOpenAiCompatible(
   baseUrl: string,
   apiKey: string,
   model: string,
   prompt: string,
-  schema?: object,
-): Promise<string | null> {
+  schema: object | undefined,
+  reasoningEffort?: AiThinking,
+): Promise<ProviderResult> {
   const res = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
@@ -155,6 +177,7 @@ async function callOpenAiCompatible(
     body: JSON.stringify({
       model,
       messages: [{ role: "user", content: prompt }],
+      ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
       ...(schema
         ? { response_format: { type: "json_schema", json_schema: { name: "result", schema, strict: true } } }
         : {}),
@@ -165,7 +188,21 @@ async function callOpenAiCompatible(
   }
   const data = await res.json();
   const text = data?.choices?.[0]?.message?.content;
-  return typeof text === "string" ? text : null;
+  const u = data?.usage;
+  // completion_tokens already includes the reasoning tokens — split them
+  // out so outputTokens means the same thing it does for Gemini.
+  const thinkingTokens = num(u?.completion_tokens_details?.reasoning_tokens);
+  const completion = num(u?.completion_tokens);
+  return {
+    value: typeof text === "string" ? text : null,
+    usage: u
+      ? {
+          inputTokens: num(u.prompt_tokens),
+          outputTokens: completion == null ? null : completion - (thinkingTokens ?? 0),
+          thinkingTokens,
+        }
+      : null,
+  };
 }
 
 // Anthropic has no native JSON-schema response mode — structured output is
@@ -177,7 +214,7 @@ async function callAnthropic(
   apiKey: string,
   prompt: string,
   schema?: object,
-): Promise<string | object | null> {
+): Promise<ProviderResult> {
   const model = DEFAULT_MODEL.ANTHROPIC;
   const body: Record<string, unknown> = {
     model,
@@ -202,30 +239,71 @@ async function callAnthropic(
     throw new Error(`request failed (${res.status}): ${(await res.text()).slice(0, 500)}`);
   }
   const data = await res.json();
+  const u = data?.usage;
+  const usage = u ? { inputTokens: num(u.input_tokens), outputTokens: num(u.output_tokens), thinkingTokens: null } : null;
   const content = data?.content as { type: string; text?: string; input?: object; name?: string }[] | undefined;
-  if (!content) return null;
+  if (!content) return { value: null, usage };
 
   if (schema) {
     const toolUse = content.find((block) => block.type === "tool_use" && block.name === "return_result");
-    return toolUse?.input ?? null;
+    return { value: toolUse?.input ?? null, usage };
   }
   const textBlock = content.find((block) => block.type === "text");
-  return textBlock?.text ?? null;
+  return { value: textBlock?.text ?? null, usage };
+}
+
+// How hard a reasoning model may think before answering. Every caller in
+// ai.ts names its feature and (optionally) a level; "low" is the default —
+// enough for the batch categorization/extraction most calls are — and
+// "medium" is for the few long-form planning/report prompts. Mapped onto
+// Gemini's thinkingLevel and OpenAI's reasoning_effort (same vocabulary).
+export type AiThinking = "low" | "medium";
+export type AiCallOptions = { feature: string; thinking?: AiThinking };
+
+// Best-effort, like recordAiHealth — usage bookkeeping must never fail the
+// call it describes.
+async function recordAiUsage(
+  householdId: string,
+  config: AiProviderConfig,
+  feature: string,
+  ok: boolean,
+  usage: AiUsageCounts | null,
+): Promise<void> {
+  const model = DEFAULT_MODEL[config.provider];
+  console.log(
+    `[ai-usage] ${feature} ${config.provider}/${model} ok=${ok} in=${usage?.inputTokens ?? "-"} out=${usage?.outputTokens ?? "-"} thinking=${usage?.thinkingTokens ?? "-"}`,
+  );
+  try {
+    await db.aiUsage.create({
+      data: { householdId, feature, provider: config.provider, model, ok, ...(usage ?? {}) },
+    });
+  } catch {
+    // no-op
+  }
 }
 
 // Free-text generation — narrative feedback, one-sentence summaries.
 // Records success/failure onto the household's HouseholdAiSettings row
 // (status/lastError) so /settings/ai and the Settings page badge stay
 // current with real usage, not just what was true at save time.
-export async function callText(householdId: string, config: AiProviderConfig, prompt: string): Promise<string | null> {
+export async function callText(
+  householdId: string,
+  config: AiProviderConfig,
+  prompt: string,
+  opts: AiCallOptions,
+): Promise<string | null> {
+  let recorded = false;
   try {
-    const text = await dispatch(config, prompt, undefined);
+    const { value: text, usage } = await dispatch(config, prompt, undefined, opts.thinking ?? "low");
+    recorded = true;
+    await recordAiUsage(householdId, config, opts.feature, true, usage);
     const result = typeof text === "string" && text.trim() ? text.trim() : null;
     await recordAiHealth(householdId, result ? null : "The provider returned an empty response.");
     return result;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[ai-provider:${config.provider}] text request failed:`, message);
+    if (!recorded) await recordAiUsage(householdId, config, opts.feature, false, null);
     await recordAiHealth(householdId, message);
     return null;
   }
@@ -235,9 +313,20 @@ export async function callText(householdId: string, config: AiProviderConfig, pr
 // `schema` must be a top-level object (not array/string/etc) — required for
 // Anthropic's forced-tool-use input_schema and OpenAI/Grok's strict JSON
 // schema mode; Gemini's array/scalar support is translated the same way.
-export async function callJson<T>(householdId: string, config: AiProviderConfig, prompt: string, schema: object): Promise<T | null> {
+export async function callJson<T>(
+  householdId: string,
+  config: AiProviderConfig,
+  prompt: string,
+  schema: object,
+  opts: AiCallOptions,
+): Promise<T | null> {
+  // A response that fails JSON.parse below was still billed — already
+  // recorded as ok, not logged a second time as a failed call.
+  let recorded = false;
   try {
-    const result = await dispatch(config, prompt, schema);
+    const { value: result, usage } = await dispatch(config, prompt, schema, opts.thinking ?? "low");
+    recorded = true;
+    await recordAiUsage(householdId, config, opts.feature, true, usage);
     if (result === null || result === undefined) {
       await recordAiHealth(householdId, "The provider returned an empty response.");
       return null;
@@ -250,6 +339,7 @@ export async function callJson<T>(householdId: string, config: AiProviderConfig,
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[ai-provider:${config.provider}] json request failed:`, message);
+    if (!recorded) await recordAiUsage(householdId, config, opts.feature, false, null);
     await recordAiHealth(householdId, message);
     return null;
   }
@@ -262,7 +352,7 @@ export async function callJson<T>(householdId: string, config: AiProviderConfig,
 // whether to persist at all based on this result).
 export async function verifyAiConfig(config: AiProviderConfig): Promise<string | null> {
   try {
-    const result = await dispatch(config, 'Reply with only the word "ok".', undefined);
+    const { value: result } = await dispatch(config, 'Reply with only the word "ok".', undefined, "low");
     if (typeof result === "string" && result.trim()) return null;
     return "The provider returned an empty response.";
   } catch (err) {
@@ -270,12 +360,17 @@ export async function verifyAiConfig(config: AiProviderConfig): Promise<string |
   }
 }
 
-function dispatch(config: AiProviderConfig, prompt: string, schema: object | undefined) {
+function dispatch(
+  config: AiProviderConfig,
+  prompt: string,
+  schema: object | undefined,
+  thinking: AiThinking,
+): Promise<ProviderResult> {
   switch (config.provider) {
     case "GEMINI":
-      return callGemini(config.apiKey, prompt, schema);
+      return callGemini(config.apiKey, prompt, schema, thinking);
     case "OPENAI":
-      return callOpenAiCompatible("https://api.openai.com/v1", config.apiKey, DEFAULT_MODEL.OPENAI, prompt, schema);
+      return callOpenAiCompatible("https://api.openai.com/v1", config.apiKey, DEFAULT_MODEL.OPENAI, prompt, schema, thinking);
     case "GROK":
       return callOpenAiCompatible("https://api.x.ai/v1", config.apiKey, DEFAULT_MODEL.GROK, prompt, schema);
     case "ANTHROPIC":

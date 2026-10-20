@@ -169,6 +169,7 @@ model Household {
   savingsGoals   SavingsGoal[]
   bankConnection BankConnection?
   aiSettings     HouseholdAiSettings?
+  aiUsage        AiUsage[]
   emailConnections EmailConnection[]
   receipts         Receipt[]
   receiptMerchantAliases ReceiptMerchantAlias[]
@@ -2507,6 +2508,31 @@ model HouseholdAiSettings {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// One row per AI provider call (see recordAiUsage in ai-provider.ts) — the
+// feature that made it and the tokens it was billed for, so a spend spike
+// can be traced to its cause from the DB instead of reconstructed from
+// container logs that don't survive a redeploy (2026-10-17: a new inbox's
+// 90-day receipt backfill drained the Gemini prepay and nothing recorded
+// which calls did it). Token counts are null when the call failed or the
+// provider didn't report usage. thinkingTokens is billed at the output rate.
+model AiUsage {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  feature        String
+  provider       AiProvider
+  model          String
+  ok             Boolean
+  inputTokens    Int?
+  outputTokens   Int?
+  thinkingTokens Int?
+
+  createdAt DateTime @default(now())
+
+  @@index([householdId, createdAt])
 }
 
 enum AiConnectionStatus {

@@ -110,6 +110,7 @@ export async function suggestBucketsForMerchants(
     config,
     prompt,
     schema,
+    { feature: "bucket-suggest" },
   );
   if (!parsed) return new Map();
 
@@ -179,6 +180,7 @@ export async function suggestBucketsFromReceipts(
     config,
     prompt,
     schema,
+    { feature: "receipt-reclassify" },
   );
   if (!parsed) return null;
 
@@ -233,6 +235,7 @@ export async function suggestCategoriesForMerchants(
     config,
     prompt,
     schema,
+    { feature: "category-suggest" },
   );
   if (!parsed) return result;
 
@@ -302,6 +305,7 @@ export async function suggestKeywordMatches(
     config,
     prompt,
     schema,
+    { feature: "keyword-match" },
   );
   if (!parsed) return result;
 
@@ -401,7 +405,7 @@ export async function suggestP2PClassifications(
 
   const parsed = await callJson<{
     results: { id: string; bucketName: string | null; categoryName: string | null; confidence: number }[];
-  }>(householdId, config, prompt, schema);
+  }>(householdId, config, prompt, schema, { feature: "p2p-classify" });
   if (!parsed) return result;
 
   const bucketNamed = nameLookup(buckets.map((b) => b.name));
@@ -455,7 +459,7 @@ export async function suggestCategoryForMerchant(
     additionalProperties: false,
   };
 
-  const parsed = await callJson<{ categoryName: string }>(householdId, config, prompt, schema);
+  const parsed = await callJson<{ categoryName: string }>(householdId, config, prompt, schema, { feature: "bill-category" });
   const suggested = parsed?.categoryName?.trim();
   if (!suggested) return null;
 
@@ -601,7 +605,7 @@ export async function parseRoutingRuleFromText(
     newBucketRationale: string | null;
     adjustments: { bucketName: string; newCapDollars: number }[];
     note: string | null;
-  }>(householdId, config, prompt, ROUTING_RULE_SCHEMA);
+  }>(householdId, config, prompt, ROUTING_RULE_SCHEMA, { feature: "routing-rule" });
   if (!parsed) return null;
 
   return {
@@ -662,6 +666,7 @@ export async function suggestBucketIcons(
     config,
     prompt,
     schema,
+    { feature: "bucket-icons" },
   );
   if (!parsed) return result;
 
@@ -1666,12 +1671,12 @@ export async function generateMonthlyReportContent(
     `Recent trend: ${JSON.stringify(trend)}`;
 
   let parsed = await withTimeout(
-    callJson<RawReportContent>(householdId, config, prompt, REPORT_CONTENT_SCHEMA),
+    callJson<RawReportContent>(householdId, config, prompt, REPORT_CONTENT_SCHEMA, { feature: "monthly-report", thinking: "medium" }),
     REPORT_AI_TIMEOUT_MS,
   );
   if (!parsed) {
     parsed = await withTimeout(
-      callJson<RawReportContent>(householdId, config, prompt, REPORT_CONTENT_SCHEMA),
+      callJson<RawReportContent>(householdId, config, prompt, REPORT_CONTENT_SCHEMA, { feature: "monthly-report", thinking: "medium" }),
       REPORT_AI_TIMEOUT_MS,
     );
   }
@@ -1728,9 +1733,9 @@ export async function generateBudgetPlanRedraft(
     `savingsGoals: ${JSON.stringify(context.savingsGoals ?? [])}`;
 
   type Raw = { budgetPlan: RawReportContent["budgetPlan"] };
-  let parsed = await withTimeout(callJson<Raw>(householdId, config, prompt, BUDGET_REDRAFT_SCHEMA), REPORT_AI_TIMEOUT_MS);
+  let parsed = await withTimeout(callJson<Raw>(householdId, config, prompt, BUDGET_REDRAFT_SCHEMA, { feature: "budget-redraft", thinking: "medium" }), REPORT_AI_TIMEOUT_MS);
   if (!parsed) {
-    parsed = await withTimeout(callJson<Raw>(householdId, config, prompt, BUDGET_REDRAFT_SCHEMA), REPORT_AI_TIMEOUT_MS);
+    parsed = await withTimeout(callJson<Raw>(householdId, config, prompt, BUDGET_REDRAFT_SCHEMA, { feature: "budget-redraft", thinking: "medium" }), REPORT_AI_TIMEOUT_MS);
   }
   return parseBudgetPlan(parsed?.budgetPlan ?? null);
 }
@@ -1783,7 +1788,7 @@ export async function generateStartupReportContent(
     `savingsGoalInsights to an empty array — those only apply to the recurring Monthly Report, not this one-time ` +
     `setup report.`;
 
-  const parsed = await callJson<RawReportContent>(householdId, config, prompt, REPORT_CONTENT_SCHEMA);
+  const parsed = await callJson<RawReportContent>(householdId, config, prompt, REPORT_CONTENT_SCHEMA, { feature: "startup-report", thinking: "medium" });
   return parseReportContent(parsed);
 }
 
@@ -1842,7 +1847,7 @@ export async function generateGoalFeedback(
     `sign-off — just the feedback, as if texting a spouse a quick update.\n\n` +
     `${JSON.stringify(input)}`;
 
-  return callText(householdId, config, prompt);
+  return callText(householdId, config, prompt, { feature: "goal-feedback" });
 }
 
 export type GoalPlanMessage = { role: "user" | "assistant"; content: string };
@@ -1948,7 +1953,7 @@ export async function planGoalFromDescription(
     costBreakdown: string | null;
     feedback: string;
     feasible: boolean;
-  }>(householdId, config, prompt, GOAL_PLAN_SCHEMA);
+  }>(householdId, config, prompt, GOAL_PLAN_SCHEMA, { feature: "goal-plan", thinking: "medium" });
   if (!parsed) return null;
 
   const targetAmountCents = dollarsToCents(Number(parsed.targetAmountDollars));
@@ -2047,7 +2052,7 @@ export async function estimateHomeValue(
 }
 
 async function callEstimate(householdId: string, config: AiProviderConfig, prompt: string): Promise<AssetEstimate | null> {
-  const parsed = await callJson<{ valueDollars: number; reasoning: string }>(householdId, config, prompt, ESTIMATE_SCHEMA);
+  const parsed = await callJson<{ valueDollars: number; reasoning: string }>(householdId, config, prompt, ESTIMATE_SCHEMA, { feature: "asset-estimate" });
   if (!parsed) return null;
 
   const valueCents = dollarsToCents(Number(parsed.valueDollars));
@@ -2092,7 +2097,7 @@ export async function summarizeUpcomingBills(
     `after the reimbursement. If anything has paysOff true, call out that it's now paid off by name.` +
     `\n\n${JSON.stringify(bills)}`;
 
-  return callText(householdId, config, prompt);
+  return callText(householdId, config, prompt, { feature: "bills-summary" });
 }
 
 // --- Email receipt extraction (see src/lib/receipt-sync.ts) ---
@@ -2247,21 +2252,33 @@ type RawExtractedReceipt = {
 // message as STALE so it's never re-sent. Dollars -> cents in TS. `kind`
 // is validated against the enum here (off-list -> OTHER) so a schema-less
 // provider can't write a bad enum value downstream.
+// `failed` holds the messages whose AI call itself failed (no provider,
+// outage, quota) — distinct from a message the model answered around and
+// simply left out of an otherwise good response, which the caller counts
+// toward giving up on it (see processBatch in receipt-sync.ts).
 export async function extractReceipts(
   householdId: string,
   messages: { messageId: string; subject: string; from: string; receivedAt: Date; text: string }[],
-): Promise<Map<string, ParsedReceipt>> {
-  const result = new Map<string, ParsedReceipt>();
+): Promise<{ parsed: Map<string, ParsedReceipt>; failed: Set<string> }> {
+  const parsed = new Map<string, ParsedReceipt>();
+  const failed = new Set<string>();
   const config = await getHouseholdAiConfig(householdId);
-  if (!config || messages.length === 0) return result;
+  if (!config) {
+    for (const m of messages) failed.add(m.messageId);
+    return { parsed, failed };
+  }
 
   const BATCH_SIZE = 10;
   for (let i = 0; i < messages.length; i += BATCH_SIZE) {
     const batch = messages.slice(i, i + BATCH_SIZE);
-    const parsed = await extractReceiptBatch(householdId, config, batch);
-    for (const [messageId, receipt] of parsed) result.set(messageId, receipt);
+    const result = await extractReceiptBatch(householdId, config, batch);
+    if (!result) {
+      for (const m of batch) failed.add(m.messageId);
+      continue;
+    }
+    for (const [messageId, receipt] of result) parsed.set(messageId, receipt);
   }
-  return result;
+  return { parsed, failed };
 }
 
 // Null-safe wrapper around money.ts's dollarsToCents — every AI response
@@ -2295,7 +2312,7 @@ async function extractReceiptBatch(
   householdId: string,
   config: AiProviderConfig,
   batch: { messageId: string; subject: string; from: string; receivedAt: Date; text: string }[],
-): Promise<Map<string, ParsedReceipt>> {
+): Promise<Map<string, ParsedReceipt> | null> {
   const result = new Map<string, ParsedReceipt>();
 
   const emailBlocks = batch
@@ -2423,8 +2440,9 @@ async function extractReceiptBatch(
     config,
     prompt,
     RECEIPT_EXTRACT_SCHEMA,
+    { feature: "receipt-extract" },
   );
-  if (!parsed?.results) return result;
+  if (!parsed?.results) return null;
 
   const byId = new Map(batch.map((m) => [m.messageId, m] as const));
   for (const entry of parsed.results) {

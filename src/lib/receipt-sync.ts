@@ -47,6 +47,7 @@ import {
 import { bnplPlanMatchesReceipt, bnplPlanNameResemblesParty } from "@/lib/bnpl-plan-match";
 import { currentWeekKey, daysAgo } from "@/lib/period";
 import { extractReceipts, type ParsedReceipt, type ParsedReceiptLineItem } from "@/lib/ai";
+import { OmissionTracker } from "@/lib/receipt-retry";
 import { matchBillNoticeAmounts, purgeStaleBillNotices } from "@/lib/bill-notice-sync";
 
 const FIRST_POLL_LOOKBACK_MS = 90 * 24 * 60 * 60 * 1000;
@@ -146,6 +147,7 @@ async function pollConnection(
   let oldestPolledUid = conn.oldestPolledUid;
   let batches = 0;
   let more = false;
+  let aiFailed = false;
 
   const mb = await openMailbox(conn.config);
   try {
@@ -178,11 +180,13 @@ async function pollConnection(
       });
       if (messages.length === 0) break;
       batches++;
-      const { unresolvedUids } = await processBatch(householdId, conn.id, messages);
+      const page = await processBatch(householdId, conn.id, messages);
+      const { unresolvedUids } = page;
       if (unresolvedUids.length > 0) {
         // Transient AI failure — don't advance past the first still-unparsed
         // message; the next sync retries from there.
         lastSeenUid = Math.max(lastSeenUid, Math.min(...unresolvedUids) - 1);
+        aiFailed = page.aiFailed;
         more = true;
         break;
       }
@@ -192,7 +196,7 @@ async function pollConnection(
     }
 
     // Phase 2 — backfill (uid < oldestPolledUid, within 90 days), newest-first.
-    while (oldestPolledUid > 1 && batches < maxBatches) {
+    while (!aiFailed && oldestPolledUid > 1 && batches < maxBatches) {
       const { messages, totalMatched } = await mb.fetchWindow({
         sinceDate,
         olderThanUid: oldestPolledUid,
@@ -203,16 +207,20 @@ async function pollConnection(
         break;
       }
       batches++;
-      const { unresolvedUids } = await processBatch(householdId, conn.id, messages);
+      const page = await processBatch(householdId, conn.id, messages);
+      const { unresolvedUids } = page;
       const pageMin = messages[messages.length - 1].uid; // newest-first, so last is oldest
       if (unresolvedUids.length > 0) {
         // Hold above the highest still-unparsed message so the next pass
         // retries it (already-parsed ones above are cheap to re-fetch — they
-        // dedupe on messageId). Don't spin: only "more" if we can still
-        // descend past the hold.
+        // dedupe on messageId). Stop this pass either way: re-fetching the
+        // held page straight away re-sent the same emails up to maxBatches
+        // times per poll. Only "more" if we can still descend past the hold.
         const hold = Math.max(...unresolvedUids) + 1;
         more = hold < oldestPolledUid;
         oldestPolledUid = Math.min(oldestPolledUid, hold);
+        aiFailed = page.aiFailed;
+        break;
       } else {
         oldestPolledUid = pageMin;
         if (totalMatched <= limit) oldestPolledUid = 1; // that was the last page
@@ -227,17 +235,27 @@ async function pollConnection(
     where: { id: conn.id },
     data: { lastSeenUid, oldestPolledUid, lastPolledAt: new Date() },
   });
+  // A failed AI call (quota, outage) ends a full scan's drain loop instead
+  // of spinning MAX_MANUAL_SCAN_ITERATIONS more passes into the same wall —
+  // the next 20-minute sync retries.
+  if (aiFailed) return false;
   return more || oldestPolledUid > 1;
 }
 
+const omissions = new OmissionTracker();
+
 // Dedupe (by messageId), prefilter, AI-extract and upsert one page of
 // fetched mail. Returns the UIDs the AI gave no result for (transient
-// outage / omission) so the caller can hold its cursor and retry them.
+// outage / omission) so the caller can hold its cursor and retry them, and
+// whether an AI call failed outright — the caller stops for this pass
+// rather than re-sending a page into a dead key. An email the model keeps
+// leaving out is given up on after MAX_OMITTED_ATTEMPTS (stored STALE, so
+// it dedupes like any other non-receipt).
 async function processBatch(
   householdId: string,
   connectionId: string,
   messages: RawEmail[],
-): Promise<{ unresolvedUids: number[] }> {
+): Promise<{ unresolvedUids: number[]; aiFailed: boolean }> {
   // A re-fetched message we've already resolved (MATCHED / AMBIGUOUS /
   // DISMISSED / STALE) must never be reopened or re-sent to the AI.
   const seen = new Set(
@@ -259,16 +277,33 @@ async function processBatch(
   const candidates = fresh.filter(
     (m) => !amazonHints.includes(m) && (looksLikeReceipt(m) || looksLikeBillNotice(m)),
   );
-  if (candidates.length === 0) return { unresolvedUids: [] };
+  if (candidates.length === 0) return { unresolvedUids: [], aiFailed: false };
 
-  const parsed = await extractReceipts(householdId, candidates);
+  const { parsed, failed } = await extractReceipts(householdId, candidates);
   const unresolvedUids: number[] = [];
   for (const msg of candidates) {
     const p = parsed.get(msg.messageId);
+    const key = `${connectionId}:${msg.messageId}`;
     if (!p) {
-      unresolvedUids.push(msg.uid);
+      if (failed.has(msg.messageId) || !omissions.omitted(key)) {
+        unresolvedUids.push(msg.uid);
+        continue;
+      }
+      console.warn(`[receipt-sync] giving up on message ${msg.messageId} — the AI left it out of every response`);
+      await db.receipt.upsert({
+        where: { emailConnectionId_messageId: { emailConnectionId: connectionId, messageId: msg.messageId } },
+        create: {
+          householdId,
+          emailConnectionId: connectionId,
+          messageId: msg.messageId,
+          receivedAt: msg.receivedAt,
+          ...receiptDataFrom(undefined, "STALE", msg.receivedAt),
+        },
+        update: {},
+      });
       continue;
     }
+    omissions.resolved(key);
     if (isAmazonSender(msg.from)) fillFromAmazonSubject(p, msg);
     const usable = p.isReceipt && (!p.currency || p.currency === "USD");
     await db.receipt.upsert({
@@ -299,7 +334,7 @@ async function processBatch(
       });
     }
   }
-  return { unresolvedUids };
+  return { unresolvedUids, aiFailed: failed.size > 0 };
 }
 
 // Redundant emails about one order, retired so only the order itself is
@@ -1076,20 +1111,34 @@ async function matchReceiptToBnplPlan(householdId: string, receipt: Receipt, tot
 // ---------------------------------------------------------------------------
 // Purge
 
+// A row is also processBatch's only record that a message was already
+// parsed, so nothing is deleted while the poll's 90-day window can still
+// re-fetch it — a deleted row's email went back to the AI on the next
+// re-fetch (any cursor hold re-reads its page, and this ran every sync).
+// An expired UNMATCHED/AMBIGUOUS receipt is retired to STALE instead, which
+// every reader already ignores, and is deleted once it leaves the window.
 export async function purgeStaleReceipts(householdId: string): Promise<void> {
   const cutoff = new Date(Date.now() - UNMATCHED_TTL_MS);
-  await db.receipt.deleteMany({
+  await db.receipt.updateMany({
     where: {
       householdId,
+      matchState: { in: ["UNMATCHED", "AMBIGUOUS"] },
       OR: [
-        { matchState: { in: ["STALE", "DISMISSED"] } },
-        { matchState: { in: ["UNMATCHED", "AMBIGUOUS"] }, createdAt: { lt: cutoff } },
+        { createdAt: { lt: cutoff } },
         // Also retire by the receipt's own date, not just when we first saw
         // it — a re-ingested 2-month-old order confirmation (e.g. after a
         // backfill re-scan) whose charge never posted shouldn't get a fresh
         // 30-day lease just because its row is new. (2026-08-31)
-        { matchState: { in: ["UNMATCHED", "AMBIGUOUS"] }, occurredOn: { lt: cutoff } },
+        { occurredOn: { lt: cutoff } },
       ],
+    },
+    data: { matchState: "STALE" },
+  });
+  await db.receipt.deleteMany({
+    where: {
+      householdId,
+      matchState: { in: ["STALE", "DISMISSED"] },
+      receivedAt: { lt: new Date(Date.now() - FIRST_POLL_LOOKBACK_MS) },
     },
   });
 }
