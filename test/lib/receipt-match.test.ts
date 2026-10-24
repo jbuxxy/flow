@@ -62,6 +62,15 @@ describe("receiptAmountWhere / receiptSignMatches", () => {
     assert.equal(receiptSignMatches(r, 3_500), true);
     assert.equal(receiptSignMatches(r, -3_500), true);
   });
+
+  test("PAYMENT_SENT to a person over P2P: debit side only", () => {
+    // 2026-10-24: a $30 Venmo to a family member matched a $30 "VENMO
+    // CASHOUT" deposit under the two-sided issuer rule.
+    const r = receipt({ kind: "PAYMENT_SENT", party: "Isabella", partyIsPerson: true, p2pApp: "Venmo" });
+    assert.deepEqual(receiptAmountWhere(r, 3_000), { amountCents: 3_000 });
+    assert.equal(receiptSignMatches(r, 3_000), true);
+    assert.equal(receiptSignMatches(r, -3_000), false);
+  });
 });
 
 describe("receiptMatchWindow", () => {

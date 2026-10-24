@@ -103,6 +103,10 @@ export function receiptAmountWhere(r: ReceiptMatchShape, totalCents: number): Pr
   // A refund is money coming back — only ever the credit (2026-10-04).
   if (r.isRefund) return { amountCents: -totalCents };
   if (r.kind === "PAYMENT_RECEIVED" && isPeerPayment(r)) return { amountCents: -totalCents };
+  // A P2P payment sent to a person is always a debit — the credit-side
+  // allowance below is only for card/loan issuers. Two-sided, a $30 Venmo
+  // to a family member matched a $30 "VENMO CASHOUT" deposit (2026-10-24).
+  if (r.kind === "PAYMENT_SENT" && isPeerPayment(r)) return { amountCents: totalCents };
   if (r.kind === "PAYMENT_RECEIVED" || r.kind === "PAYMENT_SENT") {
     return { OR: [{ amountCents: totalCents }, { amountCents: -totalCents }] };
   }
@@ -115,6 +119,7 @@ export function receiptAmountWhere(r: ReceiptMatchShape, totalCents: number): Pr
 export function receiptSignMatches(r: ReceiptMatchShape, amountCents: number): boolean {
   if (r.isRefund) return amountCents < 0;
   if (r.kind === "PAYMENT_RECEIVED" && isPeerPayment(r)) return amountCents < 0;
+  if (r.kind === "PAYMENT_SENT" && isPeerPayment(r)) return amountCents > 0;
   if (r.kind === "PAYMENT_RECEIVED" || r.kind === "PAYMENT_SENT") return true;
   return amountCents > 0;
 }
