@@ -19,10 +19,29 @@ const RECEIPT_SENDER_HINTS = [
   "receipt@",
   "orders@",
   "order-update",
-  "no-reply@",
-  "noreply@",
   "invoice",
 ];
+
+// A no-reply address used to count as a receipt sender on its own, so every
+// retailer promo with a "$10" in it went to the AI (2026-10-24: Macy's,
+// Klarna, Audible, Coinbase price alerts). Now it also needs a receipt
+// phrase or a transaction-shaped subject ("Receipt #1937698", "Payment
+// Approved") — a 30-day replay of the household's inboxes kept every email
+// that had produced a receipt or bill notice.
+const NOREPLY_SENDER_RE = /^(no-?reply|do-?not-?reply)@/;
+
+// Promo-shaped subjects with no transaction word in them are never sent to
+// the AI, whoever the sender is.
+const PROMO_SUBJECT_RE =
+  /\d+\s?% off|\bsale\b|\bdeals?\b|price alert|top mover|\bsave (up to )?\$|free shipping|limited[- ]time|last chance|ends (tonight|today|soon)|new arrivals|\bshop\b|\bcoupon|promo code|\bgift guide|sign ?up|new here|pick your|just dropped|back in stock|% back|earn \$|you('ve| have) (won|been selected)|exclusive/i;
+const TRANSACTION_SUBJECT_RE =
+  /order|receipt|payment|paid|confirm|refund|invoice|shipped|shipping|delivered|statement|bill|due|purchase|transaction|charged|subscription|renew/i;
+
+export function isPromoSubject(subject: string): boolean {
+  return PROMO_SUBJECT_RE.test(subject) && !TRANSACTION_SUBJECT_RE.test(subject);
+}
+
+const senderAddress = (from: string) => (from.match(/<([^>]+)>/)?.[1] ?? from).trim().toLowerCase();
 
 const RECEIPT_PHRASES = [
   "order confirmation",
@@ -95,6 +114,7 @@ export function isIgnorableVenmoNotification(msg: { subject: string; from: strin
 
 export function looksLikeReceipt(msg: { subject: string; from: string; text: string }): boolean {
   if (isIgnorableVenmoNotification(msg)) return false;
+  if (isPromoSubject(msg.subject)) return false;
 
   const haystack = `${msg.subject}\n${msg.text}`.toLowerCase();
   if (!MONEY_RE.test(haystack)) return false;
@@ -102,10 +122,11 @@ export function looksLikeReceipt(msg: { subject: string; from: string; text: str
   const from = msg.from.toLowerCase();
   const senderHit = RECEIPT_SENDER_HINTS.some((h) => from.includes(h));
   const phraseHit = RECEIPT_PHRASES.some((p) => haystack.includes(p));
+  const noReplyHit = NOREPLY_SENDER_RE.test(senderAddress(msg.from)) && TRANSACTION_SUBJECT_RE.test(msg.subject);
 
   // A recognizable receipt sender + any money is enough; an unknown sender
   // needs both a money amount and a receipt-shaped phrase.
-  return senderHit || phraseHit;
+  return senderHit || phraseHit || noReplyHit;
 }
 
 // Deliberately a separate phrase list from RECEIPT_PHRASES, not folded in —
@@ -133,6 +154,7 @@ const BILL_NOTICE_PHRASES = [
 ];
 
 export function looksLikeBillNotice(msg: { subject: string; from: string; text: string }): boolean {
+  if (isPromoSubject(msg.subject)) return false;
   const haystack = `${msg.subject}\n${msg.text}`.toLowerCase();
   if (!MONEY_RE.test(haystack)) return false;
   return BILL_NOTICE_PHRASES.some((p) => haystack.includes(p));

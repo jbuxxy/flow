@@ -161,8 +161,20 @@ export async function verifyEmailConfig(config: EmailConfig): Promise<string | n
 const MAX_BODY_CHARS = 8_000;
 const MAX_MESSAGES_PER_POLL = 200;
 
+// Links are dropped before the cap: the extractor never needs a URL, and
+// tracking links were ~45% of even real receipts' text (2026-10-24 replay
+// of 30 days of household mail) — billed tokens that also crowded real
+// content out of the cap.
+export function stripLinks(text: string): string {
+  return text
+    .replace(/<?https?:\/\/[^\s>)\]]+>?/g, "")
+    .replace(/\[\s*\]|\(\s*\)/g, "")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n\s*\n+/g, "\n");
+}
+
 function bodyText(parsedText: string | undefined, parsedHtml: string | false | undefined): string {
-  if (parsedText && parsedText.trim()) return parsedText.slice(0, MAX_BODY_CHARS);
+  if (parsedText && parsedText.trim()) return stripLinks(parsedText).slice(0, MAX_BODY_CHARS);
   if (typeof parsedHtml === "string" && parsedHtml.trim()) {
     // Cheap tag strip — the AI extractor only needs the human-readable text,
     // and mailparser already gives us `.text` for most real mail anyway.
@@ -172,7 +184,7 @@ function bodyText(parsedText: string | undefined, parsedHtml: string | false | u
       .replace(/&nbsp;/gi, " ")
       .replace(/\s+/g, " ")
       .trim();
-    return stripped.slice(0, MAX_BODY_CHARS);
+    return stripLinks(stripped).slice(0, MAX_BODY_CHARS);
   }
   return "";
 }
