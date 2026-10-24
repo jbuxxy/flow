@@ -60,7 +60,8 @@ All screenshots are from Flow's built-in read-only example household
   redraft from plain-language instructions.
 - **Income tracking** — detects recurring paychecks from synced deposits,
   shows what's expected this month (including biweekly third-paycheck
-  months), and collects one-off and P2P money into an **Extra Income** pool
+  months) next to what actually landed, learns each paycheck's amount from
+  recent deposits (ignoring outliers), and collects one-off and P2P money into an **Extra Income** pool
   that can cover bucket overspending or roll into month-end surplus.
 - **Transactions** — every synced transaction in one searchable, filterable
   list, with bucket/category assignment, merchant routing rules, pending-
@@ -70,21 +71,28 @@ All screenshots are from Flow's built-in read-only example household
   cards, and BNPL, with a choice of avalanche/snowball/custom attack order,
   an extra-per-paycheck amount, rolling freed-up minimums into the next
   debt, and minimum-payment tracking. Optionally feeds the plan's extra
-  payments into your budget, or keep it as a projection only.
+  payments into your budget, or keep it as a projection only. A card or
+  loan can be added before you know its balance, and a skipped minimum
+  payment stays visible instead of silently disappearing.
 - **Net worth & savings goals** — track assets (including estimated
   vehicle/home/crypto values) and liabilities, and progress toward savings
   targets with baseline tracking so an internal transfer into a linked
   account isn't mistaken for new savings.
-- **Email receipt & bill-notice matching** — connect a read-only IMAP
-  mailbox and Flow will parse order-confirmation emails and auto-attach
-  them to the matching bank charge (with line items, when the email has
-  them), and parse bill/statement emails to cross-check the amount you're
-  tracking against what the biller actually says, flagging drift for
-  review. Nothing is ever marked "read" or modified on the mailbox.
+- **Email receipt & bill-notice matching** — each member can connect a
+  read-only IMAP mailbox, and the owner and a spouse see every family
+  inbox. Flow parses order-confirmation emails and auto-attaches them to
+  the matching bank charge (with line items, when the email has them —
+  including Amazon item names pulled from the subject line), and parses
+  bill/statement emails to cross-check the amount and due date you're
+  tracking against what the biller actually says. Amount drift is flagged
+  for review; a card or loan whose due date changed asks you to confirm,
+  while a bill's due date just updates quietly. Nothing is
+  ever marked "read" or modified on the mailbox.
 - **AI assist** — optional, bring-your-own API key (Gemini, OpenAI,
   Anthropic, or Grok), configured per household, and never required for
   anything to function — every AI call degrades gracefully to "leave it for
-  a human" on failure or when unconfigured. Powers:
+  a human" on failure or when unconfigured. Settings → AI Features shows an
+  AI Usage card with calls and tokens by feature. Powers:
   - Bucket/category suggestions for uncategorized transactions and parsed
     receipts, plus one-click natural-language merchant routing rules
     ("put Amazon under $50 in Household, over $50 in Electronics").
