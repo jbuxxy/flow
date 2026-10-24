@@ -48,6 +48,14 @@ import { bnplPlanMatchesReceipt, bnplPlanNameResemblesParty } from "@/lib/bnpl-p
 import { currentWeekKey, daysAgo } from "@/lib/period";
 import { extractReceipts, type ParsedReceipt, type ParsedReceiptLineItem } from "@/lib/ai";
 import { OmissionTracker } from "@/lib/receipt-retry";
+import {
+  ANY_SUBJECT,
+  senderKey,
+  shouldDeferExtraction,
+  shouldSkipEmail,
+  subjectKey,
+  type SenderStat,
+} from "@/lib/email-sender-verdict";
 import { matchBillNoticeAmounts, purgeStaleBillNotices } from "@/lib/bill-notice-sync";
 
 const FIRST_POLL_LOOKBACK_MS = 90 * 24 * 60 * 60 * 1000;
@@ -82,7 +90,7 @@ export async function runFullScan(householdId: string): Promise<void> {
     // panel's live count and the enriched transactions update progressively
     // rather than all at the end.
     for (let i = 0; i < MAX_MANUAL_SCAN_ITERATIONS; i++) {
-      const { more } = await pollHouseholdEmails(householdId, { maxBatches: 8 });
+      const { more } = await pollHouseholdEmails(householdId, { maxBatches: 8, batchWait: false });
       await matchReceipts(householdId);
       await matchBillNoticeAmounts(householdId);
       if (!more) break;
@@ -110,19 +118,22 @@ export async function runFullScan(householdId: string): Promise<void> {
 
 export async function pollHouseholdEmails(
   householdId: string,
-  opts: { maxBatches?: number } = {},
+  opts: { maxBatches?: number; batchWait?: boolean } = {},
 ): Promise<{ more: boolean }> {
   // `maxBatches` bounds fetch+parse rounds per connection per call: a few
   // for the routine 20-minute sync, more for a manual "Scan Now" (which
-  // also loops runFullScan until `more` is false).
+  // also loops runFullScan until `more` is false). `batchWait` (default on)
+  // holds a few fresh candidates for a fuller AI call — see
+  // shouldDeferExtraction; a manual scan turns it off.
   const maxBatches = Math.max(1, opts.maxBatches ?? 3);
+  const batchWait = opts.batchWait ?? true;
   const connections = await getEmailConnections(householdId);
   if (connections.length === 0) return { more: false };
 
   let more = false;
   for (const conn of connections) {
     try {
-      if (await pollConnection(householdId, conn, maxBatches)) more = true;
+      if (await pollConnection(householdId, conn, maxBatches, batchWait)) more = true;
       await recordEmailHealth(conn.id, null);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -139,6 +150,7 @@ async function pollConnection(
   householdId: string,
   conn: EmailConnectionRow,
   maxBatches: number,
+  batchWait: boolean,
 ): Promise<boolean> {
   const sinceDate = new Date(Date.now() - FIRST_POLL_LOOKBACK_MS);
   const limit = RECEIPT_BATCH_LIMIT;
@@ -180,14 +192,15 @@ async function pollConnection(
       });
       if (messages.length === 0) break;
       batches++;
-      const page = await processBatch(householdId, conn.id, messages);
+      const page = await processBatch(householdId, conn.id, messages, batchWait);
       const { unresolvedUids } = page;
       if (unresolvedUids.length > 0) {
-        // Transient AI failure — don't advance past the first still-unparsed
-        // message; the next sync retries from there.
+        // Transient AI failure, or candidates held for a fuller batch —
+        // don't advance past the first still-unparsed message; the next sync
+        // retries from there.
         lastSeenUid = Math.max(lastSeenUid, Math.min(...unresolvedUids) - 1);
         aiFailed = page.aiFailed;
-        more = true;
+        if (!page.deferred) more = true;
         break;
       }
       lastSeenUid = Math.max(...messages.map((m) => m.uid));
@@ -207,7 +220,7 @@ async function pollConnection(
         break;
       }
       batches++;
-      const page = await processBatch(householdId, conn.id, messages);
+      const page = await processBatch(householdId, conn.id, messages, batchWait);
       const { unresolvedUids } = page;
       const pageMin = messages[messages.length - 1].uid; // newest-first, so last is oldest
       if (unresolvedUids.length > 0) {
@@ -250,12 +263,14 @@ const omissions = new OmissionTracker();
 // whether an AI call failed outright — the caller stops for this pass
 // rather than re-sending a page into a dead key. An email the model keeps
 // leaving out is given up on after MAX_OMITTED_ATTEMPTS (stored STALE, so
-// it dedupes like any other non-receipt).
+// it dedupes like any other non-receipt). `deferred` = the candidates were
+// held for a fuller AI call (batchWait), not failed.
 async function processBatch(
   householdId: string,
   connectionId: string,
   messages: RawEmail[],
-): Promise<{ unresolvedUids: number[]; aiFailed: boolean }> {
+  batchWait: boolean,
+): Promise<{ unresolvedUids: number[]; aiFailed: boolean; deferred?: boolean }> {
   // A re-fetched message we've already resolved (MATCHED / AMBIGUOUS /
   // DISMISSED / STALE) must never be reopened or re-sent to the AI.
   const seen = new Set(
@@ -274,10 +289,43 @@ async function processBatch(
   const amazonHints = fresh.filter((m) => storeAmazonProductHint(householdId, connectionId, m, "check"));
   for (const m of amazonHints) await storeAmazonProductHint(householdId, connectionId, m, "store");
 
-  const candidates = fresh.filter(
+  const prefiltered = fresh.filter(
     (m) => !amazonHints.includes(m) && (looksLikeReceipt(m) || looksLikeBillNotice(m)),
   );
+
+  // Learned skip list: a sender / subject shape the AI keeps calling "not a
+  // receipt" is stored STALE without a call, so it dedupes like any other
+  // non-receipt (see email-sender-verdict.ts).
+  const stats = await loadSenderStats(householdId, prefiltered);
+  const now = new Date();
+  const candidates: RawEmail[] = [];
+  for (const m of prefiltered) {
+    const sender = senderKey(m.from);
+    const skip = shouldSkipEmail(
+      stats.get(statKey(sender, ANY_SUBJECT)),
+      stats.get(statKey(sender, subjectKey(m.subject))),
+      now,
+    );
+    if (!skip) {
+      candidates.push(m);
+      continue;
+    }
+    await db.receipt.upsert({
+      where: { emailConnectionId_messageId: { emailConnectionId: connectionId, messageId: m.messageId } },
+      create: {
+        householdId,
+        emailConnectionId: connectionId,
+        messageId: m.messageId,
+        receivedAt: m.receivedAt,
+        ...receiptDataFrom(undefined, "STALE", m.receivedAt),
+      },
+      update: {},
+    });
+  }
   if (candidates.length === 0) return { unresolvedUids: [], aiFailed: false };
+  if (batchWait && shouldDeferExtraction(candidates, now)) {
+    return { unresolvedUids: candidates.map((m) => m.uid), aiFailed: false, deferred: true };
+  }
 
   const { parsed, failed } = await extractReceipts(householdId, candidates);
   const unresolvedUids: number[] = [];
@@ -304,6 +352,7 @@ async function processBatch(
       continue;
     }
     omissions.resolved(key);
+    await recordSenderVerdict(householdId, msg, p.isReceipt || p.billNotice != null);
     if (isAmazonSender(msg.from)) fillFromAmazonSubject(p, msg);
     const usable = p.isReceipt && (!p.currency || p.currency === "USD");
     await db.receipt.upsert({
@@ -335,6 +384,41 @@ async function processBatch(
     }
   }
   return { unresolvedUids, aiFailed: failed.size > 0 };
+}
+
+const statKey = (sender: string, subject: string) => `${sender}\n${subject}`;
+
+async function loadSenderStats(householdId: string, messages: RawEmail[]): Promise<Map<string, SenderStat>> {
+  const out = new Map<string, SenderStat>();
+  if (messages.length === 0) return out;
+  const rows = await db.emailSenderStat.findMany({
+    where: { householdId, sender: { in: [...new Set(messages.map((m) => senderKey(m.from)))] } },
+  });
+  for (const r of rows) out.set(statKey(r.sender, r.subjectKey), r);
+  return out;
+}
+
+// Tallies one AI verdict on both the sender row and its subject-shape row.
+async function recordSenderVerdict(householdId: string, msg: RawEmail, useful: boolean): Promise<void> {
+  const sender = senderKey(msg.from);
+  const lastAiCheckAt = new Date();
+  for (const subject of [ANY_SUBJECT, subjectKey(msg.subject)]) {
+    await db.emailSenderStat.upsert({
+      where: { householdId_sender_subjectKey: { householdId, sender, subjectKey: subject } },
+      create: {
+        householdId,
+        sender,
+        subjectKey: subject,
+        usefulCount: useful ? 1 : 0,
+        uselessCount: useful ? 0 : 1,
+        uselessStreak: useful ? 0 : 1,
+        lastAiCheckAt,
+      },
+      update: useful
+        ? { usefulCount: { increment: 1 }, uselessStreak: 0, lastAiCheckAt }
+        : { uselessCount: { increment: 1 }, uselessStreak: { increment: 1 }, lastAiCheckAt },
+    });
+  }
 }
 
 // Redundant emails about one order, retired so only the order itself is

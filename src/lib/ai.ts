@@ -2324,50 +2324,48 @@ async function extractReceiptBatch(
     )
     .join("\n\n");
 
+  // The lender/issuer payment-confirmation rules are defined once (the
+  // "ISSUER PAYMENT" paragraph) and referenced by each field below — they
+  // used to be restated per field, which made this ~2.7K-token instruction
+  // block, re-sent on every call, the bulk of receipt-reading's input
+  // tokens (2026-10-23).
   const prompt =
     `You are extracting structured data from emails that may be purchase receipts, order ` +
     `confirmations, subscription receipts, or peer-to-peer payment notifications (Venmo, PayPal, ` +
     `Cash App, Zelle). For EACH email below, return one result object.\n\n` +
+    `ISSUER PAYMENT: a Buy Now Pay Later lender (Klarna / Affirm / Afterpay / Zip / Sezzle / PayPal ` +
+    `Pay in 4) or a traditional credit card / loan servicer (Chase, Citi, Capital One, Discover, a ` +
+    `mortgage/auto lender, etc.) confirming that ONE specific payment posted — "We've received your ` +
+    `payment", "Payment received [for <store>]", "Thanks for your payment", "Your payment was ` +
+    `successful", "Amount paid $X". The household's money left their bank and reached this issuer. ` +
+    `It often uses statement-like formatting (an Account/Posted date/Payment amount table) and also ` +
+    `shows plan/balance progress ("paid off $X of $Y", a remaining balance, a next-due date) — that ` +
+    `is context, not the transaction. Only a genuine periodic statement (several transactions, or a ` +
+    `balance/due-date summary with no specific payment just received) is NOT an issuer payment.\n\n` +
     `- "isReceipt": false for anything that is NOT a record of a specific completed transaction — ` +
     `marketing, a shipping notice with no amount, a payment *request* you haven't paid, a periodic ` +
     `bank/card STATEMENT summary (multiple transactions, a billing-cycle total, a minimum-due/due-date ` +
-    `notice), a newsletter. When false, the other fields can be null/empty. But a credit card or loan ` +
-    `issuer's own confirmation that ONE specific payment posted — "We've received your payment", ` +
-    `"Your payment was successful", "Payment received", a Posted date + Payment amount for a single ` +
-    `payment — IS a receipt (isReceipt true, kind PAYMENT_SENT) even though it's from the issuer/ ` +
-    `lender itself and uses statement-like formatting (an Account/Posted date/Payment amount table); ` +
-    `the household's money left their bank and reached this issuer, which is exactly the "completed ` +
-    `transaction" this field exists to catch. Only the genuine periodic statement — several ` +
-    `transactions, or a balance/due-date summary with no specific payment just received — is the ` +
-    `false case. This applies whether the issuer is a Buy Now Pay Later lender (Klarna / Affirm / ` +
-    `Afterpay / Zip / Sezzle / PayPal Pay in 4: "Thanks for your payment", "Payment received for ` +
-    `<store>", "Amount paid $X") or a traditional credit card / loan servicer (Chase, Citi, Capital ` +
-    `One, Discover, a mortgage/auto lender, etc. — "We've received your credit card payment", ` +
-    `"Payment received", "Thank you for your payment") — keep isReceipt true even though the same ` +
-    `email also shows plan/balance progress ("paid off $X of $Y", a remaining balance, a next-due ` +
-    `date); those are context, not the transaction.\n` +
+    `notice), a newsletter. When false, the other fields can be null/empty. An ISSUER PAYMENT is ` +
+    `always true.\n` +
     `- "kind": one of ORDER_CONFIRMATION (bought goods), PAYMENT_SENT, PAYMENT_RECEIVED, SUBSCRIPTION ` +
     `(recurring service receipt), SHIPPING (a shipment notice that still carries an itemized total), ` +
     `OTHER. PAYMENT_RECEIVED also covers a non-P2P notice that real money came BACK to the household ` +
     `from a business or institution — a card issuer's statement/rewards credit, a cashback deposit, a ` +
     `merchant refund or reimbursement confirmation — not just a P2P "X paid you"; don't fall back to ` +
     `OTHER just because there's no person on the other end. For a P2P notification, PAYMENT_SENT vs ` +
-    `PAYMENT_RECEIVED is from the MAILBOX OWNER's / ` +
-    `their household's side: "You paid X" is SENT; "X paid you" is RECEIVED. A lender or card ` +
-    `issuer's own confirmation that a payment posted — BNPL (Klarna/Affirm/Afterpay/etc.) or a ` +
-    `traditional credit card/loan servicer (Chase, Citi, Capital One, a mortgage/auto lender) — is ` +
-    `PAYMENT_SENT (the household's money went to that issuer/lender), never PAYMENT_RECEIVED, ` +
-    `regardless of how statement-like the email's own formatting looks. A "<Person> received a ` +
-    `payment" notice (you get these managing a family/teen account) with body "<A> paid <Person>": ` +
-    `if <A> is the mailbox owner or an immediate family member (same surname as the account holder / ` +
-    `the @handles in the email, or an obvious parent funding a child's account) it is SENT — the ` +
-    `household's money went out. If <A> is an unrelated outside individual paying that family member ` +
-    `back, it is RECEIVED — the money landed in their app balance, not the household's bank.\n` +
+    `PAYMENT_RECEIVED is from the MAILBOX OWNER's / their household's side: "You paid X" is SENT; ` +
+    `"X paid you" is RECEIVED. An ISSUER PAYMENT is always PAYMENT_SENT, never PAYMENT_RECEIVED. A ` +
+    `"<Person> received a payment" notice (you get these managing a family/teen account) with body ` +
+    `"<A> paid <Person>": if <A> is the mailbox owner or an immediate family member (same surname as ` +
+    `the account holder / the @handles in the email, or an obvious parent funding a child's account) ` +
+    `it is SENT — the household's money went out. If <A> is an unrelated outside individual paying ` +
+    `that family member back, it is RECEIVED — the money landed in their app balance, not the ` +
+    `household's bank.\n` +
     `- "party": the OTHER side of the transaction as a clean, human-readable name — the merchant ` +
     `("Amazon", "Blue Bottle Coffee", not "SQ *BLUE BOTTLE #4432"), or the person on the other end ` +
-    `of a P2P payment. For a BNPL lender's email (sender is Klarna / Affirm / Afterpay / etc.), party ` +
-    `is the STORE the purchase was for, NOT the lender — "Payment received for GlassesUSA.com" → ` +
-    `"GlassesUSA", "Thanks for your payment ... for Nike" → "Nike". Null if genuinely unclear. Every P2P body has one "<A> paid <B> $<amount>" ` +
+    `of a P2P payment. For a BNPL lender's email, party is the STORE the purchase was for, NOT the ` +
+    `lender — "Payment received for GlassesUSA.com" → "GlassesUSA", "Thanks for your payment ... for ` +
+    `Nike" → "Nike". Null if genuinely unclear. Every P2P body has one "<A> paid <B> $<amount>" ` +
     `sentence. For a SENT payment the party is <B>, the name RIGHT AFTER "paid" — verbatim, first ` +
     `name only if that's all it gives, do NOT append a surname it doesn't state ("You paid Sarah", ` +
     `"Morgan Carter paid Taylor", subject "Taylor received a payment" → party "Taylor"). For a ` +
@@ -2382,27 +2380,21 @@ async function extractReceiptBatch(
     `- "p2pApp": for a P2P payment, which app it is — "Venmo", "PayPal", "Cash App", "Zelle", or ` +
     `"Apple Cash" (infer from the sender address or the email's branding). Null for any non-P2P receipt.\n` +
     `- "totalDollars": the amount actually charged or transferred (order total WITH tax and shipping, ` +
-    `or the P2P amount). A plain number, no currency symbol. Null if not stated. For a lender/card ` +
-    `issuer's own payment confirmation (BNPL or a traditional card/loan servicer) this is the amount ` +
-    `of THIS payment (the "Payment amount" / "Amount paid" / "payment of $X received" figure) — never ` +
-    `a plan's full price, a remaining/"paid off"/new balance, a minimum due, or the next scheduled ` +
-    `payment, even when the same email prints all of those alongside it.\n` +
+    `or the P2P amount). A plain number, no currency symbol. Null if not stated. For an ISSUER ` +
+    `PAYMENT, the amount of THIS payment ("Payment amount" / "Amount paid") — never a plan's full ` +
+    `price, a remaining/"paid off"/new balance, a minimum due, or the next scheduled payment.\n` +
     `- "currency": ISO 4217 code (e.g. "USD"). Null if you can't tell.\n` +
     `- "occurredOn": the order/payment/transaction date as YYYY-MM-DD. Look for it anywhere in the ` +
     `body — "Paid on", "Transaction date", "Order date", "Order placed", a date printed next to the ` +
     `total or the payment method. Use that, NOT the email's send date, when they differ. Only null if ` +
-    `the body genuinely states no date at all. EXCEPTION — a lender/card issuer's own payment ` +
-    `confirmation (BNPL or a traditional card/loan servicer): this is the date THIS payment posted ` +
-    `("Posted date", "your payment ... was successful on <date>"). If the email doesn't state that ` +
-    `date explicitly, return null — do NOT fall back to an original order/agreement date, a statement ` +
-    `date, or a next-due date shown elsewhere in the same email, which points at the wrong bank ` +
-    `charge (or none at all).\n` +
+    `the body genuinely states no date at all. For an ISSUER PAYMENT, the date THIS payment posted ` +
+    `("Posted date", "your payment ... was successful on <date>") — null if not stated explicitly; ` +
+    `never fall back to an original order/agreement date, a statement date, or a next-due date, which ` +
+    `points at the wrong bank charge (or none at all).\n` +
     `- "orderNumber": the merchant's order / confirmation / invoice / transaction ID, verbatim. Null ` +
-    `if none. For a lender/card issuer's own payment confirmation (BNPL or a traditional card/loan ` +
-    `servicer), null unless the email gives an ID for THIS payment itself — an account number, a plan's ` +
-    `original order number, or a loan/card account ID identifies the plan/account, not this specific ` +
-    `payment, and would collide with the plan's own purchase receipt or a different payment on the ` +
-    `same account.\n` +
+    `if none. For an ISSUER PAYMENT, null unless the email gives an ID for THIS payment itself — an ` +
+    `account number, a plan's original order number, or a loan/card account ID would collide with the ` +
+    `plan's own purchase receipt or a different payment on the same account.\n` +
     `- "isRefund": true ONLY when the email confirms a merchant is giving money back for a return, ` +
     `refund, cancellation or price adjustment ("Refund amount", "Your refund has been issued", "We've ` +
     `refunded $X to ..."). totalDollars is then the refunded amount and lineItems the returned items. ` +
@@ -2421,17 +2413,15 @@ async function extractReceiptBatch(
     `Empty array for a P2P payment or when the email has no itemization.\n` +
     `- "billNotice": populate ONLY for a genuine UNPAID amount-due notice — "Your bill is ready", ` +
     `"Amount Due", "Auto Pay is scheduled for $X on <date>", a credit card/loan issuer's statement-` +
-    `ready or minimum-due notice. This is the exact statement-summary/minimum-due shape "isReceipt" ` +
-    `above excludes — the two fields describe different things about the same email and are never ` +
-    `both meaningful: null whenever isReceipt is true (a completed payment, nothing newly "due"), and ` +
-    `also null for a full multi-transaction statement with no single due-amount headline, marketing, ` +
-    `or anything else. When populated: "billerName" is the same clean, human-readable convention as ` +
-    `"party" above (the utility/card/loan company itself, e.g. "Fairview City Water", "Verizon", ` +
-    `"PayPal Credit" — never the mailbox owner). "amountDueDollars" is the total amount now due (the ` +
-    `minimum payment for a card/loan, or the full bill for a utility/subscription) — a plain number, ` +
-    `no currency symbol. "dueDate" is the payment due date as YYYY-MM-DD, null if not stated. ` +
-    `"accountLast4" is the last 4 digits of the account/card number ONLY if the email states them ` +
-    `explicitly (e.g. "...1234", "ending in 1234") — null otherwise, never guessed.\n\n` +
+    `ready or minimum-due notice (the shape "isReceipt" excludes). Null whenever isReceipt is true, ` +
+    `and for a full multi-transaction statement with no single due-amount headline, marketing, or ` +
+    `anything else. When populated: "billerName" follows the "party" convention (the utility/card/ ` +
+    `loan company itself, e.g. "Fairview City Water", "Verizon", "PayPal Credit" — never the mailbox ` +
+    `owner). "amountDueDollars" is the total amount now due (the minimum payment for a card/loan, or ` +
+    `the full bill for a utility/subscription) — a plain number, no currency symbol. "dueDate" is the ` +
+    `payment due date as YYYY-MM-DD, null if not stated. "accountLast4" is the last 4 digits of the ` +
+    `account/card number ONLY if the email states them explicitly (e.g. "...1234", "ending in 1234") ` +
+    `— null otherwise, never guessed.\n\n` +
     `Return "messageId" exactly as given for each.\n\n` +
     `Emails:\n${emailBlocks}`;
 

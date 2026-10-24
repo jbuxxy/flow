@@ -170,6 +170,7 @@ model Household {
   bankConnection BankConnection?
   aiSettings     HouseholdAiSettings?
   aiUsage        AiUsage[]
+  emailSenderStats EmailSenderStat[]
   emailConnections EmailConnection[]
   receipts         Receipt[]
   receiptMerchantAliases ReceiptMerchantAlias[]
@@ -3079,4 +3080,22 @@ model BillAmountReview {
 
   @@index([householdId])
   @@index([billId])
+}
+
+// Tallies of the AI's receipt-reading verdicts, per sender (subjectKey "")
+// and per sender + subject shape — the learned skip list in
+// src/lib/email-sender-verdict.ts. "Useful" = a receipt or a bill notice.
+model EmailSenderStat {
+  id          String    @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  sender        String
+  subjectKey    String
+  usefulCount   Int      @default(0)
+  uselessCount  Int      @default(0)
+  uselessStreak Int      @default(0)
+  lastAiCheckAt DateTime
+
+  @@unique([householdId, sender, subjectKey])
 }
