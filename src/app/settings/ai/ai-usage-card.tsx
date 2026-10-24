@@ -31,6 +31,7 @@ const compact = new Intl.NumberFormat("en-US", { notation: "compact", maximumFra
 const fmt = (n: number) => compact.format(n);
 const totalTokens = (f: AiUsageFeatureTotals) => f.inputTokens + f.outputTokens + f.thinkingTokens;
 const plural = (n: number, word: string) => `${n.toLocaleString("en-US")} ${word}${n === 1 ? "" : "s"}`;
+const sharePctLabel = (pct: number) => (pct > 0 && pct < 1 ? "<1%" : `${Math.round(pct)}%`);
 
 export function AiUsageCard({ summary }: { summary: AiUsageSummary }) {
   const [expanded, setExpanded] = useStoredBoolean(STORAGE_KEY, false);
@@ -68,15 +69,25 @@ export function AiUsageCard({ summary }: { summary: AiUsageSummary }) {
             </p>
           ) : (
             <ul className="mt-3 flex flex-col divide-y divide-neutral-100 dark:divide-neutral-800">
-              {summary.features.map((f) => (
+              {summary.features.map((f) => {
+                // Each bar is this feature's share of the window's tokens, so
+                // the bars together add up to 100%.
+                const sharePct = tokens > 0 ? (totalTokens(f) / tokens) * 100 : 0;
+                return (
                 <li key={f.feature} className="py-2 first:pt-0 last:pb-0">
                   <div className="flex items-baseline justify-between gap-3 text-sm">
                     <span className="min-w-0 truncate font-medium text-neutral-900 dark:text-neutral-100">
                       {FEATURE_LABEL[f.feature] ?? f.feature}
                     </span>
                     <span className="shrink-0 tabular-nums text-neutral-900 dark:text-neutral-100">
-                      {fmt(totalTokens(f))} Tokens
+                      {fmt(totalTokens(f))} Tokens · {sharePctLabel(sharePct)}
                     </span>
+                  </div>
+                  <div className="mt-1.5 h-2.5 w-full overflow-hidden rounded-full bg-blue-50 dark:bg-neutral-800">
+                    <div
+                      className="chart-bar h-full min-w-[3px] rounded-full bg-emerald-600 dark:bg-emerald-500"
+                      style={{ width: `${sharePct}%` }}
+                    />
                   </div>
                   <p className="mt-0.5 text-xs tabular-nums text-gray-500 dark:text-neutral-400">
                     {plural(f.calls, "Call")}
@@ -85,7 +96,8 @@ export function AiUsageCard({ summary }: { summary: AiUsageSummary }) {
                     {fmt(f.inputTokens)} In · {fmt(f.outputTokens)} Out · {fmt(f.thinkingTokens)} Thinking
                   </p>
                 </li>
-              ))}
+                );
+              })}
             </ul>
           )}
           <p className="mt-3 text-xs text-gray-500 dark:text-neutral-400">
