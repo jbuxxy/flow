@@ -72,7 +72,13 @@ export function BucketProgressBar({
         >
           {funded ? "Fully funded" : `${formatCents(remainingCents)} to go`}
         </p>
-      ) : progress.onPaceToOvershoot && progress.spentPct < 100 ? (
+      ) : progress.spentPct >= 100 && progress.paceFraction > 0 ? (
+        // Already over: the projection still says how far over the month is
+        // headed, so it shows regardless of the pace-alert flag.
+        <p className="mt-1 text-xs text-red-700 dark:text-red-400">
+          On pace for {formatCents(progress.projectedMonthEndCents)} this month
+        </p>
+      ) : progress.onPaceToOvershoot ? (
         <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
           On pace for {formatCents(progress.projectedMonthEndCents)} this month
         </p>
