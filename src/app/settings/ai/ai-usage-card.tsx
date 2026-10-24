@@ -1,6 +1,7 @@
 "use client";
 
 import { ChevronDown } from "lucide-react";
+import { CircularProgress } from "@/components/circular-progress";
 import { useStoredBoolean } from "@/lib/use-stored-boolean";
 import type { AiUsageSummary, AiUsageFeatureTotals } from "@/lib/ai-usage";
 
@@ -70,31 +71,33 @@ export function AiUsageCard({ summary }: { summary: AiUsageSummary }) {
           ) : (
             <ul className="mt-3 flex flex-col divide-y divide-neutral-100 dark:divide-neutral-800">
               {summary.features.map((f) => {
-                // Each bar is this feature's share of the window's tokens, so
-                // the bars together add up to 100%.
+                // Each ring is this feature's share of the window's tokens,
+                // so the rings together add up to 100%.
                 const sharePct = tokens > 0 ? (totalTokens(f) / tokens) * 100 : 0;
                 return (
-                <li key={f.feature} className="py-2 first:pt-0 last:pb-0">
-                  <div className="flex items-baseline justify-between gap-3 text-sm">
-                    <span className="min-w-0 truncate font-medium text-neutral-900 dark:text-neutral-100">
-                      {FEATURE_LABEL[f.feature] ?? f.feature}
-                    </span>
-                    <span className="shrink-0 tabular-nums text-neutral-900 dark:text-neutral-100">
-                      {fmt(totalTokens(f))} Tokens · {sharePctLabel(sharePct)}
-                    </span>
+                <li key={f.feature} className="flex items-center gap-3 py-2 first:pt-0 last:pb-0">
+                  <CircularProgress
+                    pct={sharePct}
+                    size={44}
+                    strokeWidth={5}
+                    label={sharePctLabel(sharePct)}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline justify-between gap-3 text-sm">
+                      <span className="min-w-0 truncate font-medium text-neutral-900 dark:text-neutral-100">
+                        {FEATURE_LABEL[f.feature] ?? f.feature}
+                      </span>
+                      <span className="shrink-0 tabular-nums text-neutral-900 dark:text-neutral-100">
+                        {fmt(totalTokens(f))} Tokens
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-xs tabular-nums text-gray-500 dark:text-neutral-400">
+                      {plural(f.calls, "Call")}
+                      {f.failed > 0 && <span className="text-amber-700 dark:text-amber-400"> ({f.failed} Failed)</span>}
+                      {" · "}
+                      {fmt(f.inputTokens)} In · {fmt(f.outputTokens)} Out · {fmt(f.thinkingTokens)} Thinking
+                    </p>
                   </div>
-                  <div className="mt-1.5 h-2.5 w-full overflow-hidden rounded-full bg-blue-50 dark:bg-neutral-800">
-                    <div
-                      className="chart-bar h-full min-w-[3px] rounded-full bg-emerald-600 dark:bg-emerald-500"
-                      style={{ width: `${sharePct}%` }}
-                    />
-                  </div>
-                  <p className="mt-0.5 text-xs tabular-nums text-gray-500 dark:text-neutral-400">
-                    {plural(f.calls, "Call")}
-                    {f.failed > 0 && <span className="text-amber-700 dark:text-amber-400"> ({f.failed} Failed)</span>}
-                    {" · "}
-                    {fmt(f.inputTokens)} In · {fmt(f.outputTokens)} Out · {fmt(f.thinkingTokens)} Thinking
-                  </p>
                 </li>
                 );
               })}
