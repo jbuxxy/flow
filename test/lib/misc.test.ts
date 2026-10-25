@@ -2,6 +2,7 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
 import { computeProgress, oneTimeFundedOn } from "@/lib/buckets";
+import { billDriftCents } from "@/lib/bill-price-drift";
 import { budgetedDebtPaymentCents } from "@/lib/debt-payment-budget";
 import {
   classifyCadence as billClassifyCadence,
@@ -87,6 +88,39 @@ describe("buckets.computeProgress", () => {
 
   test("a zero cap yields spentPct 0 rather than dividing by zero", () => {
     assert.equal(computeProgress({ ...bucket, monthlyCapCents: 0 }, 5_000, 0.5, "calendar", false).spentPct, 0);
+  });
+
+  // 2026-10-25: Subscriptions at $58.75 / $58.66 from 2-4¢ price creep.
+  const subs = { ...bucket, name: "Subscriptions", monthlyCapCents: 5_866, trackingMode: "RECURRING" as const };
+  test("bill price drift is absorbed into a recurring bucket's cap", () => {
+    const p = computeProgress(subs, 5_875, 1, "schedule", false, 0, 9);
+    assert.equal(p.monthlyCapCents, 5_875);
+    assert.equal(p.remainingCents, 0);
+  });
+  test("drift never lifts the cap past what was spent", () => {
+    assert.equal(computeProgress(subs, 5_870, 1, "schedule", false, 0, 9).monthlyCapCents, 5_870);
+    assert.equal(computeProgress(subs, 5_000, 1, "schedule", false, 0, 9).monthlyCapCents, 5_866);
+  });
+  test("an unbudgeted charge still reads over", () => {
+    assert.ok(computeProgress(subs, 7_875, 1, "schedule", false, 0, 9).remainingCents < 0);
+  });
+  test("a recurring bucket is never 'on pace to go over'", () => {
+    assert.equal(computeProgress(subs, 5_000, 0.5, "schedule", false).onPaceToOvershoot, false);
+  });
+});
+
+describe("billDriftCents", () => {
+  test("a few cents of creep is drift", () => {
+    assert.equal(billDriftCents(1_608, 1_611), 3);
+  });
+  test("up to max(3%, $1) counts; past it is a real price change", () => {
+    assert.equal(billDriftCents(2_000, 2_100), 100);
+    assert.equal(billDriftCents(2_000, 2_101), 0);
+    assert.equal(billDriftCents(10_000, 10_300), 300);
+    assert.equal(billDriftCents(10_000, 10_301), 0);
+  });
+  test("a price drop is not drift", () => {
+    assert.equal(billDriftCents(1_611, 1_608), 0);
   });
 });
 

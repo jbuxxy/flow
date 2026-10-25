@@ -1,5 +1,5 @@
 import { formatCents } from "@/lib/money";
-import { bucketStatus, STATUS_BAR_CLASS } from "@/lib/bucket-status";
+import { bucketStatus, isBucketOverBudget, STATUS_BAR_CLASS } from "@/lib/bucket-status";
 import { BucketIcon } from "@/components/bucket-icon";
 import type { BucketProgress } from "@/lib/buckets";
 
@@ -72,7 +72,7 @@ export function BucketProgressBar({
         >
           {funded ? "Fully funded" : `${formatCents(remainingCents)} to go`}
         </p>
-      ) : progress.spentPct >= 100 && progress.paceFraction > 0 ? (
+      ) : isBucketOverBudget(progress) && progress.paceFraction > 0 ? (
         // Already over: the projection still says how far over the month is
         // headed, so it shows regardless of the pace-alert flag.
         <p className="mt-1 text-xs text-red-700 dark:text-red-400">

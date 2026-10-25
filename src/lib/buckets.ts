@@ -11,6 +11,7 @@ import { SPEND_TX_SELECT, netSpendCents, ACCOUNTED_FOR_SELECT, accountedForCents
 import { budgetedDebtPaymentCents } from "@/lib/debt-payment-budget";
 import { todayAsUTCDate } from "@/lib/date";
 import { budgetTrackedWhere } from "@/lib/budget-tracked";
+import { billDriftCents, driftCapBumpCents } from "@/lib/bill-price-drift";
 import type { BucketAlertLevel, BucketTrackingMode, BillCadence, NotificationType, Prisma } from "@prisma/client";
 
 const NOTIFICATION_TYPE_BY_ALERT_LEVEL: Record<BucketAlertLevel, NotificationType> = {
@@ -233,12 +234,20 @@ export function computeProgress(
   // never touch the feature (autoApplyAdHocIncomeToBuckets off) don't have
   // to thread a param they'll never use.
   topUpCents = 0,
+  // This period's absorbable bill price drift (billDriftByBucketId) — the
+  // cap grows by it only as far as the bucket is actually over.
+  billDriftCentsForBucket = 0,
 ): BucketProgress {
-  const effectiveCapCents = bucket.monthlyCapCents + topUpCents;
+  const toppedUpCapCents = bucket.monthlyCapCents + topUpCents;
+  const effectiveCapCents =
+    toppedUpCapCents + driftCapBumpCents(toppedUpCapCents, spentCents, billDriftCentsForBucket);
   const spentPct = effectiveCapCents > 0 ? (spentCents / effectiveCapCents) * 100 : 0;
   const projectedMonthEndCents =
     paceFraction > 0 ? Math.round(spentCents / paceFraction) : spentCents;
+  // A RECURRING bucket only holds scheduled charges — "spending faster than
+  // the month" doesn't apply; it still reads over once actually over.
   const onPaceToOvershoot =
+    bucket.trackingMode !== "RECURRING" &&
     bucket.paceAlertEnabled &&
     paceFraction > 0 &&
     spentCents > effectiveCapCents * paceFraction * bucket.paceSensitivity;
@@ -262,6 +271,48 @@ export function computeProgress(
     topUpCents,
     excludedFromAllocation: bucket.excludedFromAllocation,
   };
+}
+
+// Per RECURRING/MIXED bucket, the absorbable price drift (billDriftCents) of
+// each bill paid this period against its last payment before the period.
+export async function billDriftByBucketId(
+  householdId: string,
+  utcStart: Date,
+  utcEnd: Date,
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  const current = await db.transaction.findMany({
+    where: {
+      householdId,
+      billId: { not: null },
+      amountCents: { gt: 0 },
+      occurredOn: { gte: utcStart, lt: utcEnd },
+      bill: { bucket: { trackingMode: { in: ["RECURRING", "MIXED"] } } },
+    },
+    select: { billId: true, amountCents: true, bill: { select: { bucketId: true } } },
+  });
+  if (current.length === 0) return out;
+  const previous = await db.transaction.findMany({
+    where: { billId: { in: [...new Set(current.map((t) => t.billId!))] }, amountCents: { gt: 0 }, occurredOn: { lt: utcStart } },
+    orderBy: { occurredOn: "desc" },
+    distinct: ["billId"],
+    select: { billId: true, amountCents: true },
+  });
+  const previousByBill = new Map(previous.map((t) => [t.billId!, t.amountCents]));
+  // This period's total per bill — an extra same-cycle charge makes it a
+  // big jump, which billDriftCents rightly refuses to absorb.
+  const currentByBill = new Map<string, { bucketId: string | null; cents: number }>();
+  for (const t of current) {
+    const row = currentByBill.get(t.billId!) ?? { bucketId: t.bill?.bucketId ?? null, cents: 0 };
+    row.cents += t.amountCents;
+    currentByBill.set(t.billId!, row);
+  }
+  for (const [billId, { bucketId, cents }] of currentByBill) {
+    const prev = previousByBill.get(billId);
+    if (!bucketId || prev === undefined) continue;
+    out.set(bucketId, (out.get(bucketId) ?? 0) + billDriftCents(prev, cents));
+  }
+  return out;
 }
 
 // A bucket's total spend within an arbitrary date range — same debt-payment-
@@ -437,7 +488,7 @@ export async function getBucketsWithProgress(
   // payment, so spendByBucketInRange's debt-payment arm has nothing to add.
   // Loaded in the same batch (same bucket filter plus excludedFromAllocation)
   // rather than after it.
-  const [topUpCentsByBucketId, buckets, unconfirmedBills, spentByBucketId, oneTimeRows] = await Promise.all([
+  const [topUpCentsByBucketId, buckets, unconfirmedBills, spentByBucketId, oneTimeRows, driftByBucketId] = await Promise.all([
     getBucketTopUpCentsByBucketId(householdId, period),
     db.bucket.findMany({
       where: liveBucketWhere,
@@ -475,6 +526,7 @@ export async function getBucketsWithProgress(
       // realistic one-time purchase should ever hit.
       select: { id: true, transactions: { select: SPEND_TX_SELECT, take: 2000 } },
     }),
+    billDriftByBucketId(householdId, utcStart, utcEnd),
   ]);
   const bucketIdsNeedingAttention = new Set(unconfirmedBills.map((b) => b.bucketId).filter((id) => id !== null));
 
@@ -492,6 +544,7 @@ export async function getBucketsWithProgress(
       paceBasis,
       bucketIdsNeedingAttention.has(b.id),
       topUpCentsByBucketId.get(b.id) ?? 0,
+      b.excludedFromAllocation ? 0 : (driftByBucketId.get(b.id) ?? 0),
     );
   });
 }
@@ -566,7 +619,8 @@ export async function checkAndSendBucketAlerts(bucketId: string, spend?: AlertSp
       : await getBucketTopUpCentsByBucketId(bucket.householdId, period)
     ).get(bucketId) ?? 0;
   // needsAttention doesn't factor into alert thresholds — irrelevant here.
-  const progress = computeProgress(bucket, spentCents, paceFraction, paceBasis, false, topUpCents);
+  const driftCents = oneTime ? 0 : ((await billDriftByBucketId(bucket.householdId, utcStart, utcEnd)).get(bucketId) ?? 0);
+  const progress = computeProgress(bucket, spentCents, paceFraction, paceBasis, false, topUpCents, driftCents);
 
   const levelsToTry: { level: BucketAlertLevel; title: string; body: string; period?: string }[] = [];
 
