@@ -3,6 +3,7 @@
 import { CLEARED_CLASSIFICATION } from "@/lib/classification-reset";
 import { z } from "zod";
 import { db } from "@/lib/db";
+import { logBillDueDateChange } from "@/lib/bill-due-date-log";
 import { resolveCategoryId } from "@/lib/bill-category-resolve";
 import { belongsToHousehold, requireFullAccess } from "@/lib/access";
 import { parseDollarsToCents, parseOptionalToleranceCents } from "@/lib/money";
@@ -100,6 +101,7 @@ export async function updateBill(
   const resolvedBucketId = await resolveBucketId(session.user.householdId, parsed.data.bucketId);
   const resolvedCategoryId = await resolveCategoryId(session.user.householdId, parsed.data.categoryId, resolvedBucketId);
 
+  await logBillDueDateChange(bill, bill.nextDueDate, nextDueDate, "EDIT_FORM");
   await db.recurringBill.update({
     where: { id: billId },
     data: {
@@ -171,7 +173,10 @@ export async function skipBillCycle(billId: string) {
   if (!belongsToHousehold(bill, session.user.householdId)) return;
 
   const cycleDueDate = bill.nextDueDate;
+  const nextDueDate = nextBillDueDate(bill.cadence, cycleDueDate, []);
+  const log = logBillDueDateChange(bill, cycleDueDate, nextDueDate, "SKIP");
   await db.$transaction([
+    ...(log ? [log] : []),
     db.billCycleSkip.upsert({
       where: { billId_cycleDueDate: { billId, cycleDueDate } },
       create: { householdId: session.user.householdId, billId, cycleDueDate },
@@ -179,7 +184,7 @@ export async function skipBillCycle(billId: string) {
     }),
     db.recurringBill.update({
       where: { id: billId },
-      data: { nextDueDate: nextBillDueDate(bill.cadence, cycleDueDate, []) },
+      data: { nextDueDate },
     }),
   ]);
   revalidateHousehold();
@@ -203,7 +208,9 @@ export async function unskipBillCycle(billId: string) {
   const skip = await db.billCycleSkip.findFirst({ where: { billId }, orderBy: { skippedAt: "desc" } });
   if (!skip || !isBillCycleSkipActive(bill.cadence, skip.cycleDueDate, bill.nextDueDate)) return;
 
+  const log = logBillDueDateChange(bill, bill.nextDueDate, skip.cycleDueDate, "UNSKIP");
   await db.$transaction([
+    ...(log ? [log] : []),
     db.billCycleSkip.delete({ where: { id: skip.id } }),
     db.recurringBill.update({ where: { id: billId }, data: { nextDueDate: skip.cycleDueDate } }),
   ]);

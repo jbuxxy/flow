@@ -156,6 +156,7 @@ export async function purgeFinancialData(
     db.cycleAlert.deleteMany({ where: { householdId } }),
     db.billAmountReview.deleteMany({ where: { householdId } }),
     db.billCycleSkip.deleteMany({ where: { householdId } }),
+    db.billDueDateChange.deleteMany({ where: { householdId } }),
     db.billExtraChargeRule.deleteMany({ where: { householdId } }),
     db.debtAmountReview.deleteMany({ where: { householdId } }),
     db.debtDueDateReview.deleteMany({ where: { householdId } }),

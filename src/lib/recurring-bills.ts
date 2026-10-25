@@ -1,5 +1,6 @@
 import { createHash } from "crypto";
 import { db } from "@/lib/db";
+import { logBillDueDateChange } from "@/lib/bill-due-date-log";
 import { isDemoHousehold } from "@/lib/demo";
 import { summarizeUpcomingBills } from "@/lib/ai";
 import { currentPeriodKey, currentDateKey, currentWeekBounds, currentWeekKey, utcPeriodBounds } from "@/lib/period";
@@ -327,7 +328,14 @@ export async function attachTransactionAsExtraCharge(
 // re-running the full catch-up search matchBillPayments does.
 export async function attachTransactionAsBillPayment(
   transactionId: string,
-  bill: { id: string; cadence: BillCadence; nextDueDate: Date; bucketId: string | null; categoryId: string | null },
+  bill: {
+    id: string;
+    householdId: string;
+    cadence: BillCadence;
+    nextDueDate: Date;
+    bucketId: string | null;
+    categoryId: string | null;
+  },
   transaction: { occurredOn: Date; amountCents: number; rawDescription: string | null },
 ): Promise<void> {
   await db.transaction.update({
@@ -340,11 +348,13 @@ export async function attachTransactionAsBillPayment(
       aiSuggestedCategoryId: null,
     },
   });
+  const nextDueDate = nextBillDueDate(bill.cadence, bill.nextDueDate, []);
+  await logBillDueDateChange(bill, bill.nextDueDate, nextDueDate, "MANUAL_LINK", transactionId);
   await db.recurringBill.update({
     where: { id: bill.id },
     data: {
       lastPaidDate: transaction.occurredOn,
-      nextDueDate: nextBillDueDate(bill.cadence, bill.nextDueDate, []),
+      nextDueDate,
       amountCents: transaction.amountCents,
       ...(transaction.rawDescription ? { lastMatchDescriptor: transaction.rawDescription } : {}),
     },
@@ -412,9 +422,11 @@ export async function matchBillPayments(householdId: string): Promise<void> {
     // correctly shows it paid (real report, 2026-08-27).
     const paidThroughMs = bill.lastPaidDate ? bill.lastPaidDate.getTime() + MATCH_WINDOW_DAYS * DAY_MS : null;
     if (paidThroughMs !== null && cycleDueDate.getTime() <= paidThroughMs) {
+      const stuckDueDate = cycleDueDate;
       cycleDueDate = fastForwardCycleDate(cycleDueDate, paidThroughMs, MAX_CATCHUP_CYCLES, (d) =>
         nextBillDueDate(bill.cadence, d, []),
       );
+      await logBillDueDateChange(bill, stuckDueDate, cycleDueDate, "CATCH_UP");
       await db.recurringBill.update({ where: { id: bill.id }, data: { nextDueDate: cycleDueDate } });
     }
 
@@ -511,6 +523,7 @@ export async function matchBillPayments(householdId: string): Promise<void> {
           },
         });
       }
+      await logBillDueDateChange(bill, cycleDueDate, nextCycleDueDate, "PAYMENT_MATCH", official.id);
       await db.recurringBill.update({
         where: { id: bill.id },
         data: {

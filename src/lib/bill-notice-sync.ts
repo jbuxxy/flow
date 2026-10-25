@@ -14,6 +14,7 @@
 
 import type { BillNoticeEmail } from "@prisma/client";
 import { db } from "@/lib/db";
+import { logBillDueDateChange } from "@/lib/bill-due-date-log";
 import { pickBillNoticeMatch, last4sIn } from "@/lib/bill-notice-match";
 import { debtDisplayName } from "@/lib/debt-payments";
 import { sendPushToHouseholdForType } from "@/lib/push";
@@ -94,7 +95,7 @@ export async function applyBillNoticeMatch(
   if (target.type === "BILL") {
     const bill = await db.recurringBill.findUnique({
       where: { id: target.id },
-      select: { id: true, name: true, amountCents: true, nextDueDate: true },
+      select: { id: true, householdId: true, name: true, amountCents: true, nextDueDate: true },
     });
     if (!bill) return;
 
@@ -102,6 +103,7 @@ export async function applyBillNoticeMatch(
     // whatever the amount turns out to be.
     const quietDueDate = billNoticeDueDateUpdate(notice.dueDate, bill.nextDueDate, todayAsUTCDate());
     if (quietDueDate) {
+      await logBillDueDateChange(bill, bill.nextDueDate, quietDueDate, "BILL_EMAIL", notice.id);
       await db.recurringBill.update({ where: { id: bill.id }, data: { nextDueDate: quietDueDate } });
     }
 

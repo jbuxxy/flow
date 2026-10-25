@@ -171,6 +171,7 @@ model Household {
   aiSettings     HouseholdAiSettings?
   aiUsage        AiUsage[]
   emailSenderStats EmailSenderStat[]
+  billDueDateChanges BillDueDateChange[]
   emailConnections EmailConnection[]
   receipts         Receipt[]
   receiptMerchantAliases ReceiptMerchantAlias[]
@@ -1348,6 +1349,7 @@ model RecurringBill {
   reimbursementPatterns RecurringPattern[]
   extraChargeRules      BillExtraChargeRule[]
   cycleSkips            BillCycleSkip[]
+  dueDateChanges        BillDueDateChange[]
   billNotices           BillNoticeEmail[]
   amountReviews         BillAmountReview[]
 
@@ -1422,6 +1424,24 @@ model BillCycleSkip {
 
   @@unique([billId, cycleDueDate])
   @@index([householdId])
+}
+
+// One row per change to RecurringBill.nextDueDate, with what changed it —
+// see src/lib/bill-due-date-log.ts for the sources.
+model BillDueDateChange {
+  id          String        @id @default(cuid())
+  householdId String
+  household   Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  billId      String
+  bill        RecurringBill @relation(fields: [billId], references: [id], onDelete: Cascade)
+
+  fromDate  DateTime @db.Date
+  toDate    DateTime @db.Date
+  source    String
+  detail    String?
+  createdAt DateTime @default(now())
+
+  @@index([billId, createdAt])
 }
 
 // A card/loan/BNPL plan's tracked recurring payment — the debt-payment
