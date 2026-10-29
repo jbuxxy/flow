@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono, Comfortaa } from "next/font/google";
 import { Providers } from "@/components/providers";
 import { ServiceWorkerRegistration } from "@/components/service-worker-registration";
+import { resolveAppOrigin } from "@/lib/invite-link";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -20,9 +21,11 @@ const comfortaa = Comfortaa({
   subsets: ["latin"],
 });
 
-export const metadata: Metadata = {
+const description = "Self-hosted household budget, debt payoff, and net worth tracker.";
+
+const metadata: Metadata = {
   title: "flow",
-  description: "Self-hosted household budget, debt payoff, and net worth tracker.",
+  description,
   manifest: "/manifest.webmanifest",
   icons: {
     icon: [
@@ -39,6 +42,28 @@ export const metadata: Metadata = {
     title: "flow",
   },
 };
+
+// The card Messages, Slack and Discord show when a Flow link is shared (an
+// invite, usually). Messages only takes absolute image URLs, so they're built
+// from the origin the request came in on. Search engines are kept out here
+// rather than by dropping every bot at the proxy, which also blocked the
+// preview fetchers.
+export async function generateMetadata(): Promise<Metadata> {
+  const origin = await resolveAppOrigin();
+  return {
+    ...metadata,
+    metadataBase: origin ? new URL(origin) : undefined,
+    robots: { index: false, follow: false },
+    openGraph: {
+      type: "website",
+      siteName: "flow",
+      title: "flow",
+      description: "Your household's money in one calm place: budgets, debt payoff and net worth.",
+      images: [{ url: "/icons/og.png", width: 1200, height: 630, alt: "The flow logo beside a sample dashboard: net worth, budgets and a debt-free date" }],
+    },
+    twitter: { card: "summary_large_image" },
+  };
+}
 
 export const viewport: Viewport = {
   themeColor: "#1e3a8a",
