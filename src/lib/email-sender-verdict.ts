@@ -12,13 +12,16 @@
 //   - batching: a routine sync holds a few fresh candidates until
 //     EXTRACT_BATCH_SIZE are waiting or the oldest has waited
 //     EXTRACT_MAX_WAIT_MS. Bank charges take a day or more to post, so the
-//     delay costs no matches.
+//     delay costs no matches. Raised 10/3h → 20/12h on 2026-10-28: once
+//     Amazon's emails stopped going to the AI (parseAmazonOrderEmail) only
+//     ~7 candidates a day remained, so the fixed instruction block was most
+//     of every call — fewer, fuller calls are the remaining lever.
 
 export const SENDER_SKIP_AFTER = 5; // non-receipts from a sender that's never sent a receipt
 export const SUBJECT_SKIP_AFTER = 3; // non-receipts in a row for one sender + subject shape
 export const SKIP_RECHECK_MS = 30 * 24 * 60 * 60 * 1000;
-export const EXTRACT_BATCH_SIZE = 10;
-export const EXTRACT_MAX_WAIT_MS = 3 * 60 * 60 * 1000;
+export const EXTRACT_BATCH_SIZE = 20;
+export const EXTRACT_MAX_WAIT_MS = 12 * 60 * 60 * 1000;
 
 // The sender-level row's subjectKey.
 export const ANY_SUBJECT = "";

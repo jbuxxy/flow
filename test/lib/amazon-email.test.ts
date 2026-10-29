@@ -5,6 +5,7 @@ import {
   amazonSummaryItems,
   isAmazonSender,
   mergeAmazonProductNames,
+  parseAmazonOrderEmail,
   parseAmazonSubject,
 } from "@/lib/amazon-email";
 
@@ -102,5 +103,43 @@ describe("mergeAmazonProductNames", () => {
 
   test("no change when the names are already there", () => {
     assert.equal(mergeAmazonProductNames([{ description: "Floor Mats" }], ["Floor Mats"]), null);
+  });
+});
+
+describe("parseAmazonOrderEmail", () => {
+  const order = (text: string, from = '"Amazon.com" <auto-confirm@amazon.com>') => ({
+    from,
+    text,
+    // 8:49pm Oct 1 in Denver — already Oct 2 in UTC
+    receivedAt: new Date("2026-10-02T02:49:35Z"),
+  });
+
+  test("order confirmation: total (raw float), order number, local order date", () => {
+    const p = parseAmazonOrderEmail(order("Order #\n111-1234567-7654321\nView or edit order\nGrand Total:\n5.6 USD"));
+    assert.deepEqual(p, {
+      kind: "ORDER_CONFIRMATION",
+      totalCents: 560,
+      orderNumber: "111-1234567-7654321",
+      occurredOn: new Date("2026-10-01T00:00:00Z"),
+    });
+  });
+
+  test("shipment: \"Total\" line with float noise rounds to cents", () => {
+    const p = parseAmazonOrderEmail(
+      order("Order #\n111-2345678-8765432\nTrack package\nTotal\n5.3500000000000005 USD", "shipment-tracking@amazon.com"),
+    );
+    assert.equal(p?.kind, "SHIPPING");
+    assert.equal(p?.totalCents, 535);
+  });
+
+  test("one order repeated per delivery group still parses", () => {
+    const text = "Order #\n111-3456789-9876543\nArriving Monday\nOrder #\n111-3456789-9876543\nGrand Total:\n484.2 USD";
+    assert.equal(parseAmazonOrderEmail(order(text))?.totalCents, 48420);
+  });
+
+  test("several orders, a missing total, or another sender go to the AI", () => {
+    assert.equal(parseAmazonOrderEmail(order("Order #\n111-1111111-1111111\nOrder #\n111-2222222-2222222\nGrand Total:\n9.99 USD")), null);
+    assert.equal(parseAmazonOrderEmail(order("Order #\n111-1111111-1111111\nTrack package")), null);
+    assert.equal(parseAmazonOrderEmail(order("Order #\n111-1111111-1111111\nGrand Total:\n9.99 USD", "store-news@amazon.com")), null);
   });
 });

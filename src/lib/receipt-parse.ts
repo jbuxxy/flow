@@ -37,11 +37,37 @@ const PROMO_SUBJECT_RE =
 const TRANSACTION_SUBJECT_RE =
   /order|receipt|payment|paid|confirm|refund|invoice|shipped|shipping|delivered|statement|bill|due|purchase|transaction|charged|subscription|renew/i;
 
+// Unambiguous offer language vetoes even a subject with a transaction word
+// in it ("4 Hrs Only! $10 Off Your $20 Order*", "Get $20 off your order") —
+// no receipt subject in a 30-day replay of household mail matched these.
+const STRONG_PROMO_SUBJECT_RE =
+  /\$\d+ off|\d+% off|\bhrs? only\b|\b(today|tonight|this weekend|weekend) only\b|flash sale|\bbogo\b|free gift|final day|ends (tonight|today|tomorrow|soon)|last chance|bonus offer|price drop|you('ve| have) been selected/i;
+
 export function isPromoSubject(subject: string): boolean {
+  if (STRONG_PROMO_SUBJECT_RE.test(subject)) return true;
   return PROMO_SUBJECT_RE.test(subject) && !TRANSACTION_SUBJECT_RE.test(subject);
 }
 
 const senderAddress = (from: string) => (from.match(/<([^>]+)>/)?.[1] ?? from).trim().toLowerCase();
+
+// Bulk-marketing sending subdomains (hello@mkt.example.com,
+// shop@em.example.com, deals@s.example.com). The same brands send real
+// receipts from these too occasionally, so it only vetoes when the subject
+// has no transaction word ("Halloween home makeover" goes, "Here's your
+// receipt" stays).
+const MARKETING_SUBDOMAIN_RE =
+  /@(?:[\w-]+\.)*(?:em|e|eml|email|emails|mkt|mktg|marketing|m|s|news|newsletters?|promo|promotions|eclub|loyalty|message|emdeals|deals|offers)\.[\w-]+\.[a-z]{2,}$/;
+
+// A mailbox named for marketing (store-news@amazon.com, newsletters@,
+// promotions@) never sends a receipt — vetoed whatever the subject says
+// (newsletters@em.example.com: "Ready to complete your order?").
+const MARKETING_LOCAL_RE = /^(store-news|news|newsletters?|promo|promos|promotions|marketing|deals|offers)@/;
+
+export function isMarketingSender(from: string, subject: string): boolean {
+  const addr = senderAddress(from);
+  if (MARKETING_LOCAL_RE.test(addr)) return true;
+  return MARKETING_SUBDOMAIN_RE.test(addr) && !TRANSACTION_SUBJECT_RE.test(subject);
+}
 
 const RECEIPT_PHRASES = [
   "order confirmation",
@@ -114,7 +140,7 @@ export function isIgnorableVenmoNotification(msg: { subject: string; from: strin
 
 export function looksLikeReceipt(msg: { subject: string; from: string; text: string }): boolean {
   if (isIgnorableVenmoNotification(msg)) return false;
-  if (isPromoSubject(msg.subject)) return false;
+  if (isPromoSubject(msg.subject) || isMarketingSender(msg.from, msg.subject)) return false;
 
   const haystack = `${msg.subject}\n${msg.text}`.toLowerCase();
   if (!MONEY_RE.test(haystack)) return false;
@@ -154,7 +180,7 @@ const BILL_NOTICE_PHRASES = [
 ];
 
 export function looksLikeBillNotice(msg: { subject: string; from: string; text: string }): boolean {
-  if (isPromoSubject(msg.subject)) return false;
+  if (isPromoSubject(msg.subject) || isMarketingSender(msg.from, msg.subject)) return false;
   const haystack = `${msg.subject}\n${msg.text}`.toLowerCase();
   if (!MONEY_RE.test(haystack)) return false;
   return BILL_NOTICE_PHRASES.some((p) => haystack.includes(p));

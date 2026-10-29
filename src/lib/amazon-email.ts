@@ -108,3 +108,41 @@ export function mergeAmazonProductNames(existing: ItemLike[] | null, names: stri
   }
   return fresh.length >= current.length ? named : [...named, ...current];
 }
+
+// Amazon's own order confirmation / shipment emails parsed without the AI
+// (2026-10-28 — ~190 a month, the single largest source of receipt-reading
+// calls, and the shape never varies: one "Order #" block and a "Grand
+// Total:" / "Total" line, the amount a raw float like "5.3500000000000005
+// USD"). Anything else — several orders in one email, a missing total —
+// returns null and goes to the AI as before. Items come from the subject
+// afterwards (fillFromAmazonSubject, receipt-sync.ts), same as an AI parse.
+const AMAZON_ORDER_KINDS: Record<string, "ORDER_CONFIRMATION" | "SHIPPING"> = {
+  "auto-confirm@amazon.com": "ORDER_CONFIRMATION",
+  "shipment-tracking@amazon.com": "SHIPPING",
+};
+const AMAZON_TOTAL_RE = /(?:Grand Total:|^Total)[ \t]*\n\s*\$?([\d,]+(?:\.\d+)?)[ \t]*USD/gm;
+
+export type AmazonOrderEmail = {
+  kind: "ORDER_CONFIRMATION" | "SHIPPING";
+  totalCents: number;
+  orderNumber: string;
+  occurredOn: Date;
+};
+
+export function parseAmazonOrderEmail(msg: { from: string; text: string; receivedAt: Date }): AmazonOrderEmail | null {
+  const address = (msg.from.match(/<([^>]+)>/)?.[1] ?? msg.from).trim().toLowerCase();
+  const kind = AMAZON_ORDER_KINDS[address];
+  if (!kind) return null;
+  const orders = new Set([...msg.text.matchAll(/Order #\s*(\d{3}-\d{7}-\d{7})/g)].map((m) => m[1]));
+  const totals = [...msg.text.matchAll(AMAZON_TOTAL_RE)].map((m) => Number(m[1].replace(/,/g, "")));
+  if (orders.size !== 1 || totals.length !== 1 || !Number.isFinite(totals[0]) || totals[0] <= 0) return null;
+  const r = msg.receivedAt;
+  return {
+    kind,
+    totalCents: Math.round(totals[0] * 100),
+    orderNumber: [...orders][0],
+    // The household's calendar day the email arrived (server runs in the
+    // household's TZ) as a UTC-midnight date — the body states no order date.
+    occurredOn: new Date(Date.UTC(r.getFullYear(), r.getMonth(), r.getDate())),
+  };
+}

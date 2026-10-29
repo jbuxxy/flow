@@ -32,7 +32,9 @@ import {
   amazonSummaryItems,
   isAmazonSender,
   mergeAmazonProductNames,
+  parseAmazonOrderEmail,
   parseAmazonSubject,
+  type AmazonOrderEmail,
 } from "@/lib/amazon-email";
 import {
   receiptChargeScopeWhere,
@@ -323,13 +325,27 @@ async function processBatch(
     });
   }
   if (candidates.length === 0) return { unresolvedUids: [], aiFailed: false };
-  if (batchWait && shouldDeferExtraction(candidates, now)) {
+
+  // Amazon's order/shipment emails never need the AI (parseAmazonOrderEmail)
+  // — parsed here and stored through the same path below, never deferred.
+  const ruleParsed = new Map<string, ParsedReceipt>();
+  for (const m of candidates) {
+    const a = parseAmazonOrderEmail(m);
+    if (a) ruleParsed.set(m.messageId, amazonParsedReceipt(a));
+  }
+  const forAi = candidates.filter((m) => !ruleParsed.has(m.messageId));
+  const deferAi = batchWait && shouldDeferExtraction(forAi, now);
+  if (deferAi && ruleParsed.size === 0) {
     return { unresolvedUids: candidates.map((m) => m.uid), aiFailed: false, deferred: true };
   }
 
-  const { parsed, failed } = await extractReceipts(householdId, candidates);
-  const unresolvedUids: number[] = [];
-  for (const msg of candidates) {
+  const { parsed, failed } =
+    deferAi || forAi.length === 0
+      ? { parsed: new Map<string, ParsedReceipt>(), failed: new Set<string>() }
+      : await extractReceipts(householdId, forAi);
+  for (const [id, p] of ruleParsed) parsed.set(id, p);
+  const unresolvedUids: number[] = deferAi ? forAi.map((m) => m.uid) : [];
+  for (const msg of deferAi ? candidates.filter((m) => ruleParsed.has(m.messageId)) : candidates) {
     const p = parsed.get(msg.messageId);
     const key = `${connectionId}:${msg.messageId}`;
     if (!p) {
@@ -383,7 +399,27 @@ async function processBatch(
       });
     }
   }
-  return { unresolvedUids, aiFailed: failed.size > 0 };
+  return { unresolvedUids, aiFailed: failed.size > 0, ...(deferAi ? { deferred: true } : {}) };
+}
+
+function amazonParsedReceipt(a: AmazonOrderEmail): ParsedReceipt {
+  return {
+    isReceipt: true,
+    kind: a.kind,
+    party: "Amazon",
+    partyIsPerson: false,
+    p2pApp: null,
+    totalCents: a.totalCents,
+    currency: "USD",
+    occurredOn: a.occurredOn,
+    orderNumber: a.orderNumber,
+    noteText: null,
+    lineItems: [],
+    isRefund: false,
+    refundTo: null,
+    refundToLast4: null,
+    billNotice: null,
+  };
 }
 
 const statKey = (sender: string, subject: string) => `${sender}\n${subject}`;

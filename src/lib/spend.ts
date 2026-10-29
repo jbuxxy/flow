@@ -161,27 +161,51 @@ export function spendEntriesFrom<T extends SpendTx & { categoryId: string | null
   return entries;
 }
 
-// Sum of every SPEND-only bucket's monthlyCapCents — the dashboard trend
-// card's "ceiling" line (household decision 2026-09-06: no separate setting
-// to maintain, this reads directly off the caps already set on /buckets).
-// Compared against getSpendTrend's oneTimeCumulativeCentsByDay specifically
-// (2026-09-16 fix), not the combined total — RECURRING/MIXED spend (the
-// "Bills" series, see dailySpendTrendFromTxns below) is excluded from this
-// ceiling the same way it's excluded from every other cap-vs-income total:
-// a bill's bucket cap mirrors the real bill amount, already reflected in the
-// recurring series' own total, not this discretionary one.
-export async function getSpendCeilingCents(householdId: string): Promise<number> {
-  const buckets = await db.bucket.findMany({
-    // excludedFromAllocation: a one-time/irregular bucket (Tesla down
-    // payment, a big home repair) funded from outside this month's regular
-    // income — see the schema comment on that field. Left out of the
-    // ceiling the same way it's left out of every other cap-vs-income
-    // total (budget-plan.ts, savings.ts, bucket-allocation-card.tsx,
-    // monthly-report.ts).
-    where: { householdId, trackingMode: "SPEND", excludedFromAllocation: false },
-    select: { monthlyCapCents: true },
-  });
-  return buckets.reduce((s, b) => s + b.monthlyCapCents, 0);
+// The dashboard trend card's "One-Time Budget" ceiling (household decision
+// 2026-09-06: no separate setting to maintain, this reads directly off the
+// caps already set on /buckets). Compared against getSpendTrend's
+// oneTimeCumulativeCentsByDay specifically (2026-09-16 fix), not the
+// combined total. Every SPEND cap counts in full; a RECURRING cap never does
+// (it mirrors real bills, already in the recurring series); a MIXED cap
+// counts only what's left after its own expected bills — the period's
+// BudgetPlan floor (minCents: bills + scheduled P2P + bucketed debt) — since
+// that bucket's one-off spend lands in the one-time series while its bills
+// land in recurring. Leaving MIXED out entirely (pre-2026-10-28) put
+// mixed-bucket one-off spend against a budget that never
+// included their caps, so Bills + One-Time never added up to the /budget
+// total. No plan row for a MIXED bucket (created after the plan) => floor 0.
+export function spendCeilingFromBuckets(
+  buckets: { id: string; trackingMode: string; monthlyCapCents: number }[],
+  mixedFloorByBucketId: Map<string, number>,
+): number {
+  let total = 0;
+  for (const b of buckets) {
+    if (b.trackingMode === "SPEND") total += b.monthlyCapCents;
+    else if (b.trackingMode === "MIXED") total += Math.max(0, b.monthlyCapCents - (mixedFloorByBucketId.get(b.id) ?? 0));
+  }
+  return total;
+}
+
+export async function getSpendCeilingCents(householdId: string, periodKey: string): Promise<number> {
+  const [buckets, plan] = await Promise.all([
+    db.bucket.findMany({
+      // excludedFromAllocation: a one-time/irregular bucket (Tesla down
+      // payment, a big home repair) funded from outside this month's regular
+      // income — see the schema comment on that field. Left out of the
+      // ceiling the same way it's left out of every other cap-vs-income
+      // total (budget-plan.ts, savings.ts, bucket-allocation-card.tsx,
+      // monthly-report.ts).
+      where: { householdId, trackingMode: { in: ["SPEND", "MIXED"] }, excludedFromAllocation: false },
+      select: { id: true, trackingMode: true, monthlyCapCents: true },
+    }),
+    db.budgetPlan.findUnique({
+      where: { householdId_periodKey: { householdId, periodKey } },
+      select: { allocation: true },
+    }),
+  ]);
+  const rows = ((plan?.allocation as { buckets?: { bucketId: string; minCents: number }[] } | null)?.buckets ?? []);
+  const mixedFloorByBucketId = new Map(rows.map((r) => [r.bucketId, r.minCents]));
+  return spendCeilingFromBuckets(buckets, mixedFloorByBucketId);
 }
 
 export type DailySpendTrend = {
@@ -222,6 +246,17 @@ export type DailySpendTrend = {
 // there put a $6K one-time purchase against a budget that never included it
 // (2026-09-19). Optional so callers/tests that don't care stay unchanged.
 type DailySpendTx = SpendTx & { occurredOn: Date; isRecurringBucket: boolean; isOneTimeBucket?: boolean };
+
+// Which series a transaction lands in. RECURRING buckets only hold bills;
+// in a MIXED bucket, a billId match *or* a patternId match (a scheduled P2P
+// obligation — a monthly P2P lesson fee) is its recurring portion,
+// the same items budget-plan.ts counts toward that bucket's floor
+// (2026-10-28: pattern-matched P2P fees were landing in One-Time while
+// the ceiling had already set it aside as bills). Everything else is one-time.
+export function isRecurringSpendTx(trackingMode: string | null, billId: string | null, patternId: string | null): boolean {
+  if (trackingMode === "RECURRING") return true;
+  return trackingMode === "MIXED" && (billId !== null || patternId !== null);
+}
 
 // Pure day-bucketing + netting logic, split out from getSpendTrend so it's
 // testable without a db (see test/lib/spend.test.ts) — same reasoning as
@@ -356,6 +391,7 @@ export async function getSpendTrend(householdId: string, periodKey: string): Pro
         ...SPEND_TX_SELECT,
         occurredOn: true,
         billId: true,
+        patternId: true,
         bucket: { select: { trackingMode: true, excludedFromAllocation: true } },
       },
     }),
@@ -387,8 +423,7 @@ export async function getSpendTrend(householdId: string, periodKey: string): Pro
   const txns: DailySpendTx[] = rawTxns.map((t) => ({
     ...t,
     isOneTimeBucket: t.bucket?.excludedFromAllocation === true,
-    isRecurringBucket:
-      t.bucket !== null && (t.bucket.trackingMode === "RECURRING" || (t.bucket.trackingMode === "MIXED" && t.billId !== null)),
+    isRecurringBucket: isRecurringSpendTx(t.bucket?.trackingMode ?? null, t.billId, t.patternId),
   }));
 
   const recurringDebtTxns: DebtPaymentSpendTx[] = [];

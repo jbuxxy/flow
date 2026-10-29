@@ -6,6 +6,7 @@
 
 import { getHouseholdAiConfig, callText, callJson, type AiProviderConfig } from "@/lib/ai-provider";
 import { dollarsToCents, formatCents } from "@/lib/money";
+import { EXTRACT_BATCH_SIZE } from "@/lib/email-sender-verdict";
 import type { ReceiptKind } from "@prisma/client";
 
 export type BucketSuggestion = { bucketName: string | null; confidence: number };
@@ -2268,9 +2269,10 @@ export async function extractReceipts(
     return { parsed, failed };
   }
 
-  const BATCH_SIZE = 10;
-  for (let i = 0; i < messages.length; i += BATCH_SIZE) {
-    const batch = messages.slice(i, i + BATCH_SIZE);
+  // Same size a routine sync waits to fill (email-sender-verdict.ts), so a
+  // full held batch goes out as one call.
+  for (let i = 0; i < messages.length; i += EXTRACT_BATCH_SIZE) {
+    const batch = messages.slice(i, i + EXTRACT_BATCH_SIZE);
     const result = await extractReceiptBatch(householdId, config, batch);
     if (!result) {
       for (const m of batch) failed.add(m.messageId);

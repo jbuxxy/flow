@@ -6,6 +6,8 @@ import {
   spendEntriesFrom,
   spendMerchantKey,
   dailySpendTrendFromTxns,
+  isRecurringSpendTx,
+  spendCeilingFromBuckets,
   recurringDebtPaymentCentsByDay,
   accountedForCents,
   accountedForDisplayList,
@@ -302,5 +304,41 @@ describe("accountedForDisplayList", () => {
 
   test("empty links -> empty list", () => {
     assert.deepEqual(accountedForDisplayList({ accountedForLinks: [] }), []);
+  });
+});
+
+describe("isRecurringSpendTx", () => {
+  test("RECURRING always counts as bills", () => {
+    assert.equal(isRecurringSpendTx("RECURRING", null, null), true);
+  });
+  test("MIXED counts only its bill- or pattern-matched portion", () => {
+    assert.equal(isRecurringSpendTx("MIXED", "bill1", null), true);
+    // Scheduled P2P obligation (a monthly lesson fee) — budget-plan.ts floors it as a bill
+    assert.equal(isRecurringSpendTx("MIXED", null, "pattern1"), true);
+    assert.equal(isRecurringSpendTx("MIXED", null, null), false);
+  });
+  test("SPEND and unbucketed are always one-time, even if pattern-matched", () => {
+    assert.equal(isRecurringSpendTx("SPEND", null, "pattern1"), false);
+    assert.equal(isRecurringSpendTx(null, "bill1", null), false);
+  });
+});
+
+describe("spendCeilingFromBuckets", () => {
+  // 2026-10-28: MIXED caps were left out entirely, so the one-time ceiling +
+  // bills never summed to the /budget total.
+  test("SPEND in full, MIXED net of its plan floor, RECURRING never", () => {
+    const buckets = [
+      { id: "groceries", trackingMode: "SPEND", monthlyCapCents: 150_000 },
+      { id: "kids", trackingMode: "MIXED", monthlyCapCents: 60_000 },
+      { id: "household", trackingMode: "MIXED", monthlyCapCents: 40_000 },
+      { id: "bills", trackingMode: "RECURRING", monthlyCapCents: 400_000 },
+    ];
+    const floors = new Map([["kids", 40_000], ["bills", 400_000]]);
+    // household has no plan row (created after the plan) => floor 0
+    assert.equal(spendCeilingFromBuckets(buckets, floors), 150_000 + 20_000 + 40_000);
+  });
+  test("a MIXED floor above its cap never goes negative", () => {
+    const buckets = [{ id: "kids", trackingMode: "MIXED", monthlyCapCents: 30_000 }];
+    assert.equal(spendCeilingFromBuckets(buckets, new Map([["kids", 40_000]])), 0);
   });
 });

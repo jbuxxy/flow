@@ -83,7 +83,7 @@ export function SpendingTrendCard({
   // "YYYY-MM" of the month "this month" refers to — only used to label the
   // hover readout ("Sep 14").
   periodKey,
-  // Sum of every SPEND-only bucket's monthly cap (see getSpendCeilingCents)
+  // SPEND caps + each MIXED cap net of its own bills (see getSpendCeilingCents)
   // — 0 when the household hasn't set any bucket caps, in which case the
   // ceiling line/red-overage rendering below is simply skipped. Compared
   // against the one-time series specifically, not the combined total (see

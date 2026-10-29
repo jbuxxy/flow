@@ -201,7 +201,7 @@ export default async function Home() {
     canSeeFullFinancials ? getRecentPaydays(session.user.householdId) : [],
     canSeeFullFinancials ? getSpendTrend(session.user.householdId, currentPeriodKey()) : null,
     canSeeFullFinancials ? getSpendTrend(session.user.householdId, monthsAgoPeriodKey(1)) : null,
-    canSeeFullFinancials ? getSpendCeilingCents(session.user.householdId) : 0,
+    canSeeFullFinancials ? getSpendCeilingCents(session.user.householdId, currentPeriodKey()) : 0,
     canSeeFullFinancials ? getPatternsThisWeek(session.user.householdId) : [],
     canSeeFullFinancials ? getPatternsThisWeek(session.user.householdId, daysAgo(7)) : [],
   ]);
