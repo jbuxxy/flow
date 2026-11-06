@@ -1671,6 +1671,7 @@ export async function getActiveInsufficientMinimumDebts(householdId: string): Pr
       debtType: true,
       ignoreMinimumPayment: true,
       termsConfirmed: true,
+      account: { select: { displayName: true } },
     },
   });
   // A debt still missing its APR/minimum (the "Debts Need Setup" card's
@@ -1679,7 +1680,11 @@ export async function getActiveInsufficientMinimumDebts(householdId: string): Pr
   // asking for those same numbers (household report, 2026-10-19). Setup
   // first; this re-evaluates once real terms are on file.
   const flagged = debtsWithInsufficientMinimum(
-    debts.filter((d) => d.termsConfirmed && (d.minPaymentCents > 0 || d.ignoreMinimumPayment)),
+    debts
+      .filter((d) => d.termsConfirmed && (d.minPaymentCents > 0 || d.ignoreMinimumPayment))
+      // The household's rename, not the raw synced name — same rule as
+      // every other debt name surface (debtDisplayName below).
+      .map((d) => ({ ...d, name: debtDisplayName(d) })),
   );
   if (flagged.length === 0) return [];
 
@@ -1701,8 +1706,13 @@ export async function getActiveInsufficientMinimumDebts(householdId: string): Pr
     if (!dismissedAt) return true;
     const payment = paymentByDebtId.get(d.id);
     if (!payment) return false;
+    // The cycle has to have actually *started* for the snooze to expire. A
+    // next due date more than one cadence out (a new HELOC first due Dec 30,
+    // set on Nov 6) puts cycleStart in the future, which used to read as
+    // "dismissed before this cycle" — so the warning and the Debts badge
+    // came straight back after every dismissal (2026-11-06).
     const cycleStart = subtractCadence(payment.nextDueDate, payment.cadence);
-    return dismissedAt < cycleStart;
+    return cycleStart <= todayAsUTCDate() && dismissedAt < cycleStart;
   });
 }
 
