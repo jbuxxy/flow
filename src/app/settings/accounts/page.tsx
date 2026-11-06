@@ -253,6 +253,31 @@ export default async function AccountsSettingsPage() {
     ),
   );
 
+  // A synced card/loan's activity = its own feed + the payments matched to
+  // its debt from other accounts. Some servicers sync a balance but never a
+  // transaction (a mortgage escrow account — see WORKING_ON.md), so the
+  // checking-side payment is the only record there is; showing just the
+  // account's own feed read "No Transactions Yet." on a mortgage paid every
+  // month (household report, 2026-11-06). Checking-side legs are shown in
+  // the feed's sign (a payment lowers the balance: negative), and dropped
+  // when the feed already has its own mirror of the same payment.
+  const debtActivity = (accountId: string, debtId: string | undefined): ActivityItem[] => {
+    const feed = activityByAccountId.get(accountId) ?? [];
+    if (!debtId) return feed;
+    const DAY = 86_400_000;
+    const payments = recentPayments(debtId)
+      .filter(
+        (p) =>
+          !feed.some(
+            (f) =>
+              f.amountCents === -p.amountCents &&
+              Math.abs(new Date(f.date).getTime() - new Date(p.date).getTime()) <= 3 * DAY,
+          ),
+      )
+      .map((p) => ({ ...p, amountCents: -p.amountCents }));
+    return [...feed, ...payments].sort((x, y) => y.date.localeCompare(x.date)).slice(0, 5);
+  };
+
   const bucketNameById = new Map(buckets.map((b) => [b.id, b.name]));
   const categoryNameById = new Map(categories.map((c) => [c.id, c.name]));
   type DebtRow = (typeof debts)[number];
@@ -918,7 +943,7 @@ export default async function AccountsSettingsPage() {
                         {debt && <DetailSection title="Debt Terms">{debtTermsTiles(debt, debtPayment)}</DetailSection>}
                         {showBalance && (
                           <DetailSection title="Recent Activity">
-                            <ActivityList items={activityByAccountId.get(a.id) ?? []} empty="No Transactions Yet." signFlip />
+                            <ActivityList items={debtActivity(a.id, debt?.id)} empty="No Transactions Yet." signFlip />
                           </DetailSection>
                         )}
                       </ExpandableSummary>
