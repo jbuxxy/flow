@@ -284,6 +284,88 @@ async function matchDepositoryDebtPaymentLegs(
   return matched;
 }
 
+// A draw on a HELOC/line of credit (or a card cash advance) deposited into
+// checking — "Transfer from Home Equity" — is borrowed money moving between
+// the household's own accounts, not income. Recognized the same way as
+// matchInternalTransfers: by the offsetting balance-increasing leg on the
+// household's own LOAN/CREDIT_CARD account (same amount, same window, exactly
+// one candidate), never by the bank's wording. Card legs additionally need
+// advance/transfer wording, since an ordinary same-amount card purchase is
+// far more common than a cash advance. Runs before categorization (fresh
+// credits never default to income) and retro-fixes ones already defaulted
+// to income — real report 2026-11-06: three HELOC draws counted as income.
+// Only the depository leg is marked; debtId stays null — the draw isn't a
+// *payment* to anything. What the money then paid for is the household's
+// call, via the split linker (addTransactionOffset). Never overrides a
+// credit the household decided on: confirmed one-off income (oneOff), a
+// tracked Income/pattern/bill, a reimbursement link, or a USER
+// MerchantRule saying this merchant is income.
+const CASH_ADVANCE_TEXT_PATTERN = /\b(advance|transfer|draw)\b/i;
+
+async function markLoanDrawDeposits(householdId: string): Promise<void> {
+  const credits = await db.transaction.findMany({
+    where: {
+      householdId,
+      amountCents: { lt: 0 },
+      isTransfer: false,
+      oneOff: false,
+      incomeId: null,
+      patternId: null,
+      billId: null,
+      reimbursesTransactionId: null,
+      reimbursesMerchant: null,
+      account: { accountType: { in: ["CHECKING", "SAVINGS"] } },
+      occurredOn: { gte: daysAgo(60) },
+    },
+    select: { id: true, merchant: true, amountCents: true, occurredOn: true },
+  });
+  if (credits.length === 0) return;
+
+  const oldest = new Date(Math.min(...credits.map((t) => t.occurredOn.getTime())) - INTERNAL_TRANSFER_WINDOW_MS);
+  const draws = await db.transaction.findMany({
+    where: {
+      householdId,
+      amountCents: { gt: 0 },
+      account: { accountType: { in: ["LOAN", "CREDIT_CARD"] } },
+      occurredOn: { gte: oldest },
+    },
+    select: { amountCents: true, occurredOn: true, merchant: true, account: { select: { accountType: true } } },
+  });
+  if (draws.length === 0) return;
+
+  const userIncomeMerchants = new Set(
+    (
+      await db.merchantRule.findMany({
+        where: { householdId, source: "USER", isIncome: true, amountMinCents: null, amountMaxCents: null },
+        select: { merchant: true },
+      })
+    ).map((r) => r.merchant),
+  );
+
+  for (const t of credits) {
+    if (userIncomeMerchants.has(t.merchant.trim().toLowerCase())) continue;
+    const legs = draws.filter(
+      (d) =>
+        d.amountCents === -t.amountCents &&
+        Math.abs(d.occurredOn.getTime() - t.occurredOn.getTime()) <= INTERNAL_TRANSFER_WINDOW_MS &&
+        (d.account?.accountType === "LOAN" || CASH_ADVANCE_TEXT_PATTERN.test(d.merchant)),
+    );
+    if (legs.length !== 1) continue; // no draw leg, or ambiguous — leave for normal categorization
+    await db.transaction.update({
+      where: { id: t.id },
+      data: {
+        isTransfer: true,
+        isIncome: false,
+        debtId: null,
+        bucketId: null,
+        categoryId: null,
+        aiSuggestedBucketId: null,
+        aiSuggestedCategoryId: null,
+      },
+    });
+  }
+}
+
 // Retro-fix for a co-branded card payment that already got filed as spending.
 // On the sync where the checking leg first appeared there may have been no ACH
 // payment descriptor to read and no card-side leg yet, so it fell through to
@@ -2251,6 +2333,9 @@ async function runHouseholdSync(householdId: string): Promise<SyncResult> {
     // Before categorization: rescue any co-branded card payment a prior sync
     // filed as spending, now that its card-side leg has posted.
     await reconcileCategorizedCardPayments(householdId);
+    // Same pre-categorization slot: a HELOC draw / cash advance deposit is a
+    // transfer, not income — see markLoanDrawDeposits.
+    await markLoanDrawDeposits(householdId);
     await categorizeUncategorizedTransactions(householdId);
     // After categorization (a fresh charge has to be in *some* bucket first)
     // and after receipts matched above: move a charge whose matched receipt's

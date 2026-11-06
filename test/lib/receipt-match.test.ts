@@ -58,9 +58,25 @@ describe("receiptAmountWhere / receiptSignMatches", () => {
     // negative credit (amountCents -3500), not a plain checking-side debit —
     // never entered the candidate pool under the old debit-only rule.
     const r = receipt({ kind: "PAYMENT_SENT", party: "Chase", partyIsPerson: false });
-    assert.deepEqual(receiptAmountWhere(r, 3_500), { OR: [{ amountCents: 3_500 }, { amountCents: -3_500 }] });
+    assert.deepEqual(receiptAmountWhere(r, 3_500), {
+      OR: [
+        { amountCents: 3_500, OR: [{ accountId: null }, { account: { is: { accountType: { not: "LOAN" } } } }] },
+        { amountCents: -3_500, account: { is: { accountType: { in: ["LOAN", "CREDIT_CARD"] } } } },
+      ],
+    });
     assert.equal(receiptSignMatches(r, 3_500), true);
     assert.equal(receiptSignMatches(r, -3_500), true);
+  });
+
+  test("PAYMENT_SENT never matches a loan draw's legs", () => {
+    // 2026-11-06: a payoff receipt went AMBIGUOUS between a HELOC's "Cash
+    // Advance" (a debit on the LOAN account) and its "Transfer from Home
+    // Equity" deposit (a credit on checking) — the credit side is only ever
+    // a card/loan account, and the debit side never a loan.
+    const where = receiptAmountWhere(receipt({ kind: "PAYMENT_SENT", party: "Lender", partyIsPerson: false }), 100) as {
+      OR: { amountCents: number }[];
+    };
+    assert.deepEqual(where.OR[1], { amountCents: -100, account: { is: { accountType: { in: ["LOAN", "CREDIT_CARD"] } } } });
   });
 
   test("PAYMENT_SENT to a person over P2P: debit side only", () => {

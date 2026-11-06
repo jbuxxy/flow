@@ -213,6 +213,7 @@ export function ReimbursementLinker({
   offsets = [],
   dismissed = false,
   allowSplit = true,
+  fundingOnly = false,
   open,
   onOpenChange,
 }: {
@@ -248,6 +249,10 @@ export function ReimbursementLinker({
   // that case (real household request, 2026-09-06: "remove from refunds
   // actions").
   allowSplit?: boolean;
+  // A transfer credit (a HELOC draw): split mode only, no whole-refund
+  // toggle, and the unallocated rest is "not allocated" rather than income —
+  // see isFundingTransfer, transaction-row.tsx.
+  fundingOnly?: boolean;
   // Panel visibility lives in transaction-row.tsx now, alongside Move/Track
   // (its own kebab action's the only trigger — real household report,
   // 2026-09-05: the old "Link" button lived buried in the subline instead of
@@ -256,7 +261,7 @@ export function ReimbursementLinker({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const [mode, setMode] = useState<"whole" | "split">("whole");
+  const [mode, setMode] = useState<"whole" | "split">(fundingOnly ? "split" : "whole");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<ReimbursementCandidate[] | null>(null);
   const [merchantBucketId, setMerchantBucketId] = useState("");
@@ -400,7 +405,7 @@ export function ReimbursementLinker({
           </div>
         ))}
         <p className="text-neutral-500 dark:text-neutral-400">
-          {formatCents(remainingCents)} still counts as income
+          {formatCents(remainingCents)} {fundingOnly ? "not allocated" : "still counts as income"}
         </p>
         {remainingCents > 0 &&
           (open ? (
@@ -434,7 +439,7 @@ export function ReimbursementLinker({
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex flex-col gap-2 rounded-lg border border-neutral-200 dark:border-neutral-800 p-2">
-        {allowSplit && (
+        {allowSplit && !fundingOnly && (
           <div className="flex gap-1 text-[11px]">
             <button
               onClick={() => setMode("whole")}

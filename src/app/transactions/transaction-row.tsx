@@ -419,7 +419,7 @@ export function TransactionRow({
   const offsetSummary = hasOffsets
     ? `${formatCents(offsetTotalCents)} Split To ${transaction.offsets
         .map((o) => o.debitDebtName ?? o.debitMerchant)
-        .join(", ")} · ${formatCents(offsetRemainderCents)} Still Counts As Income`
+        .join(", ")} · ${formatCents(offsetRemainderCents)} ${transaction.isTransfer ? "Not Allocated" : "Still Counts As Income"}`
     : "";
   // amountCents > 0 is money out (debit), < 0 is money in (credit) — same
   // convention as everywhere else. A debit can only ever go to a Bucket or
@@ -462,7 +462,12 @@ export function TransactionRow({
   // refunds" — this is a new type of transaction, not a plain unclassified
   // credit).
   const isRefundCandidate =
-    !isDebit && !isDebtTransfer && !tracked && !isReimbursed && !hasOffsets && !isP2P && !transaction.isIncome;
+    !isDebit && !isDebtTransfer && !tracked && !isReimbursed && !hasOffsets && !isP2P && !transaction.isIncome && !transaction.isTransfer;
+  // Money moved in from the household's own credit line (a HELOC draw — see
+  // markLoanDrawDeposits, simplefin-sync.ts). Not income and not a refund,
+  // so the linker offers only "Allocate To Payments": recording which debt
+  // payoffs the draw funded (2026-11-06).
+  const isFundingTransfer = !isDebit && transaction.isTransfer && !isDebtTransfer;
   // A P2P credit defaults to isIncome:true the moment it syncs (see
   // simplefin-sync.ts) — oneOff:false is the only thing distinguishing
   // "still needs a household decision" from "confirmed" for one, since
@@ -621,7 +626,7 @@ export function TransactionRow({
     rowActions.push({
       key: "link",
       icon: Link2,
-      label: "Link To A Purchase",
+      label: isFundingTransfer ? "Allocate To Payments" : "Link To A Purchase",
       keepOpen: true,
       onClick: () => {
         setLinkingOpen((v) => !v);
@@ -953,6 +958,7 @@ export function TransactionRow({
               offsets={transaction.offsets}
               dismissed={transaction.refundReviewDismissed}
               allowSplit={!isRefundCandidate}
+              fundingOnly={isFundingTransfer}
               open={linkingOpen}
               onOpenChange={setLinkingOpen}
             />

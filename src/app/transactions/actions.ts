@@ -206,10 +206,12 @@ export async function addTransactionOffset(
   });
   // A decided credit — drops out of the unlabeled-P2P queue (oneOff:false is
   // that queue's "still undecided" marker) — but it stays isIncome:true: the
-  // unallocated remainder is real income.
+  // unallocated remainder is real income. Except a transfer credit (a HELOC
+  // draw — see markLoanDrawDeposits): borrowed money isn't income, so the
+  // offsets there just record which payments it funded (2026-11-06).
   await db.transaction.update({
     where: { id: creditTransactionId },
-    data: { isIncome: true, oneOff: true },
+    data: credit.isTransfer ? { oneOff: true } : { isIncome: true, oneOff: true },
   });
   // The carved-off slice no longer counts as income — trim any bucket
   // top-ups this credit funded down to what it still counts for.

@@ -38,7 +38,11 @@ export function DueDateInput({
         onChange={(e) => onChange(e.target.value)}
         required={required}
         className={`mt-1 block w-full min-w-0 appearance-none rounded-lg border px-2 focus:outline-none ${
-          small ? "h-[38px] py-1.5 text-xs" : "py-2 text-sm"
+          // Explicit heights matching the sibling text inputs' box (text-xs +
+          // py-1.5 = 30px, text-sm + py-2 = 38px) — iOS Safari sizes a native
+          // date input by its own inner control otherwise, taller than its
+          // neighbors (household screenshot, 2026-11-06).
+          small ? "h-[30px] py-0 text-xs" : "h-[38px] py-0 text-sm"
         } ${
           unconfirmed
             ? "border-red-400 dark:border-red-600 bg-red-50 dark:bg-red-950/30 focus:border-red-500"

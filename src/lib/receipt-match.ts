@@ -107,7 +107,24 @@ export function receiptAmountWhere(r: ReceiptMatchShape, totalCents: number): Pr
   // allowance below is only for card/loan issuers. Two-sided, a $30 Venmo
   // to a family member matched a $30 "VENMO CASHOUT" deposit (2026-10-24).
   if (r.kind === "PAYMENT_SENT" && isPeerPayment(r)) return { amountCents: totalCents };
-  if (r.kind === "PAYMENT_RECEIVED" || r.kind === "PAYMENT_SENT") {
+  // A payment you *sent* is either a debit off anything but a loan (checking,
+  // or a card that paid the biller) or the balance-lowering credit on the
+  // payee's own card/loan account — never a credit into checking, and never
+  // a debit *on* a loan (that's a draw). Without the account check, a $13k
+  // payoff receipt went AMBIGUOUS between both legs of the HELOC draw that
+  // funded it — "Cash Advance" on the HELOC, "Transfer from Home Equity" into
+  // checking — neither of them the payment itself (2026-11-06).
+  if (r.kind === "PAYMENT_SENT") {
+    return {
+      OR: [
+        // accountId:null spelled out — a manual transaction has no account,
+        // and a NOT over the relation would drop it via SQL NULL semantics.
+        { amountCents: totalCents, OR: [{ accountId: null }, { account: { is: { accountType: { not: "LOAN" } } } }] },
+        { amountCents: -totalCents, account: { is: { accountType: { in: ["LOAN", "CREDIT_CARD"] } } } },
+      ],
+    };
+  }
+  if (r.kind === "PAYMENT_RECEIVED") {
     return { OR: [{ amountCents: totalCents }, { amountCents: -totalCents }] };
   }
   return { amountCents: totalCents };
