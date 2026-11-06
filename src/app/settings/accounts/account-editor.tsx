@@ -5,6 +5,7 @@ import { Pencil, Target, Wallet, X } from "lucide-react";
 import {
   renameAccount,
   setAccountBudgetTracked,
+  setAccountType,
   updateAccountApy,
   type RenameAccountState,
   type UpdateAccountApyState,
@@ -33,6 +34,15 @@ const initialTermsState: UpdateSyncedDebtTermsState = {};
 const initialApyState: UpdateAccountApyState = {};
 
 const toasted = withToast;
+
+const ACCOUNT_TYPE_OPTIONS: { value: AccountType; label: string }[] = [
+  { value: "CHECKING", label: "Checking" },
+  { value: "SAVINGS", label: "Savings" },
+  { value: "CREDIT_CARD", label: "Credit Card" },
+  { value: "LOAN", label: "Loan" },
+  { value: "INVESTMENT", label: "Investment" },
+  { value: "OTHER", label: "Other" },
+];
 
 // A linked debt's rate/payment/due-date, carried through unedited on every
 // save (2026-08-16) — the form below only surfaces the three fields a
@@ -169,6 +179,7 @@ export function AccountEditor({
   const [bucketId, setBucketId] = useState(debt?.bucketId ?? "");
   const [linkedAccountId, setLinkedAccountId] = useState(accountId);
   const [linkPending, startLinkTransition] = useTransition();
+  const [typePending, startTypeTransition] = useTransition();
 
   return (
     <form
@@ -208,6 +219,26 @@ export function AccountEditor({
       {editing && (
         <div className="mt-3 flex w-full flex-col gap-3 rounded-lg border border-blue-100 dark:border-neutral-800 p-3">
           {state.error && <p className="text-xs text-red-600 dark:text-red-400">{state.error}</p>}
+          {/* Manual fix for a sync misclassification (a HELOC or loan landing
+              in Other, 2026-11-06). Fires immediately, like the Wallet/Target
+              toggles — sticks across syncs via Account.accountTypeOverridden,
+              and picking Credit Card/Loan starts tracking it as a debt. */}
+          <label className="flex w-40 flex-col gap-1 text-xs text-gray-500 dark:text-neutral-400">
+            Type
+            <span className="mt-1">
+              <SelectField
+                value={accountType}
+                disabled={typePending}
+                onChange={(v) => {
+                  if (v === accountType) return;
+                  startTypeTransition(() => toasted(() => setAccountType(accountId, v), "Account Type Updated"));
+                }}
+                options={ACCOUNT_TYPE_OPTIONS}
+                searchable={false}
+                small
+              />
+            </span>
+          </label>
           {/* APY + the Use-for-Transactions toggle share one line (household
               request 2026-09-08); the toggle is an icon button mirroring the
               Wallet classification badge up by the account name. For a debt

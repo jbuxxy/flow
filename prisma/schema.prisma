@@ -2589,6 +2589,11 @@ model Account {
   name               String
   orgName            String?
   accountType        AccountType @default(OTHER)
+  // Set when a household picks the type by hand in /settings/accounts
+  // (setAccountType) — sync re-applies guessAccountType's result on every
+  // run, so without this flag a manual correction would be undone by the
+  // next sync. Never cleared automatically.
+  accountTypeOverridden Boolean  @default(false)
   syncMode           SyncMode    @default(TRANSACTIONS)
 
   // CHECKING/SAVINGS only — a cash account has no separate Asset row (see

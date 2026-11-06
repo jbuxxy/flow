@@ -85,6 +85,53 @@ export async function setAccountBudgetTracked(accountId: string, budgetTracked: 
   revalidateHousehold();
 }
 
+const accountTypeSchema = z.enum(["CHECKING", "SAVINGS", "CREDIT_CARD", "LOAN", "INVESTMENT", "OTHER"]);
+
+// Manual correction for when guessAccountType (src/lib/account-type.ts)
+// gets an account wrong — e.g. a HELOC or a bare lender-named loan landing
+// in OTHER (2026-11-06). Sets Account.accountTypeOverridden so the next sync
+// keeps this choice instead of re-guessing. Switching to CREDIT_CARD/LOAN
+// starts tracking it as a Debt right away, same placeholder shape as
+// syncHousehold's auto-create (termsConfirmed:false unless $0, so it shows
+// as "Needs setup" with real terms one tap away).
+export async function setAccountType(accountId: string, accountType: string) {
+  const session = await requireOwner();
+
+  const parsed = accountTypeSchema.safeParse(accountType);
+  if (!parsed.success) return;
+  const account = await db.account.findUnique({ where: { id: accountId } });
+  if (!belongsToHousehold(account, session.user.householdId)) return;
+
+  await db.account.update({
+    where: { id: accountId },
+    data: { accountType: parsed.data, accountTypeOverridden: true },
+  });
+
+  if (parsed.data === "CREDIT_CARD" || parsed.data === "LOAN") {
+    const linked = await db.debt.count({ where: { accountId } });
+    if (linked === 0) {
+      const balanceCents = Math.max(0, -account.balanceCents);
+      const maxSort = await db.debt.aggregate({ where: { householdId: session.user.householdId }, _max: { sortOrder: true } });
+      await db.debt.create({
+        data: {
+          householdId: session.user.householdId,
+          name: account.name,
+          debtType: "REVOLVING",
+          kind: parsed.data === "LOAN" ? "LOAN" : "CARD",
+          aprBasisPoints: 0,
+          minPaymentCents: 0,
+          balanceCents,
+          accountId,
+          source: "SIMPLEFIN",
+          termsConfirmed: balanceCents === 0,
+          sortOrder: (maxSort._max.sortOrder ?? -1) + 1,
+        },
+      });
+    }
+  }
+  revalidateHousehold();
+}
+
 const renameAccountSchema = z.object({
   name: z.string().trim().min(1).max(80),
 });

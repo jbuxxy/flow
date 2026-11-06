@@ -4,6 +4,7 @@ import { sendPushToHouseholdForType } from "@/lib/push";
 import { mapConcurrent } from "@/lib/concurrency";
 import { isDemoHousehold } from "@/lib/demo";
 import { fetchSimpleFinData, decimalStringToCents, type SimpleFinAccount } from "@/lib/simplefin";
+import { guessAccountType } from "@/lib/account-type";
 import { checkAndSendGoalAlerts } from "@/lib/savings";
 import { autoApplyAdHocIncomeToBuckets } from "@/lib/bucket-ad-hoc-topup";
 import { checkAndSendBucketAlertsFor } from "@/lib/buckets";
@@ -100,51 +101,6 @@ async function detachSettledEquityDebtLinks(householdId: string): Promise<void> 
     .map((a) => a.id);
   if (settled.length === 0) return;
   await db.asset.updateMany({ where: { id: { in: settled } }, data: { debtId: null } });
-}
-
-// Card issuers whose retail product names (Quicksilver, Venture, Sapphire,
-// Freedom...) don't contain any generic "credit card" keyword — there's no
-// exhaustive list of every product name, but the issuer list is short and
-// stable, so anything from one of these that isn't already a loan/
-// investment/deposit account is almost certainly a card.
-const KNOWN_CARD_ISSUERS = [
-  "capital one",
-  "chase",
-  "discover",
-  "american express",
-  "amex",
-  "citi",
-  "barclays",
-  "wells fargo",
-  "bank of america",
-  "us bank",
-  "synchrony",
-];
-
-function guessAccountType(a: SimpleFinAccount): AccountType {
-  const name = `${a.name} ${a.org?.name ?? ""}`.toLowerCase();
-  const orgName = (a.org?.name ?? "").toLowerCase();
-  if (name.includes("credit card") || name.includes("visa") || name.includes("mastercard")) return "CREDIT_CARD";
-  if (name.includes("loan") || name.includes("mortgage")) return "LOAN";
-  if (
-    name.includes("401k") ||
-    name.includes("401(k)") ||
-    name.includes(" ira") ||
-    name.includes("roth") ||
-    name.includes("brokerage") ||
-    name.includes("investment") ||
-    name.includes("retirement")
-  ) {
-    return "INVESTMENT";
-  }
-  // Money market (savings-style, check-writing privileges but still a
-  // liquid deposit account) doesn't contain "saving" or "checking" in most
-  // banks' product names, so it needs its own keyword — grouped under
-  // SAVINGS since that's what it behaves like for net worth/cash purposes.
-  if (name.includes("saving") || name.includes("money market")) return "SAVINGS";
-  if (name.includes("checking")) return "CHECKING";
-  if (KNOWN_CARD_ISSUERS.some((issuer) => orgName.includes(issuer))) return "CREDIT_CARD";
-  return "OTHER";
 }
 
 // SimpleFIN's own community-documented limitation: Venmo's balance is
@@ -1963,7 +1919,14 @@ async function runHouseholdSync(householdId: string): Promise<SyncResult> {
 
     for (const a of accounts) {
       const balanceCents = decimalStringToCents(a.balance);
-      const accountType = guessAccountType(a);
+      // A household's manual pick (see Account.accountTypeOverridden) wins
+      // over the guess — the upsert below skips the type for those, and the
+      // debt auto-create further down reads the stored type, not the guess.
+      const existingAccount = await db.account.findUnique({
+        where: { simpleFinAccountId: a.id },
+        select: { accountType: true, accountTypeOverridden: true },
+      });
+      const accountType = existingAccount?.accountTypeOverridden ? existingAccount.accountType : guessAccountType(a);
       const syncMode = guessSyncMode(a, accountType);
 
       const account = await db.account.upsert({
