@@ -14,7 +14,7 @@ import {
   isBillCycleSkipActive,
 } from "@/lib/recurring-bills";
 import { upsertMerchantRule } from "@/lib/merchant-rules";
-import { currentMonthOccurrenceOfDay, nextOccurrenceOfDay, parseDueDay } from "@/lib/date";
+import { parseDateInput } from "@/lib/date";
 import { currentPeriodKey, utcPeriodBounds } from "@/lib/period";
 import { suggestCategoryForMerchant } from "@/lib/ai";
 import { revalidateHousehold } from "@/lib/revalidate";
@@ -30,7 +30,6 @@ const billSchema = z.object({
   tolerance: z.string().optional(),
   cadence: cadenceEnum,
   categoryId: z.string().min(1),
-  dueDay: z.string().optional(),
   nextDueDate: z.string().optional(),
   bucketId: z.string().optional(),
 });
@@ -60,7 +59,6 @@ export async function updateBill(
     tolerance: formData.get("tolerance") || undefined,
     cadence: formData.get("cadence"),
     categoryId: formData.get("categoryId"),
-    dueDay: formData.get("dueDay") || undefined,
     nextDueDate: formData.get("nextDueDate") || undefined,
     bucketId: formData.get("bucketId") || undefined,
   });
@@ -72,31 +70,11 @@ export async function updateBill(
   const tolerance = parseOptionalToleranceCents(parsed.data.tolerance);
   if (!tolerance.ok) return { error: "Enter a valid tolerance." };
 
-  let nextDueDate: Date;
-  if (parsed.data.cadence === "MONTHLY") {
-    const day = parsed.data.dueDay ? parseDueDay(parsed.data.dueDay) : null;
-    if (day === null) return { error: "Enter a valid due date." };
-    nextDueDate = nextOccurrenceOfDay(day);
-    // Confirming the due date must not roll past an unpaid current cycle. If
-    // this bill has real payment history but nothing yet this period, and
-    // the chosen day has already gone by this month, nextOccurrenceOfDay
-    // lands in *next* month — skipping the now-overdue cycle, hiding the
-    // bill from every "this month" surface, and making BillRow read "Paid
-    // <stale date>" off its future-month heuristic (2026-08-30 incident:
-    // Fairview Water Improvement District / Summit Gas). Keep it on this
-    // month's occurrence. A never-paid bill keeps the forward roll — its
-    // first due date is legitimately upcoming (cf. the same-day
-    // future-first-due-date debt fix).
-    const { start: periodStart } = utcPeriodBounds(currentPeriodKey());
-    const paidThisPeriod = bill.lastPaidDate !== null && bill.lastPaidDate >= periodStart;
-    if (bill.lastPaidDate !== null && !paidThisPeriod) {
-      const thisMonth = currentMonthOccurrenceOfDay(day);
-      if (nextDueDate > thisMonth) nextDueDate = thisMonth;
-    }
-  } else {
-    nextDueDate = new Date(parsed.data.nextDueDate ?? "");
-    if (Number.isNaN(nextDueDate.getTime())) return { error: "Enter a valid due date." };
-  }
+  // A full date for every cadence, taken exactly as picked (2026-11-06 —
+  // MONTHLY used to be a bare day-of-month that needed a this-cycle-or-next
+  // guess whenever the day had already passed; see parseDateInput).
+  const nextDueDate = parseDateInput(parsed.data.nextDueDate ?? "");
+  if (nextDueDate === null) return { error: "Enter a valid due date." };
 
   const resolvedBucketId = await resolveBucketId(session.user.householdId, parsed.data.bucketId);
   const resolvedCategoryId = await resolveCategoryId(session.user.householdId, parsed.data.categoryId, resolvedBucketId);

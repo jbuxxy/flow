@@ -216,11 +216,23 @@ export function dayOfMonthUTC(isoDate: string): number {
   return new Date(isoDate).getUTCDate();
 }
 
-// A form's day-of-month field ("1"–"31") -> the day, or null when it isn't
-// one. Feeds nextOccurrenceOfDay for every monthly due-date picker.
-export function parseDueDay(dueDay: string): number | null {
-  const day = Number(dueDay);
-  return Number.isInteger(day) && day >= 1 && day <= 31 ? day : null;
+// A form's `<input type="date">` value ("2026-12-30") -> that calendar day
+// as UTC midnight (same storage convention as every `@db.Date` field), or
+// null when it isn't a real date. Every due-date field takes a full date
+// (2026-11-06 — was a bare day-of-month, which couldn't say "Dec 30" for a
+// new debt whose first payment is more than a month out, and needed a
+// this-month-or-next guess whenever the picked day had already passed).
+export function parseDateInput(value: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (!m) return null;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const date = new Date(Date.UTC(y, mo - 1, d));
+  return date.getUTCMonth() === mo - 1 && date.getUTCDate() === d ? date : null;
+}
+
+// The inverse, for pre-filling a date input from a stored ISO date.
+export function toDateInputValue(iso: string | null | undefined): string {
+  return iso ? iso.slice(0, 10) : "";
 }
 
 // "Oct 23" for an ISO date string.

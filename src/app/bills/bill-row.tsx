@@ -3,9 +3,9 @@
 import { useActionState, useState, useTransition } from "react";
 import { CheckCircle2, ChevronDown, CircleSlash, SkipForward, Trash2, Undo2 } from "lucide-react";
 import { formatCents } from "@/lib/money";
-import { formatDate, dayOfMonthUTC, dueDateProximity } from "@/lib/date";
+import { formatDate, dueDateProximity } from "@/lib/date";
 import { useKebabEditRow } from "@/lib/use-kebab-edit-row";
-import { DayOfMonthPicker } from "@/components/day-of-month-picker";
+import { DueDateInput } from "@/components/due-date-input";
 import { EntryLine } from "@/components/entry-line";
 import { CycleLedger } from "@/components/cycle-ledger";
 import { deleteBill, skipBillCycle, unskipBillCycle, updateBill, type BillFormState } from "./actions";
@@ -149,7 +149,6 @@ export function BillRow({
     if (v === bill.cadence) setDueDate(bill.nextDueDate.slice(0, 10));
     else if (bill.lastPaidDate) setDueDate(addCadenceISO(bill.lastPaidDate, v));
   }
-  const [dueDay, setDueDay] = useState(String(dayOfMonthUTC(bill.nextDueDate)));
   const [bucketId, setBucketId] = useState(bill.bucketId ?? "");
   const [deletePending, startDeleteTransition] = useTransition();
   const [skipPending, startSkipTransition] = useTransition();
@@ -606,31 +605,7 @@ export function BillRow({
                 className="mt-1"
               />
             </label>
-            {cadence === "MONTHLY" ? (
-              <DayOfMonthPicker
-                name="dueDay"
-                value={dueDay}
-                onChange={setDueDay}
-                label="Due Date"
-                unconfirmed={!bill.dueDateLocked}
-              />
-            ) : (
-              <label className="flex min-w-0 flex-col gap-1 text-xs text-gray-500 dark:text-neutral-400">
-                Due Date
-                <input
-                  name="nextDueDate"
-                  type="date"
-                  value={dueDate}
-                  onChange={(e) => setDueDate(e.target.value)}
-                  required
-                  className={`mt-1 rounded-lg border px-3 py-2 text-sm focus:outline-none ${
-                    bill.dueDateLocked
-                      ? "border-neutral-300 dark:border-neutral-700 focus:border-blue-900"
-                      : "border-red-400 dark:border-red-600 bg-red-50 dark:bg-red-950/30 focus:border-red-500"
-                  }`}
-                />
-              </label>
-            )}
+            <DueDateInput value={dueDate} onChange={setDueDate} label="Due Date" required unconfirmed={!bill.dueDateLocked} />
           </div>
           <BucketCategoryFields
             buckets={buckets}

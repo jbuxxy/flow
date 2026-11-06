@@ -12,8 +12,7 @@ import { debtBalanceUpdate } from "@/lib/debt-payoff";
 import { confirmedDebtDueDate, debtDueDateDismissKey, DEBT_DUE_DATE_DISMISS_KIND } from "@/lib/bill-notice-due-date";
 import { nextBillDueDate } from "@/lib/recurring-bills";
 import { upsertMerchantRule } from "@/lib/merchant-rules";
-import { nextOccurrenceOfDay, currentMonthOccurrenceOfDay, todayAsUTCDate, parseDueDay } from "@/lib/date";
-import { currentPeriodKey, utcPeriodBounds } from "@/lib/period";
+import { nextOccurrenceOfDay, todayAsUTCDate, parseDateInput } from "@/lib/date";
 import { releaseBnplCluster, allBnplKeywords, resolveBnplKeyword } from "@/lib/bnpl-detect";
 import {
   defaultDebtPaymentBucketId,
@@ -63,11 +62,8 @@ const revolvingSchema = baseSchema.extend({
   // a due date yet. When given, upsertDebtPayment creates/updates the
   // linked DebtPayment tracker right here instead of requiring a separate
   // suggestion-accept or "track as a bill" step. `dueDate` is the full
-  // first-due-date the add form now asks for (see parseFirstDueDate);
-  // `dueDay` is the older bare day-of-month, still accepted for any caller
-  // that sends it.
+  // first-due-date the add form asks for (see parseFirstDueDate).
   dueDate: z.string().optional(),
-  dueDay: z.string().optional(),
   // CARD vs LOAN — see DebtKind's doc comment in schema.prisma. Default
   // guards a missing field the same way the DB column's own default does;
   // AddDebtForm always sends one in practice.
@@ -447,7 +443,6 @@ export async function createDebt(
       balance: formData.get("balance"),
       minPayment: formData.get("minPayment"),
       dueDate: formData.get("dueDate") || undefined,
-      dueDay: formData.get("dueDay") || undefined,
       kind: formData.get("kind") || undefined,
     });
     if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
@@ -472,10 +467,6 @@ export async function createDebt(
     if (parsed.data.dueDate) {
       firstDueDate = parseFirstDueDate(parsed.data.dueDate);
       if (firstDueDate === null) return { error: "Enter a valid first due date." };
-    } else if (parsed.data.dueDay) {
-      const day = parseDueDay(parsed.data.dueDay);
-      if (day === null) return { error: "Enter a valid due date." };
-      firstDueDate = nextOccurrenceOfDay(day);
     }
 
     const debt = await db.debt.create({
@@ -602,17 +593,14 @@ const updateTermsSchema = z.object({
   // See ignoreMinimumPayment on the Debt model.
   ignoreMinimum: z.string().optional(),
   // Same optional due-date consolidation as createDebt — pre-filled from
-  // the linked DebtPayment's nextDueDate when one already exists.
-  dueDay: z.string().optional(),
+  // the linked DebtPayment's nextDueDate when one already exists. A full
+  // date, taken exactly as picked (see parseDateInput).
+  nextDueDate: z.string().optional(),
   // The linked DebtPayment tracker's bucket/category (2026-09-08 — the
   // revolving manual-debt editor gained these fields, matching the
   // installment path; only applied to an already-existing tracker).
   bucketId: z.string().optional(),
   categoryId: z.string().optional(),
-  // Present only on the resubmit after dueDateConfirm below round-trips —
-  // the household's explicit pick between the two dates that made the plain
-  // day-of-month ambiguous. Absent on a normal (non-ambiguous) submit.
-  dueDateConfirmed: z.enum(["this", "next"]).optional(),
 });
 
 export type UpdateTermsState = { error?: string };
@@ -635,10 +623,9 @@ export async function updateDebtTerms(
     // ("expected string, received null") unless normalized here.
     minPayment: formData.get("minPayment") || undefined,
     ignoreMinimum: formData.get("ignoreMinimum") || undefined,
-    dueDay: formData.get("dueDay") || undefined,
+    nextDueDate: formData.get("nextDueDate") || undefined,
     bucketId: formData.get("bucketId") || undefined,
     categoryId: formData.get("categoryId") || undefined,
-    dueDateConfirmed: formData.get("dueDateConfirmed") || undefined,
   });
   if (!parsed.success) return { error: "Invalid input" };
 
@@ -665,51 +652,19 @@ export async function updateDebtTerms(
       ignoreMinimumPayment,
     },
   });
-  if (parsed.data.dueDay) {
-    const day = parseDueDay(parsed.data.dueDay);
-    if (day === null) return { error: "Enter a valid due date." };
-    const rollForward = nextOccurrenceOfDay(day);
-    let nextDueDate = rollForward;
-    // Confirming the due date must not roll past an unpaid current cycle —
-    // same fix as bills/actions.ts's updateBill (2026-08-30 Fairview Water
-    // Improvement District incident, never ported here). If this debt has
-    // real payment history but nothing yet this period, and the chosen day
-    // has already gone by this month, nextOccurrenceOfDay lands in *next*
-    // month — skipping the now-overdue cycle, hiding it from This Week's
-    // Bills entirely (real report, 2026-09-06: Voyager Loan vanished after
-    // its due day was corrected to the 3rd, today being the 5th). A debt
-    // with no payment history yet keeps the forward roll — its first due
-    // date is legitimately upcoming.
-    const existingTracker = await db.debtPayment.findUnique({ where: { debtId } });
-    if (existingTracker?.lastPaidDate) {
-      const { start: periodStart } = utcPeriodBounds(currentPeriodKey());
-      const paidThisPeriod = existingTracker.lastPaidDate >= periodStart;
-      if (!paidThisPeriod) {
-        const thisMonth = currentMonthOccurrenceOfDay(day);
-        if (rollForward > thisMonth) {
-          // Genuinely ambiguous, not a case the heuristic can safely guess:
-          // the chosen day already passed this month AND the current cycle
-          // is still unpaid, so "this month" (a correction to an overdue
-          // cycle) and "next month" (a real, later change) are both
-          // plausible readings of the same plain day-of-month.
-          // manual-debt-editor.tsx asks client-side (a confirm() gate, same
-          // technique it already uses for the loan-balance-increase check
-          // just above) and resubmits with dueDateConfirmed set — household
-          // decision, 2026-09-06, in place of a full date picker. Falls back
-          // to the "this month" heuristic if some other caller ever submits
-          // this without going through that gate, rather than guessing the
-          // riskier "silently skip a real overdue cycle" direction.
-          nextDueDate = parsed.data.dueDateConfirmed === "next" ? rollForward : thisMonth;
-        }
-      }
-    }
+  if (parsed.data.nextDueDate) {
+    // Taken exactly as picked — a full date already says which cycle it
+    // means, so the old day-of-month roll-forward/this-month heuristics
+    // (and the confirm() that disambiguated them) are gone (2026-11-06).
+    const nextDueDate = parseDateInput(parsed.data.nextDueDate);
+    if (nextDueDate === null) return { error: "Enter a valid due date." };
     await upsertDebtPayment(session.user.householdId, debtId, {
       amountCents: minPaymentCents,
       nextDueDate,
     });
   } else {
-    // dueDay is only omitted when no DebtPayment tracker exists yet (a
-    // brand-new manual debt with no due date set) — DayOfMonthPicker always
+    // nextDueDate is only omitted when no DebtPayment tracker exists yet (a
+    // brand-new manual debt with no due date set) — the due-date field always
     // resubmits *some* day once a tracker exists. Real household report,
     // 2026-08-21: editing just the minimum payment on an already-tracked
     // debt silently left the stale tracker's amountCents (and nextDueDate)
@@ -1024,7 +979,7 @@ const trackAccountSchema = z.object({
   apr: z.string(),
   minPayment: z.string(),
   // Same optional due-date consolidation as createDebt/updateDebtTerms.
-  dueDay: z.string().optional(),
+  nextDueDate: z.string().optional(),
 });
 
 export type TrackAccountState = { error?: string };
@@ -1046,7 +1001,7 @@ export async function trackAccountAsDebt(
   const parsed = trackAccountSchema.safeParse({
     apr: formData.get("apr"),
     minPayment: formData.get("minPayment"),
-    dueDay: formData.get("dueDay") || undefined,
+    nextDueDate: formData.get("nextDueDate") || undefined,
   });
   if (!parsed.success) return { error: "Invalid input" };
 
@@ -1056,10 +1011,9 @@ export async function trackAccountAsDebt(
     return { error: "Enter a valid APR and minimum payment." };
   }
   let dueDate: Date | null = null;
-  if (parsed.data.dueDay) {
-    const day = parseDueDay(parsed.data.dueDay);
-    if (day === null) return { error: "Enter a valid due date." };
-    dueDate = nextOccurrenceOfDay(day);
+  if (parsed.data.nextDueDate) {
+    dueDate = parseDateInput(parsed.data.nextDueDate);
+    if (dueDate === null) return { error: "Enter a valid due date." };
   }
 
   const maxSort = await db.debt.aggregate({
@@ -1123,7 +1077,7 @@ const updateSyncedDebtTermsSchema = z.object({
   // See ignoreMinimumPayment on the Debt model.
   ignoreMinimum: z.string().optional(),
   cadence: cadenceEnum,
-  dueDay: z.string().min(1),
+  nextDueDate: z.string().min(1, "Pick a due date."),
   tolerance: z.string().optional(),
   categoryId: z.string().optional(),
   bucketId: z.string().optional(),
@@ -1159,7 +1113,7 @@ export async function updateSyncedDebtTerms(
     minPayment: formData.get("minPayment") || undefined,
     ignoreMinimum: formData.get("ignoreMinimum") || undefined,
     cadence: formData.get("cadence"),
-    dueDay: formData.get("dueDay"),
+    nextDueDate: formData.get("nextDueDate"),
     tolerance: formData.get("tolerance") || undefined,
     categoryId: formData.get("categoryId") || undefined,
     bucketId: formData.get("bucketId") || undefined,
@@ -1185,9 +1139,8 @@ export async function updateSyncedDebtTerms(
   const tolerance = parseOptionalToleranceCents(parsed.data.tolerance);
   if (!tolerance.ok) return { error: "Enter a valid tolerance." };
 
-  const dueDay = parseDueDay(parsed.data.dueDay);
-  if (dueDay === null) return { error: "Enter a valid due date." };
-  const dueDate = nextOccurrenceOfDay(dueDay);
+  const dueDate = parseDateInput(parsed.data.nextDueDate);
+  if (dueDate === null) return { error: "Enter a valid due date." };
 
   let resolvedBucketId: string | null = null;
   if (parsed.data.bucketId) {
@@ -1269,10 +1222,7 @@ const createDebtPaymentFromTransactionSchema = z.object({
   debtId: z.string(),
   // Optional — if given, this is a human explicitly setting the due date
   // right now, so it starts locked/confirmed instead of approximated from
-  // this one transaction's date. Day-of-month (dueDay) when cadence is
-  // MONTHLY, a full date (nextDueDate) otherwise — same split as
-  // updateDebtPaymentSchema above.
-  dueDay: z.string().optional(),
+  // this one transaction's date. A full date for every cadence.
   nextDueDate: z.string().optional(),
 });
 
@@ -1296,7 +1246,6 @@ export async function createDebtPaymentFromTransaction(
     tolerance: formData.get("tolerance") || undefined,
     cadence: formData.get("cadence"),
     debtId: formData.get("debtId"),
-    dueDay: formData.get("dueDay") || undefined,
     nextDueDate: formData.get("nextDueDate") || undefined,
   });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
@@ -1318,13 +1267,9 @@ export async function createDebtPaymentFromTransaction(
   const debtId = debt.id;
 
   let explicitDueDate: Date | null = null;
-  if (parsed.data.cadence === "MONTHLY" && parsed.data.dueDay) {
-    const day = parseDueDay(parsed.data.dueDay);
-    if (day === null) return { error: "Enter a valid due date." };
-    explicitDueDate = nextOccurrenceOfDay(day);
-  } else if (parsed.data.nextDueDate) {
-    explicitDueDate = new Date(parsed.data.nextDueDate);
-    if (Number.isNaN(explicitDueDate.getTime())) return { error: "Enter a valid due date." };
+  if (parsed.data.nextDueDate) {
+    explicitDueDate = parseDateInput(parsed.data.nextDueDate);
+    if (explicitDueDate === null) return { error: "Enter a valid due date." };
   }
 
   const debtPayment = await db.debtPayment.create({

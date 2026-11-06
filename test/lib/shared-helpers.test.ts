@@ -6,7 +6,7 @@ import { effectiveMerchant, isP2PMerchant, p2pMerchantMatch } from "@/lib/p2p-ke
 import { nameSimilarity, prepareName, preparedNameSimilarity } from "@/lib/fuzzy-match";
 import { formatCompact, niceTicks } from "@/lib/chart-axis";
 import { monthsAgoPeriodKey, periodLabel } from "@/lib/period";
-import { parseDueDay } from "@/lib/date";
+import { parseDateInput, toDateInputValue } from "@/lib/date";
 import { belongsToHousehold, hasFullAccess } from "@/lib/access-rules";
 
 // Helpers consolidated from duplicated copies in the 2026-10-09 /simplify
@@ -86,12 +86,20 @@ describe("period helpers", () => {
   });
 });
 
-describe("parseDueDay", () => {
-  test("1-31 only", () => {
-    assert.equal(parseDueDay("15"), 15);
-    assert.equal(parseDueDay("0"), null);
-    assert.equal(parseDueDay("32"), null);
-    assert.equal(parseDueDay("1.5"), null);
+describe("parseDateInput", () => {
+  test("a real calendar date -> UTC midnight", () => {
+    assert.equal(parseDateInput("2026-12-30")?.toISOString(), "2026-12-30T00:00:00.000Z");
+  });
+
+  test("rejects impossible dates and non-dates", () => {
+    assert.equal(parseDateInput("2026-02-30"), null);
+    assert.equal(parseDateInput("15"), null);
+    assert.equal(parseDateInput(""), null);
+  });
+
+  test("round-trips through toDateInputValue", () => {
+    assert.equal(toDateInputValue("2026-12-30T00:00:00.000Z"), "2026-12-30");
+    assert.equal(toDateInputValue(null), "");
   });
 });
 

@@ -108,7 +108,10 @@ export async function setAccountType(accountId: string, accountType: string) {
   });
 
   if (parsed.data === "CREDIT_CARD" || parsed.data === "LOAN") {
-    const linked = await db.debt.count({ where: { accountId } });
+    // The account's type is the only Card/Loan control a synced debt shows
+    // (AccountEditor's typePicker), so it drives the linked debt's kind too.
+    const kind = parsed.data === "LOAN" ? "LOAN" : "CARD";
+    const { count: linked } = await db.debt.updateMany({ where: { accountId }, data: { kind } });
     if (linked === 0) {
       const balanceCents = Math.max(0, -account.balanceCents);
       const maxSort = await db.debt.aggregate({ where: { householdId: session.user.householdId }, _max: { sortOrder: true } });
@@ -117,7 +120,7 @@ export async function setAccountType(accountId: string, accountType: string) {
           householdId: session.user.householdId,
           name: account.name,
           debtType: "REVOLVING",
-          kind: parsed.data === "LOAN" ? "LOAN" : "CARD",
+          kind,
           aprBasisPoints: 0,
           minPaymentCents: 0,
           balanceCents,

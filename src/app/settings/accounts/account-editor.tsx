@@ -13,7 +13,6 @@ import {
 import {
   updateSyncedDebtTerms,
   setDebtIncludedInPayoffPlan,
-  updateDebtKind,
   linkDebtAccount,
   type UpdateSyncedDebtTermsState,
 } from "@/app/debts/actions";
@@ -22,11 +21,11 @@ import { useActionToast } from "@/lib/use-action-toast";
 import { withToast } from "@/lib/toast";
 import { MoneyInput } from "@/components/money-input";
 import { PercentInput } from "@/components/percent-input";
-import { DayOfMonthPicker } from "@/components/day-of-month-picker";
+import { DueDateInput } from "@/components/due-date-input";
 import { SelectField } from "@/components/select-field";
 import { BucketCategoryFields } from "@/components/bucket-category-fields";
 import { type CategoryOption } from "@/app/bills/category-picker";
-import { dayOfMonthUTC } from "@/lib/date";
+import { toDateInputValue } from "@/lib/date";
 import type { AccountType } from "@prisma/client";
 
 const initialState: RenameAccountState = {};
@@ -62,10 +61,8 @@ const ACCOUNT_TYPE_OPTIONS: { value: AccountType; label: string }[] = [
 // missing them.
 export type SyncedDebtSummary = {
   debtId: string;
-  // CARD/LOAN — see DebtKind's doc comment in schema.prisma. Editable here
-  // (updateDebtKind) same as a manual debt's; a synced CREDIT_CARD/LOAN
-  // account is pre-set to match at track time (trackAccountAsDebt) but
-  // stays correctable in case the linked account's own type is ambiguous.
+  // CARD/LOAN — see DebtKind's doc comment in schema.prisma. Not edited
+  // here directly: the account Type picker sets it (setAccountType).
   kind: "CARD" | "LOAN";
   aprBasisPoints: number;
   minPaymentCents: number;
@@ -165,7 +162,6 @@ export function AccountEditor({
   const [state, formAction, pending] = useActionState(renameWithId, initialState);
   const [budgetPending, startBudgetTransition] = useTransition();
   const [payoffPending, startPayoffTransition] = useTransition();
-  const [kindPending, startKindTransition] = useTransition();
   // Bound even when there's no debt (rules of hooks) — harmless, since the
   // form below that would actually invoke it only renders when `debt` is set.
   const updateTermsWithId = updateSyncedDebtTerms.bind(null, debt?.debtId ?? "");
@@ -174,12 +170,35 @@ export function AccountEditor({
   const updateApyWithId = updateAccountApy.bind(null, accountId);
   const [apyState, apyFormAction, apyPending] = useActionState(updateApyWithId, initialApyState);
   const { justSaved } = useActionToast(pending, state, { success: "Account Saved" });
-  const [dueDay, setDueDay] = useState(debt?.nextDueDate ? String(dayOfMonthUTC(debt.nextDueDate)) : "");
+  const [dueDate, setDueDate] = useState(toDateInputValue(debt?.nextDueDate));
   const [ignoreMinimum, setIgnoreMinimum] = useState(debt?.ignoreMinimumPayment ?? false);
   const [bucketId, setBucketId] = useState(debt?.bucketId ?? "");
   const [linkedAccountId, setLinkedAccountId] = useState(accountId);
   const [linkPending, startLinkTransition] = useTransition();
   const [typePending, startTypeTransition] = useTransition();
+
+  // One control for "what is this account" (2026-11-06) — replaces both the
+  // separate Card/Loan toggle a linked debt used to show and a standalone
+  // Type field above it, which said the same thing twice. Fixes a sync
+  // misclassification (a HELOC landing in Other) and sticks across syncs via
+  // Account.accountTypeOverridden; Credit Card/Loan also sets the linked
+  // debt's kind (see setAccountType). Fires immediately, like the Wallet/
+  // Target toggles beside it.
+  const typePicker = (
+    <span className="w-36 shrink-0" title="Account Type">
+      <SelectField
+        value={accountType}
+        disabled={typePending}
+        onChange={(v) => {
+          if (v === accountType) return;
+          startTypeTransition(() => toasted(() => setAccountType(accountId, v), "Account Type Updated"));
+        }}
+        options={ACCOUNT_TYPE_OPTIONS}
+        searchable={false}
+        small
+      />
+    </span>
+  );
 
   return (
     <form
@@ -219,26 +238,6 @@ export function AccountEditor({
       {editing && (
         <div className="mt-3 flex w-full flex-col gap-3 rounded-lg border border-blue-100 dark:border-neutral-800 p-3">
           {state.error && <p className="text-xs text-red-600 dark:text-red-400">{state.error}</p>}
-          {/* Manual fix for a sync misclassification (a HELOC or loan landing
-              in Other, 2026-11-06). Fires immediately, like the Wallet/Target
-              toggles — sticks across syncs via Account.accountTypeOverridden,
-              and picking Credit Card/Loan starts tracking it as a debt. */}
-          <label className="flex w-40 flex-col gap-1 text-xs text-gray-500 dark:text-neutral-400">
-            Type
-            <span className="mt-1">
-              <SelectField
-                value={accountType}
-                disabled={typePending}
-                onChange={(v) => {
-                  if (v === accountType) return;
-                  startTypeTransition(() => toasted(() => setAccountType(accountId, v), "Account Type Updated"));
-                }}
-                options={ACCOUNT_TYPE_OPTIONS}
-                searchable={false}
-                small
-              />
-            </span>
-          </label>
           {/* APY + the Use-for-Transactions toggle share one line (household
               request 2026-09-08); the toggle is an icon button mirroring the
               Wallet classification badge up by the account name. For a debt
@@ -246,6 +245,7 @@ export function AccountEditor({
               debt panel's own first row instead. */}
           {(showApy || !debt) && (
             <div className="flex items-end gap-3">
+              {!debt && typePicker}
               {showApy && (
                 <label className="flex w-28 shrink-0 flex-col gap-1 text-xs text-gray-500 dark:text-neutral-400">
                   APY
@@ -282,7 +282,7 @@ export function AccountEditor({
               <input type="hidden" name="cadence" value={debt.cadence} />
               <input type="hidden" name="tolerance" value={debt.toleranceCents !== null ? String(debt.toleranceCents / 100) : ""} />
               {/* Fixed field order (household layout request, 2026-09-08):
-                  Card/Loan + membership toggles / APR·Minimum·Due Date /
+                  Type + membership toggles / APR·Minimum·Due Date /
                   no-minimum opt-out / Bucket·Category. The two membership
                   toggles are icon-only here — each mirrors the matching
                   classification badge up by the account name (Wallet = used
@@ -291,21 +291,7 @@ export function AccountEditor({
                   server actions immediately (not part of the form submit),
                   same as before. */}
               <div className="flex flex-wrap items-center gap-2">
-                <div className="flex h-7 w-fit items-center gap-1 rounded-lg border border-neutral-300 dark:border-neutral-700 p-0.5 text-xs">
-                  {(["CARD", "LOAN"] as const).map((k) => (
-                    <button
-                      key={k}
-                      type="button"
-                      disabled={kindPending}
-                      onClick={() => startKindTransition(() => toasted(() => updateDebtKind(debt.debtId, k), "Type Saved"))}
-                      className={`flex h-full items-center rounded-md px-2 font-medium disabled:opacity-50 ${
-                        debt.kind === k ? "bg-blue-900 dark:bg-blue-700 text-white" : "text-neutral-500 dark:text-neutral-400"
-                      }`}
-                    >
-                      {k === "CARD" ? "Card" : "Loan"}
-                    </button>
-                  ))}
-                </div>
+                {typePicker}
                 <button
                   type="button"
                   disabled={budgetPending}
@@ -409,7 +395,7 @@ export function AccountEditor({
                     className="mt-1 w-full rounded-lg border border-neutral-300 dark:border-neutral-700 px-2 py-1.5 text-xs focus:border-blue-900 focus:outline-none disabled:opacity-50"
                   />
                 </label>
-                <DayOfMonthPicker name="dueDay" value={dueDay} onChange={setDueDay} label="Due Date" small />
+                <DueDateInput value={dueDate} onChange={setDueDate} required small />
               </div>
               <label className="inline-flex w-fit items-center gap-2 text-xs text-neutral-600 dark:text-neutral-400">
                 <input

@@ -8,7 +8,7 @@ import { InlineSaveButton } from "@/components/inline-save-button";
 import { useActionToast } from "@/lib/use-action-toast";
 import { MoneyInput } from "@/components/money-input";
 import { PercentInput } from "@/components/percent-input";
-import { DayOfMonthPicker } from "@/components/day-of-month-picker";
+import { DueDateInput } from "@/components/due-date-input";
 
 const initialState: TrackAccountState = {};
 
@@ -28,7 +28,7 @@ export function TrackAsDebtForm({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [tracked, setTracked] = useState(false);
-  const [dueDay, setDueDay] = useState("");
+  const [dueDate, setDueDate] = useState("");
   const trackWithId = trackAccountAsDebt.bind(null, accountId);
   const [state, formAction, pending] = useActionState(trackWithId, initialState);
   const { justSaved } = useActionToast(pending, state, { success: "Now Tracking as Debt" });
@@ -77,13 +77,7 @@ export function TrackAsDebtForm({
               className="min-w-0 flex-1 rounded-lg border border-neutral-300 dark:border-neutral-700 px-2 py-1.5 text-xs focus:border-blue-900 focus:outline-none"
             />
           </div>
-          <DayOfMonthPicker
-            name="dueDay"
-            value={dueDay}
-            onChange={setDueDay}
-            placeholder="Due — day of month (optional)"
-            small
-          />
+          <DueDateInput value={dueDate} onChange={setDueDate} label="Next Due Date (optional)" small />
           {knownMinPaymentCents !== undefined && (
             <p className="text-xs text-blue-800 dark:text-blue-400">
               Min $/mo pre-filled from a tracked bill for this lender — edit it if that&apos;s wrong.

@@ -17,7 +17,7 @@ import { CategoryPicker, type CategoryOption } from "@/app/bills/category-picker
 import { AddDebtModal } from "./add-debt-modal";
 import { SelectField } from "@/components/select-field";
 import { MoneyInput } from "@/components/money-input";
-import { DayOfMonthPicker } from "@/components/day-of-month-picker";
+import { DueDateInput } from "@/components/due-date-input";
 import { CADENCE_OPTIONS } from "@/lib/cadence-label";
 
 // Mirrors amountToleranceCents in src/lib/recurring-bills.ts — not imported
@@ -158,7 +158,7 @@ export function TrackAsBillForm({
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode | null>(isDebit ? (forceBillMode ? "bill" : null) : "income");
   const [cadence, setCadence] = useState(isDebit ? "MONTHLY" : "BIWEEKLY");
-  const [dueDay, setDueDay] = useState("");
+  const [dueDate, setDueDate] = useState("");
   const [bucketSelection, setBucketSelection] = useState(buckets?.[0]?.id ?? "");
   const [debtList, setDebtList] = useState(debts);
   const [debtSelection, setDebtSelection] = useState("");
@@ -353,24 +353,12 @@ export function TrackAsBillForm({
 
       {isDebtMode && (
         <div className="flex flex-col gap-1 text-xs text-gray-500 dark:text-neutral-400">
-          {cadence === "MONTHLY" ? (
-            <DayOfMonthPicker
-              name="dueDay"
-              value={dueDay}
-              onChange={setDueDay}
-              label="Due Date (optional — confirms it right away instead of approximating from this transaction)"
-              small
-            />
-          ) : (
-            <label className="flex flex-col gap-1">
-              Due Date (optional — confirms it right away instead of approximating from this transaction)
-              <input
-                name="nextDueDate"
-                type="date"
-                className="mt-1 rounded-lg border border-neutral-300 dark:border-neutral-700 px-3 py-2 text-sm focus:border-blue-900 focus:outline-none"
-              />
-            </label>
-          )}
+          <DueDateInput
+            value={dueDate}
+            onChange={setDueDate}
+            label="Next Due Date (optional — confirms it right away instead of approximating from this transaction)"
+            small
+          />
         </div>
       )}
 

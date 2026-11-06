@@ -1,11 +1,11 @@
 "use client";
 
 import { debtIsPaidOff } from "@/lib/debt-balance";
-import { useActionState, useRef, useState, useTransition } from "react";
+import { useActionState, useState, useTransition } from "react";
 import { CalendarDays, CreditCard, EyeOff, Pencil, PartyPopper, Receipt, Target, X } from "lucide-react";
 import { formatCents, parseDollarsToCents, formatBasisPoints } from "@/lib/money";
-import { formatDate, dayOfMonthUTC, ordinal, nextOccurrenceOfDay, currentMonthOccurrenceOfDay } from "@/lib/date";
-import { DayOfMonthPicker } from "@/components/day-of-month-picker";
+import { formatDate, formatISODate, toDateInputValue } from "@/lib/date";
+import { DueDateInput } from "@/components/due-date-input";
 import { DebtLabelEditor } from "@/components/debt-label-editor";
 import { InlineSaveButton } from "@/components/inline-save-button";
 import { useActionToast } from "@/lib/use-action-toast";
@@ -159,17 +159,12 @@ export function ManualDebtEditor({
   const [linkAccountId, setLinkAccountId] = useState("");
   const [linkPending, startLinkTransition] = useTransition();
   const [cadence, setCadence] = useState<Cadence>(trackedCadence ?? "BIWEEKLY");
-  const [dueDay, setDueDay] = useState(nextDueDate ? String(dayOfMonthUTC(nextDueDate)) : "");
-  // Set imperatively (not React state) right before an ambiguous submit
-  // actually goes through — see the form's onSubmit — so the same click
-  // that resolves the confirm() dialog also carries the answer, instead of
-  // needing a second click after a state-driven re-render.
-  const dueDateConfirmedRef = useRef<HTMLInputElement>(null);
+  const [dueDate, setDueDate] = useState(toDateInputValue(nextDueDate));
   // Re-seed whenever the tracked due date itself changes — this component
   // stays mounted across a save (key={d.id} on the list above never
   // changes), so its useState initializer only ever ran once, at first
   // mount. Without this, a tracker that gets attached/advanced by a
-  // background sync while this settings tab stays open left dueDay stuck at
+  // background sync while this settings tab stays open left dueDate stuck at
   // its original (often blank) value forever, and every later Save silently
   // resubmitted that stale value — real household report, 2026-08-21: this
   // is how a debt's tracked minimum payment/due date drifted out of sync
@@ -181,7 +176,7 @@ export function ManualDebtEditor({
   const [prevNextDueDate, setPrevNextDueDate] = useState(nextDueDate);
   if (nextDueDate !== prevNextDueDate) {
     setPrevNextDueDate(nextDueDate);
-    setDueDay(nextDueDate ? String(dayOfMonthUTC(nextDueDate)) : "");
+    setDueDate(toDateInputValue(nextDueDate));
   }
   const [bucketId, setBucketId] = useState(trackedBucketId ?? defaultBucketId ?? buckets[0]?.id ?? "");
   const [ignoreMinimum, setIgnoreMinimum] = useState(debt.ignoreMinimumPayment);
@@ -244,32 +239,6 @@ export function ManualDebtEditor({
           setEditing(false);
         }}
         onSubmit={(e) => {
-          // A plain day-of-month is ambiguous exactly when it's genuinely
-          // changing to a day that's already gone by this month: is the
-          // household correcting *this* cycle's due date (now overdue), or
-          // stating a real change that's not due until next month? Same
-          // gate this app already uses for a "notable but not forbidden"
-          // edit (the loan-balance check just below) rather than a full
-          // date picker (household decision, 2026-09-06) — asks only on an
-          // actual change, not every resave of an already-settled date, and
-          // updateDebtTerms's own fallback (debts/actions.ts) still resolves
-          // it sanely if this somehow doesn't fire.
-          if (!isInstallment && dueDay) {
-            const day = Number(dueDay);
-            const originalDay = nextDueDate ? dayOfMonthUTC(nextDueDate) : null;
-            if (Number.isInteger(day) && day >= 1 && day <= 31 && day !== originalDay) {
-              const rollForward = nextOccurrenceOfDay(day);
-              const thisMonth = currentMonthOccurrenceOfDay(day);
-              if (rollForward.getTime() !== thisMonth.getTime()) {
-                const useThisMonth = confirm(
-                  `The ${ordinal(day)} has already passed this month.\n\n` +
-                    `Click OK to use ${formatDate(thisMonth, { month: "short", day: "numeric" })} for the current, already-due cycle.\n` +
-                    `Click Cancel to use ${formatDate(rollForward, { month: "short", day: "numeric" })} instead (skips this cycle).`,
-                );
-                if (dueDateConfirmedRef.current) dueDateConfirmedRef.current.value = useThisMonth ? "this" : "next";
-              }
-            }
-          }
           // Loans shouldn't casually regain balance the way a card can — no
           // server-side block, just a confirm gate (this app's usual style
           // for notable-but-not-forbidden edits).
@@ -288,7 +257,6 @@ export function ManualDebtEditor({
         }}
       >
       <input type="hidden" name="debtId" value={debt.id} />
-      <input type="hidden" name="dueDateConfirmed" ref={dueDateConfirmedRef} />
       {/* flex-wrap only while editing, name input + cancel/X (order-2) on
           line one, every other badge/icon pushed to a wrapped line two
           (order-3) — 2026-08-26 household request. A flex-basis:0 flex-1
@@ -576,13 +544,7 @@ export function ManualDebtEditor({
                     className="mt-1 w-full rounded-lg border border-neutral-300 dark:border-neutral-700 px-2 py-2 text-sm focus:border-blue-900 focus:outline-none disabled:opacity-50"
                   />
                 </label>
-                <DayOfMonthPicker
-                  name="dueDay"
-                  value={dueDay}
-                  onChange={setDueDay}
-                  label="Due Date"
-                  unconfirmed={!dueDateLocked}
-                />
+                <DueDateInput value={dueDate} onChange={setDueDate} label="Due Date" unconfirmed={!dueDateLocked} />
               </div>
               <label className="inline-flex w-fit items-center gap-2 text-xs text-neutral-600 dark:text-neutral-400">
                 <input
@@ -688,12 +650,12 @@ export function ManualDebtEditor({
                     className="inline-flex items-center gap-0.5 whitespace-nowrap align-bottom"
                     title={
                       dueDateLocked
-                        ? `Due On The ${ordinal(dayOfMonthUTC(nextDueDate))} Each Month`
+                        ? `Next Due ${formatISODate(nextDueDate, { month: "short", day: "numeric" })}`
                         : "Approximate — Not Yet Confirmed"
                     }
                   >
                     <CalendarDays size={11} className="shrink-0" aria-label="Due" />
-                    {`${dueDateLocked ? "" : "~"}${ordinal(dayOfMonthUTC(nextDueDate))}`}
+                    {`${dueDateLocked ? "" : "~"}${formatISODate(nextDueDate, { month: "short", day: "numeric" })}`}
                   </span>
                 </>
               )}

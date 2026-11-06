@@ -4,7 +4,7 @@ import { CalendarDays, PartyPopper, EyeOff, Target, Landmark, PiggyBank, CreditC
 import { buildBnplSchedule } from "@/lib/bnpl-schedule";
 import { db } from "@/lib/db";
 import { formatCents, formatBasisPoints } from "@/lib/money";
-import { formatDate, ordinal } from "@/lib/date";
+import { formatDate } from "@/lib/date";
 import { canViewAccountBalance, requireFullAccess } from "@/lib/access";
 import { getUntrackedLiabilityAccounts } from "@/lib/untracked-liabilities";
 import { getHiddenItems } from "@/lib/hidden-items";
@@ -575,7 +575,9 @@ export default async function AccountsSettingsPage() {
                   // matches whichever condition actually made needsSetup true.
                   // dueDateLocked true (checked below) guarantees nextDueDate
                   // is set — see upsertDebtPayment.
-                  const dueDay = debtPayment?.nextDueDate ? new Date(debtPayment.nextDueDate).getUTCDate() : null;
+                  const nextDue = debtPayment?.nextDueDate
+                    ? formatDate(new Date(debtPayment.nextDueDate), { month: "short", day: "numeric" })
+                    : null;
                   const setupReason = debt
                     ? debtSetupReason(debt, debtPayment?.dueDateLocked ?? null, debtIdsWithPendingReview.has(debt.id))
                     : null;
@@ -592,10 +594,10 @@ export default async function AccountsSettingsPage() {
                                 treatment as debt-row.tsx / manual-debt-editor.tsx. */}
                             <span
                               className="inline-flex items-center gap-0.5 whitespace-nowrap align-bottom"
-                              title={`Due On The ${ordinal(dueDay!)} Each Month`}
+                              title={`Next Due ${nextDue}`}
                             >
-                              <CalendarDays size={11} className="shrink-0" aria-label="Due" />
-                              {ordinal(dueDay!)}
+                              <CalendarDays size={11} className="shrink-0" aria-label="Next Due" />
+                              {nextDue}
                             </span>
                           </>
                         );
