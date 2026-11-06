@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { Ban, Link2, Scissors, Search, Star, X } from "lucide-react";
 import { formatCents } from "@/lib/money";
 import { showToast } from "@/lib/toast";
@@ -15,6 +15,7 @@ import {
   removeTransactionOffset,
   searchLinkableDebits,
   searchOffsetTargets,
+  suggestOffsetTargets,
   unlinkReimbursement,
   type ReimbursementCandidate,
 } from "@/app/transactions/actions";
@@ -88,6 +89,18 @@ function SplitPanel({
   const [amountStr, setAmountStr] = useState("");
   const [adding, startAdd] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  // Shown while the search box is empty — exact amount first, then the
+  // closest, on/after this credit's date (suggestOffsetTargets).
+  const [suggestions, setSuggestions] = useState<ReimbursementCandidate[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    suggestOffsetTargets(transactionId).then((rows) => {
+      if (!cancelled) setSuggestions(rows);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [transactionId]);
 
   const pick = (c: ReimbursementCandidate) => {
     setPicked(c);
@@ -169,12 +182,28 @@ function SplitPanel({
             onChange={(e) => {
               const value = e.target.value;
               setQuery(value);
-              startSearch(async () => setResults(value.trim() ? await searchOffsetTargets(value.trim()) : null));
+              startSearch(async () =>
+                setResults(value.trim() ? await searchOffsetTargets(transactionId, value.trim()) : null),
+              );
             }}
-            placeholder="Search a payment or payoff (e.g. Trailer, F150)…"
+            placeholder="Search a payment or payoff…"
             className="rounded-lg border border-neutral-300 dark:border-neutral-700 px-2 py-1.5 text-xs focus:border-blue-900 focus:outline-none"
           />
           {searching && <p className="text-[11px] text-neutral-400 dark:text-neutral-500">Searching…</p>}
+          {results === null && suggestions && suggestions.length > 0 && (
+            <div className="flex flex-col gap-1">
+              <p className="text-[11px] text-neutral-400 dark:text-neutral-500">Suggested</p>
+              {suggestions.map((c) => (
+                <CandidateButton
+                  key={c.id}
+                  candidate={c}
+                  disabled={adding}
+                  isBestMatch={c.amountCents === remainingCents}
+                  onPick={() => pick(c)}
+                />
+              ))}
+            </div>
+          )}
           {results?.map((c) => (
             <CandidateButton key={c.id} candidate={c} disabled={adding} isBestMatch={false} onPick={() => pick(c)} />
           ))}

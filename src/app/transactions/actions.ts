@@ -1,6 +1,7 @@
 "use server";
 
 import { z } from "zod";
+import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { belongsToHousehold, requireFullAccess } from "@/lib/access";
 import { parseDollarsToCents } from "@/lib/money";
@@ -302,25 +303,81 @@ export async function searchLinkableDebits(creditTransactionId: string, query: s
 // target and often only exists as a negative "Payment" on the loan's own
 // feed. Amounts come back positive (absolute); a debt payment shows its
 // debt name.
-export async function searchOffsetTargets(query: string): Promise<ReimbursementCandidate[]> {
+export async function searchOffsetTargets(creditTransactionId: string, query: string): Promise<ReimbursementCandidate[]> {
   const session = await requireFullAccess();
 
   const trimmed = query.trim();
   if (!trimmed) return [];
+  const credit = await db.transaction.findUnique({ where: { id: creditTransactionId } });
+  if (!belongsToHousehold(credit, session.user.householdId)) return [];
 
-  const rows = await db.transaction.findMany({
-    where: {
-      householdId: session.user.householdId,
-      OR: [
-        { amountCents: { gt: 0 }, merchant: { contains: trimmed, mode: "insensitive" } },
-        { debtId: { not: null }, merchant: { contains: trimmed, mode: "insensitive" } },
-        { debt: { name: { contains: trimmed, mode: "insensitive" } } },
-      ],
-    },
-    orderBy: { occurredOn: "desc" },
-    // Over-fetch a little: the twin-leg de-dup below can drop rows, and 20 is
-    // what the caller wants to end up showing.
-    take: 30,
+  const rows = await offsetTargetRows({
+    householdId: session.user.householdId,
+    ...offsetTargetScope(credit),
+    AND: [
+      {
+        OR: [
+          { merchant: { contains: trimmed, mode: "insensitive" } },
+          { debt: { name: { contains: trimmed, mode: "insensitive" } } },
+        ],
+      },
+    ],
+  });
+  return dedupeOffsetTwins(rows).slice(0, 20).map(toOffsetCandidate);
+}
+
+// What the split linker offers before anything is typed (household request,
+// 2026-11-06): the payments this credit most plausibly funded — exact
+// amount first, then the closest amounts — from the same window the typed
+// search uses.
+export async function suggestOffsetTargets(creditTransactionId: string): Promise<ReimbursementCandidate[]> {
+  const session = await requireFullAccess();
+
+  const credit = await db.transaction.findUnique({ where: { id: creditTransactionId } });
+  if (!belongsToHousehold(credit, session.user.householdId) || credit.amountCents >= 0) return [];
+
+  const rows = await offsetTargetRows(
+    { householdId: session.user.householdId, ...offsetTargetScope(credit) },
+    200,
+  );
+  // "Close" = within 25% of the credit; a tracked debt payment qualifies at
+  // any amount (one draw often pays off several debts). Anything else —
+  // a $50 dinner next to a $13k draw — is noise, not a suggestion.
+  const target = Math.abs(credit.amountCents);
+  const diff = (r: OffsetTargetRow) => Math.abs(Math.abs(r.amountCents) - target);
+  return dedupeOffsetTwins(rows)
+    .filter((r) => r.debt || diff(r) <= target * 0.25)
+    .sort((a, b) => diff(a) - diff(b))
+    .slice(0, 8)
+    .map(toOffsetCandidate);
+}
+
+// Shared candidate window for both of the above: real money out, or a
+// tracked debt payment of either sign (a loan payoff often only exists as a
+// negative "Payment" on the loan's own feed) — dated on or after the credit
+// (money can't fund a payment made before it arrived) and within 30 days.
+// Never a debit on a LOAN account itself: that's a draw (the HELOC's own
+// "Cash Advance" leg of the very deposit being split), not a payment.
+const OFFSET_TARGET_WINDOW_DAYS = 30;
+function offsetTargetScope(credit: { id: string; occurredOn: Date }): Prisma.TransactionWhereInput {
+  const to = new Date(credit.occurredOn);
+  to.setUTCDate(to.getUTCDate() + OFFSET_TARGET_WINDOW_DAYS);
+  return {
+    id: { not: credit.id },
+    occurredOn: { gte: credit.occurredOn, lte: to },
+    OR: [
+      { amountCents: { gt: 0 }, OR: [{ accountId: null }, { account: { is: { accountType: { not: "LOAN" } } } }] },
+      { debtId: { not: null } },
+    ],
+  };
+}
+
+function offsetTargetRows(where: Prisma.TransactionWhereInput, take = 30) {
+  return db.transaction.findMany({
+    where,
+    orderBy: { occurredOn: "asc" },
+    // Over-fetch a little: the twin-leg de-dup below can drop rows.
+    take,
     select: {
       id: true,
       merchant: true,
@@ -332,21 +389,24 @@ export async function searchOffsetTargets(query: string): Promise<ReimbursementC
       debt: { select: { name: true, accountId: true } },
     },
   });
+}
+type OffsetTargetRow = Awaited<ReturnType<typeof offsetTargetRows>>[number];
 
-  // A single debt payment often posts as two transactions — the checking-side
-  // debit ("Transfer to Loan", amountCents > 0) and the balance-reducing
-  // credit on the debt's own account ("Payment from Checking", amountCents < 0)
-  // — both carrying the same debtId (the depository leg via
-  // matchDepositoryDebtPaymentLegs). searchOffsetTargets renders both with the
-  // debt's name and the absolute amount, so they show as an identical
-  // duplicate row. Collapse each such pair to the leg on the debt's own
-  // account — the canonical one filterDebtPaymentTwins keeps linked to the
-  // DebtPayment (see WORKING_ON.md). Only ever drops a *checking-side* leg
-  // that has a same-debt, same-|amount|, within-3-days loan-side counterpart;
-  // a lone leg of either kind is left as-is.
+// A single debt payment often posts as two transactions — the checking-side
+// debit ("Transfer to Loan", amountCents > 0) and the balance-reducing
+// credit on the debt's own account ("Payment from Checking", amountCents < 0)
+// — both carrying the same debtId (the depository leg via
+// matchDepositoryDebtPaymentLegs). Both render with the debt's name and the
+// absolute amount, so they'd show as an identical duplicate row. Collapse
+// each such pair to the leg on the debt's own account — the canonical one
+// filterDebtPaymentTwins keeps linked to the DebtPayment (see WORKING_ON.md).
+// Only ever drops a *checking-side* leg that has a same-debt, same-|amount|,
+// within-3-days loan-side counterpart; a lone leg of either kind is left
+// as-is.
+function dedupeOffsetTwins(rows: OffsetTargetRow[]): OffsetTargetRow[] {
   const TWIN_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
   const loanSide = rows.filter((r) => r.debt?.accountId && r.accountId === r.debt.accountId);
-  const deduped = rows.filter((r) => {
+  return rows.filter((r) => {
     if (!r.debt?.accountId || r.accountId === r.debt.accountId) return true;
     const hasLoanTwin = loanSide.some(
       (l) =>
@@ -356,8 +416,10 @@ export async function searchOffsetTargets(query: string): Promise<ReimbursementC
     );
     return !hasLoanTwin;
   });
+}
 
-  return deduped.slice(0, 20).map((d) => ({
+function toOffsetCandidate(d: OffsetTargetRow): ReimbursementCandidate {
+  return {
     id: d.id,
     merchant: d.merchant,
     amountCents: Math.abs(d.amountCents),
@@ -365,7 +427,7 @@ export async function searchOffsetTargets(query: string): Promise<ReimbursementC
     billId: d.billId,
     billName: d.bill?.name ?? null,
     debtName: d.debt?.name ?? null,
-  }));
+  };
 }
 
 // --- RecurringPattern management (formerly src/app/transfers/actions.ts) ---
