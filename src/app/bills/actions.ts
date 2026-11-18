@@ -215,7 +215,11 @@ export async function deleteBill(billId: string) {
   if (!belongsToHousehold(bill, session.user.householdId)) return;
 
   const { start: periodStart } = utcPeriodBounds(currentPeriodKey());
-  const paidThisPeriod = bill.lastPaidDate !== null && bill.lastPaidDate >= periodStart;
+  // A payment still linked to it, not just lastPaidDate: that date stays
+  // behind when the payment is moved to something else (see
+  // currentPeriodBillWhere).
+  const paidThisPeriod =
+    (await db.transaction.count({ where: { billId, occurredOn: { gte: periodStart } } })) > 0;
 
   if (paidThisPeriod) {
     await db.recurringBill.update({ where: { id: billId }, data: { active: false } });

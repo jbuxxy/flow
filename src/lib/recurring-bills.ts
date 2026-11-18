@@ -30,9 +30,13 @@ import type { BillCadence, Prisma } from "@prisma/client";
 // (a cancelled subscription stays suppressed — re-track it by hand if it
 // comes back). lastPaidDate is a UTC-midnight @db.Date, so the bound is a
 // UTC month start (utcPeriodBounds), not the local-time periodBounds.
+// The payment must still be linked, not just remembered in lastPaidDate:
+// a bill created by mistake, whose payment was then moved elsewhere (e.g.
+// re-attached to a loan), keeps its stale lastPaidDate but has nothing left
+// to show for this month (real case, 2026-11-18).
 export function currentPeriodBillWhere(): Prisma.RecurringBillWhereInput {
   const { start } = utcPeriodBounds(currentPeriodKey());
-  return { OR: [{ active: true }, { active: false, lastPaidDate: { gte: start } }] };
+  return { OR: [{ active: true }, { active: false, lastPaidDate: { gte: start }, payments: { some: { occurredOn: { gte: start } } } }] };
 }
 
 
