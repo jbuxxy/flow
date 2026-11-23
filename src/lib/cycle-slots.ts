@@ -1,7 +1,7 @@
 import type { BillCadence } from "@prisma/client";
 import { stepCadence } from "@/lib/cadence-step";
 import { MATCH_WINDOW_DAYS } from "@/lib/bill-match-window";
-import { DAY_MS } from "@/lib/date";
+import { DAY_MS, todayAsUTCDate } from "@/lib/date";
 
 
 // Pure cadence<->calendar-month math, shared by every "This cycle" ledger
@@ -75,6 +75,15 @@ export type SlotBounds = {
   // report, 2026-09-03: Affirm–Dick's, 1 payment left due Sep 15, also showed
   // an unpaid Sep 29). Undefined for a REVOLVING plan (it bills indefinitely).
   occurrenceEnd?: Date;
+  // REVOLVING only — an *unpaid* occurrence in [from, until) is dropped: one
+  // still ahead of today but before the tracker's nextDueDate. Rollover only
+  // ever advances nextDueDate past dates already behind today, so a future
+  // occurrence before it means the household (or a due-date review) moved the
+  // date on purpose: nothing is owed then. Real report, 2026-11-23: a new
+  // HELOC whose first payment is Dec 30 showed an open "Nov 30 $25" on /debts
+  // and the Payment Calendar. A *past* open occurrence is untouched — that's
+  // a minimum the rollover blind-rolled past, still owed (correctedNextDueDate).
+  hideUnpaidBetween?: { from: Date; until: Date };
 };
 
 // How far back buildCycleSlots should look for one tracker, given when it
@@ -113,6 +122,8 @@ export function slotBounds(
     // regained a balance owes nothing before its restarted cycle's first due
     // date, so no occurrence (open, paid or covered) is walked before it.
     cycleRestartDueDate?: Date | null;
+    // The household's today (todayAsUTCDate); a parameter for tests.
+    today?: Date;
   },
 ): SlotBounds {
   if (opts.debtType === "INSTALLMENT") {
@@ -134,6 +145,7 @@ export function slotBounds(
       opts.cycleRestartDueDate && opts.cycleRestartDueDate > monthStart ? opts.cycleRestartDueDate : monthStart,
     hideUnpaidBefore:
       opts.trackerCreatedAt && opts.trackerCreatedAt > monthStart ? opts.trackerCreatedAt : undefined,
+    hideUnpaidBetween: opts.nextDueDate ? { from: opts.today ?? todayAsUTCDate(), until: opts.nextDueDate } : undefined,
   };
 }
 
@@ -202,6 +214,10 @@ export function buildCycleSlots<T extends { occurredOn: Date }>(
   if (bounds?.hideUnpaidBefore) {
     const cutoff = bounds.hideUnpaidBefore;
     slots = slots.filter((s) => s.payment !== null || s.date >= cutoff);
+  }
+  if (bounds?.hideUnpaidBetween) {
+    const { from, until } = bounds.hideUnpaidBetween;
+    slots = slots.filter((s) => s.payment !== null || s.date < from || s.date >= until);
   }
   const consumed = slots.filter((s) => s.payment !== null).length;
   return { slots, extraPayments: inPeriod.slice(consumed) };

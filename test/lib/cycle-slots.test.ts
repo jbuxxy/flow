@@ -335,3 +335,29 @@ describe("cycleDueDate", () => {
     assert.deepEqual(cycleDueDate([], utc(2027, 3, 1)), utc(2027, 3, 1));
   });
 });
+
+describe("an open occurrence before a nextDueDate moved ahead on purpose", () => {
+  const month = [utc(2026, 11, 1), utc(2026, 12, 1)] as const;
+  const bounds = (nextDueDate: Date, today: Date) =>
+    slotBounds(month[0], { debtType: "REVOLVING", trackerCreatedAt: utc(2026, 11, 6), nextDueDate, lastPaidDate: null, today });
+
+  test("a future one isn't owed (HELOC: first payment Dec 30, today Nov 23)", () => {
+    // Real report, 2026-11-23: an open Nov 30 $25 showed on /debts and the Payment Calendar.
+    const { slots } = buildCycleSlots(utc(2026, 12, 30), "MONTHLY", ...month, [], bounds(utc(2026, 12, 30), utc(2026, 11, 23)));
+    assert.deepEqual(slots, []);
+  });
+
+  test("a past one the rollover moved past is still owed", () => {
+    // Nov 10 missed; rollover advanced nextDueDate to Dec 10. It must still show.
+    const { slots } = buildCycleSlots(utc(2026, 12, 10), "MONTHLY", ...month, [], bounds(utc(2026, 12, 10), utc(2026, 11, 23)));
+    assert.deepEqual(slots, [{ date: utc(2026, 11, 10), payment: null }]);
+  });
+
+  test("a paid one stays, and the due date itself is never hidden", () => {
+    const paid = pay("2026-11-28T12:00:00Z", 2500);
+    const ahead = buildCycleSlots(utc(2026, 12, 30), "MONTHLY", ...month, [paid], bounds(utc(2026, 12, 30), utc(2026, 11, 23)));
+    assert.deepEqual(ahead.slots, [{ date: utc(2026, 11, 30), payment: paid }]);
+    const due = buildCycleSlots(utc(2026, 11, 30), "MONTHLY", ...month, [], bounds(utc(2026, 11, 30), utc(2026, 11, 23)));
+    assert.deepEqual(due.slots, [{ date: utc(2026, 11, 30), payment: null }]);
+  });
+});
