@@ -1904,6 +1904,7 @@ export async function getDebtPaymentsThisWeek(householdId: string, weekOf: Date 
     debtMetaById,
     new Set(),
     await planExtraTargetsByDebt(householdId, monthStart, monthEnd),
+    await getCoveredOutsideKeys(householdId, monthStart, monthEnd),
   );
   // Covered minimums the household skipped on /debts (DebtMinimumSkip) whose
   // due date lands in this week — the row reads "Skipped" instead of an open
@@ -2894,7 +2895,7 @@ const PLANNED_EXTRA_LOOKAHEAD_MONTHS = 2;
 // allocation path doesn't read, so loading them for all three is harmless.
 const loadCyclePlanContext = cache(async function loadCyclePlanContext(householdId: string) {
   const { start: monthStart, end: monthEnd } = utcPeriodBounds(currentPeriodKey());
-  const [household, income, allDebts, debtPayments, skippedMinimumKeys, planExtraTargets] = await Promise.all([
+  const [household, income, allDebts, debtPayments, skippedMinimumKeys, planExtraTargets, coveredOutsideKeys] = await Promise.all([
     db.household.findUniqueOrThrow({
       where: { id: householdId },
       select: {
@@ -2927,6 +2928,7 @@ const loadCyclePlanContext = cache(async function loadCyclePlanContext(household
     }),
     getSkippedMinimumKeys(householdId, monthStart, monthEnd),
     planExtraTargetsByDebt(householdId, monthStart, monthEnd),
+    getCoveredOutsideKeys(householdId, monthStart, monthEnd),
   ]);
 
   const debtMetaById = new Map(
@@ -2950,6 +2952,7 @@ const loadCyclePlanContext = cache(async function loadCyclePlanContext(household
     debtMetaById,
     skippedMinimumKeys,
     planExtraTargets,
+    coveredOutsideKeys,
   );
   const minimumSatisfiedThisCycleIds = new Set<string>();
   for (const p of debtPayments) {
@@ -3431,10 +3434,27 @@ export function withoutSkippedExtras<T extends { debtId: string; dueDate: Date }
 // (DebtMinimumSkip) — same key shape as getPayoffExtraSkips.
 export async function getSkippedMinimumKeys(householdId: string, monthStart: Date, monthEnd: Date): Promise<Set<string>> {
   const rows = await db.debtMinimumSkip.findMany({
-    where: { householdId, dueDate: { gte: monthStart, lt: monthEnd } },
+    where: { householdId, outsideFlow: false, dueDate: { gte: monthStart, lt: monthEnd } },
     select: { debtId: true, dueDate: true },
   });
   return new Set(rows.map((r) => `${r.debtId}:${r.dueDate.toISOString().slice(0, 10)}`));
+}
+
+// "debtId:YYYY-MM-DD" of every minimum the household marked "Covered Outside
+// Flow" (DebtMinimumSkip.outsideFlow) — fed to slotBounds' coveredOutside
+// via coveredOutsideDatesFor so the slot drops out of every surface.
+export async function getCoveredOutsideKeys(householdId: string, start: Date, end: Date): Promise<Set<string>> {
+  const rows = await db.debtMinimumSkip.findMany({
+    where: { householdId, outsideFlow: true, dueDate: { gte: start, lt: end } },
+    select: { debtId: true, dueDate: true },
+  });
+  return new Set(rows.map((r) => `${r.debtId}:${r.dueDate.toISOString().slice(0, 10)}`));
+}
+
+// One debt's ISO dates out of a "debtId:YYYY-MM-DD" key set.
+export function coveredOutsideDatesFor(keys: ReadonlySet<string>, debtId: string): Set<string> {
+  const prefix = `${debtId}:`;
+  return new Set([...keys].flatMap((k) => (k.startsWith(prefix) ? [k.slice(prefix.length)] : [])));
 }
 
 // Every payment the household skipped in [start, end) — covered minimums
@@ -3451,7 +3471,7 @@ export async function getSkippedPaymentsByDebt(
 ): Promise<Map<string, SkippedDebtPayment[]>> {
   const [minimums, extras] = await Promise.all([
     db.debtMinimumSkip.findMany({
-      where: { householdId, dueDate: { gte: start, lt: end } },
+      where: { householdId, outsideFlow: false, dueDate: { gte: start, lt: end } },
       select: { debtId: true, dueDate: true, amountCents: true },
     }),
     db.payoffExtraSkip.findMany({
@@ -3571,6 +3591,8 @@ function correctedDueDateByDebtId(
   // planExtraTargetsByDebt — a payment matching one of these is a paid plan
   // extra, kept out of the minimum slots (splitPlanExtraPayments).
   planExtrasByDebtId: ReadonlyMap<string, { date: Date; amountCents: number }[]> = new Map(),
+  // getCoveredOutsideKeys — minimums marked "Covered Outside Flow".
+  coveredOutsideKeys: ReadonlySet<string> = new Set(),
 ): Map<string, CorrectedDue> {
   const dueDateByDebtId = new Map<string, CorrectedDue>();
   for (const p of payments) {
@@ -3603,6 +3625,7 @@ function correctedDueDateByDebtId(
         lastPaidDate: p.lastPaidDate,
         installmentsRemaining: meta?.installmentsRemaining,
         cycleRestartDueDate: p.cycleRestartDueDate,
+        coveredOutsideDates: coveredOutsideDatesFor(coveredOutsideKeys, p.debtId),
       }),
     );
     // Same slot-based cycle status /debts derives for CycleMinimum

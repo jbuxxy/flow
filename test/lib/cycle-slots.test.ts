@@ -361,3 +361,30 @@ describe("an open occurrence before a nextDueDate moved ahead on purpose", () =>
     assert.deepEqual(due.slots, [{ date: utc(2026, 11, 30), payment: null }]);
   });
 });
+
+describe("a minimum marked Covered Outside Flow", () => {
+  const month = [utc(2026, 11, 1), utc(2026, 12, 1)] as const;
+  const bounds = (coveredOutsideDates?: Set<string>) =>
+    slotBounds(month[0], {
+      debtType: "REVOLVING",
+      trackerCreatedAt: utc(2026, 1, 1),
+      nextDueDate: utc(2026, 12, 10),
+      lastPaidDate: utc(2026, 10, 5),
+      today: utc(2026, 11, 23),
+      coveredOutsideDates,
+    });
+
+  test("drops the open slot (Amazon Card: Nov 10 met by October refunds)", () => {
+    const { slots } = buildCycleSlots(utc(2026, 12, 10), "MONTHLY", ...month, [], bounds(new Set(["2026-11-10"])));
+    assert.deepEqual(slots, []);
+  });
+
+  test("leaves it open without the mark, and never drops a paid slot", () => {
+    assert.deepEqual(buildCycleSlots(utc(2026, 12, 10), "MONTHLY", ...month, [], bounds()).slots, [
+      { date: utc(2026, 11, 10), payment: null },
+    ]);
+    const paid = pay("2026-11-09T12:00:00Z", 3500);
+    const { slots } = buildCycleSlots(utc(2026, 12, 10), "MONTHLY", ...month, [paid], bounds(new Set(["2026-11-10"])));
+    assert.deepEqual(slots, [{ date: utc(2026, 11, 10), payment: paid }]);
+  });
+});

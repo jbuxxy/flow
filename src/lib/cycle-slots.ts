@@ -84,6 +84,11 @@ export type SlotBounds = {
   // and the Payment Calendar. A *past* open occurrence is untouched — that's
   // a minimum the rollover blind-rolled past, still owed (correctedNextDueDate).
   hideUnpaidBetween?: { from: Date; until: Date };
+  // ISO (YYYY-MM-DD) due dates the household marked "Covered Outside Flow"
+  // (DebtMinimumSkip.outsideFlow) — an *unpaid* occurrence on one of these is
+  // dropped everywhere. Real report, 2026-11-23: Amazon Card's Nov 10 minimum
+  // was satisfied by October refunds, never a synced payment.
+  coveredOutside?: ReadonlySet<string>;
 };
 
 // How far back buildCycleSlots should look for one tracker, given when it
@@ -124,8 +129,11 @@ export function slotBounds(
     cycleRestartDueDate?: Date | null;
     // The household's today (todayAsUTCDate); a parameter for tests.
     today?: Date;
+    // See SlotBounds.coveredOutside.
+    coveredOutsideDates?: ReadonlySet<string>;
   },
 ): SlotBounds {
+  const coveredOutside = opts.coveredOutsideDates?.size ? opts.coveredOutsideDates : undefined;
   if (opts.debtType === "INSTALLMENT") {
     const floors = [monthStart];
     if (opts.purchaseDate) floors.push(opts.purchaseDate);
@@ -138,7 +146,7 @@ export function slotBounds(
       // lands exactly on nextDueDate and `0` lands before it (nothing left).
       occurrenceEnd = stepCadence(opts.nextDueDate, opts.cadence, Math.max(0, opts.installmentsRemaining) - 1);
     }
-    return { occurrenceStart, occurrenceEnd };
+    return { occurrenceStart, occurrenceEnd, coveredOutside };
   }
   return {
     occurrenceStart:
@@ -146,6 +154,7 @@ export function slotBounds(
     hideUnpaidBefore:
       opts.trackerCreatedAt && opts.trackerCreatedAt > monthStart ? opts.trackerCreatedAt : undefined,
     hideUnpaidBetween: opts.nextDueDate ? { from: opts.today ?? todayAsUTCDate(), until: opts.nextDueDate } : undefined,
+    coveredOutside,
   };
 }
 
@@ -218,6 +227,10 @@ export function buildCycleSlots<T extends { occurredOn: Date }>(
   if (bounds?.hideUnpaidBetween) {
     const { from, until } = bounds.hideUnpaidBetween;
     slots = slots.filter((s) => s.payment !== null || s.date < from || s.date >= until);
+  }
+  if (bounds?.coveredOutside) {
+    const covered = bounds.coveredOutside;
+    slots = slots.filter((s) => s.payment !== null || !covered.has(s.date.toISOString().slice(0, 10)));
   }
   const consumed = slots.filter((s) => s.payment !== null).length;
   return { slots, extraPayments: inPeriod.slice(consumed) };

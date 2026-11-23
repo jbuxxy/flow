@@ -164,7 +164,7 @@ export default async function DebtsPage() {
     supersededPayoffExtraByDebtInPeriod(session.user.householdId, monthStart, monthEnd),
     db.debtMinimumSkip.findMany({
       where: { householdId: session.user.householdId, dueDate: { gte: lastMonthStart, lt: monthEnd } },
-      select: { debtId: true, dueDate: true },
+      select: { debtId: true, dueDate: true, outsideFlow: true },
     }),
     // Planned payoff-plan extras for this month and last (the Last Month
     // list page uses the same split) — see splitPlanExtraPayments.
@@ -239,7 +239,17 @@ export default async function DebtsPage() {
   // (lastMonthCycleMinimum below).
   const skippedMinimumDatesByDebtId = new Map<string, string[]>();
   const lastMonthSkippedMinimumDatesByDebtId = new Map<string, string[]>();
+  // Minimums marked "Covered Outside Flow" (DebtMinimumSkip.outsideFlow) —
+  // both months; slotBounds drops their slots, DebtRow lists them struck.
+  const coveredOutsideByDebtId = new Map<string, Set<string>>();
+  const monthStartISO = monthStart.toISOString().slice(0, 10);
   for (const r of minimumSkipRows) {
+    if (r.outsideFlow) {
+      const set = coveredOutsideByDebtId.get(r.debtId) ?? new Set<string>();
+      set.add(r.dueDate.toISOString().slice(0, 10));
+      coveredOutsideByDebtId.set(r.debtId, set);
+      continue;
+    }
     const byDebt = r.dueDate < monthStart ? lastMonthSkippedMinimumDatesByDebtId : skippedMinimumDatesByDebtId;
     const list = byDebt.get(r.debtId) ?? [];
     list.push(r.dueDate.toISOString().slice(0, 10));
@@ -316,7 +326,8 @@ export default async function DebtsPage() {
               nextDueDate: payment.nextDueDate,
               lastPaidDate: payment.lastPaidDate,
               installmentsRemaining: d.installmentsRemaining,
-        cycleRestartDueDate: payment.cycleRestartDueDate,
+              cycleRestartDueDate: payment.cycleRestartDueDate,
+              coveredOutsideDates: coveredOutsideByDebtId.get(d.id),
             }),
           ), periodStart, periodEnd)
         : { slots: [], extraPayments: [] };
@@ -405,6 +416,7 @@ export default async function DebtsPage() {
           extraPaymentsBeyondSlots,
           planExtraPaymentIds: planExtraPayments.map((t) => t.id),
           skippedSlotDates: skippedMinimumDatesByDebtId.get(d.id) ?? [],
+          coveredOutsideDates: [...(coveredOutsideByDebtId.get(d.id) ?? [])].filter((iso) => iso >= monthStartISO),
           balanceOnlyPayoff: balanceOnlyPayoff(paymentsInPeriod(monthStart, monthEnd), d, monthStart, monthEnd),
         }
       : null;
@@ -429,6 +441,7 @@ export default async function DebtsPage() {
             extraPayments: lastMonth.extraPayments,
             extraPaymentsBeyondSlots: [],
             skippedSlotDates: lastMonthSkippedMinimumDatesByDebtId.get(d.id) ?? [],
+            coveredOutsideDates: [...(coveredOutsideByDebtId.get(d.id) ?? [])].filter((iso) => iso < monthStartISO),
             balanceOnlyPayoff: balanceOnlyPayoff(paymentsInPeriod(lastMonthStart, monthStart), d, lastMonthStart, monthStart),
           }
         : null;

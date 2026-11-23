@@ -2288,6 +2288,13 @@ model DebtMinimumSkip {
   dueDate     DateTime  @db.Date
   amountCents Int
   skippedAt   DateTime  @default(now())
+  // A past minimum the household paid outside Flow (or that refunds/credits
+  // satisfied) — an *open* slot the rollover already moved past and carried
+  // into amountDueCents. Unlike a covered skip it isn't display-only: the
+  // slot drops out of every ledger/calendar (slotBounds' coveredOutside) and
+  // releasedCents is what came off amountDueCents, put back on Undo.
+  outsideFlow   Boolean @default(false)
+  releasedCents Int     @default(0)
 
   @@unique([debtId, dueDate])
   @@index([householdId])

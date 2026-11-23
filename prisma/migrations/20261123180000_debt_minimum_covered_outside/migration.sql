@@ -1,0 +1,2 @@
+ALTER TABLE "DebtMinimumSkip" ADD COLUMN "outsideFlow" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "DebtMinimumSkip" ADD COLUMN "releasedCents" INTEGER NOT NULL DEFAULT 0;

@@ -1972,8 +1972,66 @@ export async function unskipDebtMinimum(debtId: string, dueDateISO: string) {
   if (dueDateISO < todayAsUTCDate().toISOString().slice(0, 10)) return;
 
   await db.debtMinimumSkip
-    .delete({ where: { debtId_dueDate: { debtId, dueDate: new Date(dueDateISO) } } })
+    .deleteMany({ where: { debtId, dueDate: new Date(dueDateISO), outsideFlow: false } })
     .catch(() => {}); // already unskipped — nothing to do
+  revalidateHousehold();
+}
+
+// "Covered Outside Flow" — a past minimum with no synced payment that the
+// rollover already moved past (and carried into amountDueCents), which the
+// household says was actually satisfied: paid from an account Flow doesn't
+// see, or refunds/credits brought the statement to $0 (real report,
+// 2026-11-23: Amazon Card's Nov 10 $35 after ~$1,000 of October refunds).
+// Not a fake payment: the slot drops out of every ledger and calendar
+// (slotBounds' coveredOutside) and the carried minimum comes off
+// amountDueCents — releasedCents records how much, for Undo. Refused for a
+// date still ahead, or one the tracker hasn't rolled past yet (that minimum
+// is still in play and a real payment may yet sync).
+export async function markMinimumCoveredOutside(debtId: string, dueDateISO: string) {
+  const session = await requireOwner();
+
+  const debt = await db.debt.findUnique({
+    where: { id: debtId },
+    include: { debtPayment: { select: { id: true, amountCents: true, amountDueCents: true, nextDueDate: true } } },
+  });
+  if (!belongsToHousehold(debt, session.user.householdId) || !debt.debtPayment) return;
+  const tracker = debt.debtPayment;
+  const dueDate = new Date(dueDateISO);
+  if (Number.isNaN(dueDate.getTime())) return;
+  if (dueDate >= todayAsUTCDate() || dueDate >= tracker.nextDueDate) return;
+
+  const existing = await db.debtMinimumSkip.findUnique({ where: { debtId_dueDate: { debtId, dueDate } } });
+  if (existing?.outsideFlow) return;
+  const releasedCents = Math.min(tracker.amountDueCents, tracker.amountCents);
+  await db.$transaction([
+    db.debtMinimumSkip.upsert({
+      where: { debtId_dueDate: { debtId, dueDate } },
+      create: { householdId: session.user.householdId, debtId, dueDate, amountCents: tracker.amountCents, outsideFlow: true, releasedCents },
+      update: { amountCents: tracker.amountCents, outsideFlow: true, releasedCents },
+    }),
+    db.debtPayment.update({ where: { id: tracker.id }, data: { amountDueCents: { decrement: releasedCents } } }),
+  ]);
+  revalidateHousehold();
+}
+
+// Undoes markMinimumCoveredOutside: the slot comes back open and the
+// released minimum goes back onto amountDueCents.
+export async function undoMinimumCoveredOutside(debtId: string, dueDateISO: string) {
+  const session = await requireOwner();
+
+  const debt = await db.debt.findUnique({ where: { id: debtId }, include: { debtPayment: { select: { id: true } } } });
+  if (!belongsToHousehold(debt, session.user.householdId)) return;
+  const dueDate = new Date(dueDateISO);
+  if (Number.isNaN(dueDate.getTime())) return;
+  const row = await db.debtMinimumSkip.findUnique({ where: { debtId_dueDate: { debtId, dueDate } } });
+  if (!row?.outsideFlow) return;
+
+  await db.$transaction([
+    db.debtMinimumSkip.delete({ where: { id: row.id } }),
+    ...(debt.debtPayment && row.releasedCents > 0
+      ? [db.debtPayment.update({ where: { id: debt.debtPayment.id }, data: { amountDueCents: { increment: row.releasedCents } } })]
+      : []),
+  ]);
   revalidateHousehold();
 }
 

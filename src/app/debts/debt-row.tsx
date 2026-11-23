@@ -6,7 +6,7 @@ import type { BillCadence } from "@prisma/client";
 import Link from "next/link";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Binoculars, Bookmark, CalendarDays, CircleSlash, GripVertical, Link2, Link2Off, PartyPopper, Receipt, Repeat, Undo2, X } from "lucide-react";
+import { Binoculars, Bookmark, CalendarDays, CircleCheck, CircleSlash, GripVertical, Link2, Link2Off, PartyPopper, Receipt, Repeat, Undo2, X } from "lucide-react";
 import { formatCents, formatBasisPoints } from "@/lib/money";
 import { withToast } from "@/lib/toast";
 import { formatDate, ordinal, dueDateProximity } from "@/lib/date";
@@ -21,9 +21,11 @@ import { debtLogoSearchText } from "@/lib/merchant-domains";
 import { ledgerMinimumCents, minimumOwedCents, resolveMinimumLedger } from "@/lib/minimum-ledger";
 import {
   linkDebtAccount,
+  markMinimumCoveredOutside,
   settleDebtAmountDue,
   skipDebtMinimum,
   skipPayoffExtra,
+  undoMinimumCoveredOutside,
   unskipDebtMinimum,
   unskipPayoffExtra,
 } from "./actions";
@@ -119,6 +121,10 @@ export type CycleMinimum = {
   // skipped — see DebtMinimumSkip / resolveMinimumLedger. Optional: only
   // /debts' page.tsx supplies it.
   skippedSlotDates?: string[];
+  // ISO due dates in this period marked "Covered Outside Flow"
+  // (markMinimumCoveredOutside) — their slots are already gone from `slots`;
+  // DebtRow lists them struck with an Undo. Optional: only /debts supplies it.
+  coveredOutsideDates?: string[];
   // The balance-only payoff line (balanceOnlyPayoff, debt-payoff.ts) — the
   // synced balance hit $0 this period but the payment that did it hasn't
   // synced as a transaction yet. Optional: only /debts' page.tsx supplies it.
@@ -463,6 +469,51 @@ export function DebtRow({
         }
         const slot = { date: entry.date };
         if (minDisplayCents <= 0 || minDroppedByPayoff(slot.date)) continue;
+        // A past minimum the tracker already rolled past with no payment —
+        // the household can say it was covered outside Flow (paid from an
+        // unsynced account, or credits brought the statement to $0).
+        const slotISO = slot.date.toISOString().slice(0, 10);
+        const outsideKey = `out:${debt.id}:${slotISO}`;
+        const canMarkOutside =
+          !readOnly && slotISO < todayISO && slot.date.getTime() < cycleMinimum.nextDueDate.getTime();
+        const outsideAction = canMarkOutside ? (
+          <button
+            type="button"
+            disabled={skipPending}
+            onClick={() => setSkipConfirmKey(outsideKey)}
+            aria-label="Covered Outside Flow"
+            title="Covered Outside Flow"
+            className="shrink-0 text-neutral-400 hover:text-emerald-600 dark:text-neutral-500 dark:hover:text-emerald-400 disabled:opacity-50"
+          >
+            <CircleCheck size={13} />
+          </button>
+        ) : undefined;
+        const outsideConfirm =
+          canMarkOutside && skipConfirmKey === outsideKey ? (
+            <p className="ml-[23px] flex flex-wrap items-center gap-x-2 text-[11px] text-neutral-600 dark:text-neutral-400">
+              Paid Outside Flow or Covered by Credits?
+              <button
+                type="button"
+                disabled={skipPending}
+                onClick={() => {
+                  setSkipConfirmKey(null);
+                  startSkipTransition(() =>
+                    toasted(() => markMinimumCoveredOutside(debt.id, slotISO), "Marked Covered Outside Flow"),
+                  );
+                }}
+                className="font-medium text-emerald-700 dark:text-emerald-400 underline disabled:opacity-50"
+              >
+                Mark Covered
+              </button>
+              <button
+                type="button"
+                onClick={() => setSkipConfirmKey(null)}
+                className="font-medium text-blue-900 dark:text-blue-300 underline decoration-dotted"
+              >
+                Cancel
+              </button>
+            </p>
+          ) : null;
         const isActionableSlot =
           slot.date.getTime() === cycleMinimum.dueDate.getTime() &&
           (!lookBack || slot.date.getTime() === cycleMinimum.nextDueDate.getTime());
@@ -478,7 +529,9 @@ export function DebtRow({
               approximate={!cycleMinimum.dueDateLocked}
               dateClassName={proximity.textClassName}
               dateTitle={proximity.label}
+              trailingAction={outsideAction}
             >
+              {outsideConfirm}
               {minDisplayCents > cycleMinimum.amountCents && (
                 <p className="ml-[23px] flex items-center gap-1.5 text-[11px] text-red-600 dark:text-red-400">
                   Includes {formatCents(minDisplayCents - cycleMinimum.amountCents)} carried over from an
@@ -514,7 +567,10 @@ export function DebtRow({
               approximate={!cycleMinimum.dueDateLocked}
               dateClassName={proximity.textClassName}
               dateTitle={proximity.label}
-            />
+              trailingAction={outsideAction}
+            >
+              {outsideConfirm}
+            </EntryLine>
           ),
         });
       }
@@ -542,6 +598,39 @@ export function DebtRow({
         ),
       });
     }
+  }
+  // Minimums marked "Covered Outside Flow" — struck, with an Undo (any time:
+  // it puts the minimum back on amountDueCents, so nothing is lost).
+  for (const iso of cycleMinimum?.coveredOutsideDates ?? []) {
+    const date = new Date(iso);
+    ledgerRows.push({
+      sortMs: date.getTime(),
+      el: (
+        <EntryLine
+          key={`outside-${iso}`}
+          state="due"
+          date={date}
+          amountCents={cycleMinimum!.amountCents}
+          muted
+          trailingAction={
+            !readOnly ? (
+              <button
+                type="button"
+                disabled={skipPending}
+                onClick={() => startSkipTransition(() => toasted(() => undoMinimumCoveredOutside(debt.id, iso), "Undone"))}
+                aria-label="Undo Covered Outside Flow"
+                title="Undo"
+                className="shrink-0 text-blue-900 dark:text-blue-300 disabled:opacity-50"
+              >
+                <Undo2 size={12} />
+              </button>
+            ) : undefined
+          }
+        >
+          <p className="ml-[23px] text-[11px] text-neutral-500 dark:text-neutral-400">Covered Outside Flow</p>
+        </EntryLine>
+      ),
+    });
   }
   // Real payments this month beyond the required minimum — paid ahead,
   // rounding-up, or (for a no-minimum card, where page.tsx folds every
